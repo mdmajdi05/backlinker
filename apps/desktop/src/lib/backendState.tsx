@@ -93,7 +93,15 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
   const refreshLogs = React.useCallback(async () => {
     if (!isTauri()) return;
     try {
-      setLogs(await getBackendLogs(200));
+      const next = await getBackendLogs(200);
+      // Keep the previous reference when nothing changed - the settings page
+      // polls the log and a new array would trigger a re-render loop.
+      setLogs((previous) =>
+        previous.length === next.length &&
+        previous.every((line, index) => line === next[index])
+          ? previous
+          : next,
+      );
     } catch {
       /* log tail is best effort */
     }

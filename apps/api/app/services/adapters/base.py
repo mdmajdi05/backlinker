@@ -146,7 +146,9 @@ def all_adapters() -> list[BaseAdapter]:
 def adapter_for_website(website: Website) -> BaseAdapter | None:
     """Find the most specific adapter for a website.
 
-    A domain specific adapter always wins over a generic one.
+    A domain specific adapter always wins over a generic one.  When no
+    domain specific adapter exists, an adapter that supports the submission
+    method of the website is preferred over any other automatable adapter.
     """
     domain_adapters = [a for a in _REGISTRY.values() if a.matches_domain(website.domain)]
     if domain_adapters:
@@ -154,7 +156,15 @@ def adapter_for_website(website: Website) -> BaseAdapter | None:
         candidate = domain_adapters[0]
         if candidate.supports_category(website.category):
             return candidate
-    for adapter in _REGISTRY.values():
-        if adapter.supports_category(website.category) and adapter.automatable:
-            return adapter
-    return None
+
+    candidates = [
+        a for a in _REGISTRY.values()
+        if a.supports_category(website.category) and a.automatable
+    ]
+    if not candidates:
+        return None
+    method = (getattr(website, "submission_method", "") or "").upper()
+    matching = [a for a in candidates if method and method in a.supported_methods]
+    if matching:
+        return matching[0]
+    return candidates[0]

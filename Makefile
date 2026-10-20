@@ -21,6 +21,9 @@ help:
 	@echo "  make typecheck        Typecheck the web and desktop clients"
 	@echo "  make build            Production build of web + desktop frontend"
 	@echo "  make smoke            Run the end-to-end smoke test"
+	@echo "  make acceptance       Run the end-to-end acceptance test (full product loop)"
+	@echo "  make browser-check    Prove that a real browser submits a form"
+	@echo "  make agent-smoke      Prove the local agent claims and executes a task"
 	@echo "  make verify           Run every check (scripts/verify_all.sh)"
 
 install: install-api install-web install-desktop
@@ -72,6 +75,9 @@ smoke:
 
 acceptance:
 	./scripts/acceptance.py
+
+browser-check:
+	./scripts/check_browser_automation.py
 
 agent-smoke:
 	./scripts/smoke_local_agent.py

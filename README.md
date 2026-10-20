@@ -673,11 +673,12 @@ nodejs.org).  Everything below was actually run:
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Backend lint | `apps/api: ruff check app scripts tests` | pass |
-| Backend test suite | `apps/api: pytest` | 124 passed |
+| Backend test suite | `apps/api: pytest` | 129 passed |
 | Backend smoke test | `apps/api: python scripts/smoke_core.py` | 21/21 assertions pass |
 | Import / export engine | `apps/api: python scripts/check_dataflow.py` | pass (preview → commit → 9-sheet workbook) |
 | Automation engine | `apps/api: python scripts/check_automation.py` | pass (providers, adapters, scoring, statuses) |
 | Hybrid local-agent path | `scripts/smoke_local_agent.py` | pass (register → claim → execute → report → attempt + events) |
+| **Real browser automation** | `scripts/check_browser_automation.py` | pass - a real Chromium fills the form with the profile facts, submits it, the success signal is detected and the backlink record is created (never simulated) |
 | Full product loop | `scripts/acceptance.py` | pass (profile → project → discovery → approve → queue → worker → activity → metrics → 9-sheet report → re-import preview → commit) |
 | Migrations | `alembic upgrade head → downgrade base → upgrade head` | pass (29 tables, both dialects) |
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |

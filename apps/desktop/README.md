@@ -97,6 +97,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build-sidecar.ps1
 The script creates a virtual environment, installs the backend requirements,
 runs PyInstaller and copies the artefact to `src-tauri/binaries/`.
 
+Requirements for the script: **CPython 3.11+**. It looks for `python3.13`,
+`python3.12`, `python3.11` and `python3`; set `PYTHON_BIN` to point at a
+specific interpreter:
+
+```bash
+PYTHON_BIN=/opt/homebrew/bin/python3.12 scripts/build-sidecar.sh
+```
+
 **Playwright browsers** are *not* bundled into the executable (they are
 ~400 MB). Two options:
 
@@ -239,6 +247,21 @@ expected for an internal build.
 4. **The frontend build**: `npm run build` (the Tauri `beforeBuildCommand`
    runs it automatically).
 5. Optional: signing certificates / notarisation credentials.
+
+### What was verified on the development machine
+
+| Command | Result |
+|---------|--------|
+| `npm install` | 148 packages, own lockfile |
+| `npx tsc --noEmit` | no errors |
+| `npm run build` | `dist/` built (253 kB JS / 20 kB CSS) |
+| `cargo check` (src-tauri) | no errors, no warnings |
+| `npm run tauri build` | `Auto Backlinker.app` (75 MB) + `Auto Backlinker_1.0.0_x64.dmg` (80 MB), **unsigned** |
+| `apps/desktop/src-tauri/target/release/bundle/macos/Auto Backlinker.app/Contents/MacOS/autobacklinker-desktop` | starts, spawns the sidecar, `GET http://127.0.0.1:8765/health` answers, SQLite database is created in `~/Library/Application Support/AutoBacklinker` |
+| `scripts/check-ui.py` (headless Chromium) | the UI renders, no console errors |
+
+The bundles are **not signed and not notarised** - see the macOS section
+above for what a release build needs.
 
 ## 5. Security model
 

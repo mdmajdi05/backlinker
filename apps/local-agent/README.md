@@ -147,7 +147,6 @@ passwords are replaced with `***`.
 
 The test suite is offline: every HTTP call is served by a mock transport that
 asserts the exact request.
-
 ```bash
 cd apps/local-agent
 python -m unittest discover -s tests -v
@@ -157,6 +156,19 @@ It covers the registration payload, the 0600 permissions of the key file, the
 heartbeat, the claim (`204` = idle), the report payload, the allowlist, the
 rejection of executable payloads, the "adapter framework missing" error and the
 log redaction.
+
+### What was verified on the development machine
+
+| Check | Result |
+|-------|--------|
+| `python -m compileall apps/local-agent` | no errors |
+| `python -m unittest discover -s tests` | 14 tests, all green |
+| `python -m agent --help` / `--status` | works |
+| `python -m agent --register --server-url http://127.0.0.1:8899` | the backend created the device, the key was written with mode `0600` |
+| `python -m agent --once` (empty queue) | "No task was available." (HTTP 204) |
+| `python -m agent --daemon` + `SIGTERM` | graceful shutdown, `OFFLINE` heartbeat, exit code 0 |
+| claim → execute → report against a live backend with a `LOCAL` task | the task was claimed, executed and reported (`WAITING_FOR_USER` because the task carried no adapter) |
+| `TaskExecutor(api_dir=../../apps/api)` | the backend adapter framework is imported and all 5 adapters (`email_outreach`, `generic_manual`, `http_form`, `json_api`, `playwright_form`) are found |
 
 ## 8. Running as a service
 

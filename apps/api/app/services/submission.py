@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import (
+    AdapterConfiguration,
+    AutomationAdapter,
     BacklinkRecord,
     BusinessProfile,
     Opportunity,
@@ -38,23 +41,60 @@ from app.services.events import record_event
 from app.workers.runner import TaskOutcome
 
 
-def _adapter_config(db: Session, adapter_id: str | None, project_id: str | None) -> dict[str, Any]:
-    if not adapter_id:
-        return {}
-    row = db.execute(
-        select_adapter_config(adapter_id, project_id)
-    ).scalar_one_or_none()
-    if row is None:
-        row = db.execute(select_adapter_config(adapter_id, None)).scalar_one_or_none()
-    return row.config if row else {}
+def _adapter_config(db: Session, adapter, project_id: str | None) -> dict[str, Any]:
+    """Read the configuration of an adapter for a project.
+
+    The configuration is stored with the *row id* of the adapter, the registry
+    is keyed by the adapter *key* - both identifiers are therefore tried.
+    """
+    identifiers: list[str] = []
+    if isinstance(adapter, str):
+        identifiers.append(adapter)
+    else:
+        identifiers.append(adapter.key)
+        row = db.execute(
+            select(AutomationAdapter).where(AutomationAdapter.key == adapter.key)
+        ).scalar_one_or_none()
+        if row is not None:
+            identifiers.append(row.id)
+    for identifier in identifiers:
+        row = db.execute(
+            select(AdapterConfiguration).where(
+                AdapterConfiguration.adapter_id == identifier,
+                AdapterConfiguration.project_id == project_id,
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            return row.config
+    for identifier in identifiers:
+        row = db.execute(
+            select(AdapterConfiguration).where(
+                AdapterConfiguration.adapter_id == identifier,
+                AdapterConfiguration.project_id.is_(None),
+            )
+        ).scalar_one_or_none()
+        if row is not None:
+            return row.config
+    return {}
 
 
-def select_adapter_config(adapter_id: str, project_id: str | None):
-    from sqlalchemy import select
+def resolve_adapter(db: Session, identifier: str | None):
+    """Resolve an adapter from a registry key **or** a database row id.
 
-    from app.db.models import AdapterConfiguration as AC
-
-    return select(AC).where(AC.adapter_id == adapter_id, AC.project_id == project_id)
+    The database stores the id of the ``automation_adapters`` row, while the
+    registry is keyed by the adapter key (``playwright_form``).  Both have to
+    resolve to the same adapter, otherwise a manually chosen adapter would
+    silently be ignored.
+    """
+    if not identifier:
+        return None
+    adapter = get_adapter(identifier)
+    if adapter is not None:
+        return adapter
+    row = db.get(AutomationAdapter, identifier)
+    if row is not None:
+        return get_adapter(row.key)
+    return None
 
 
 def execute_submission(db: Session, task: Task) -> TaskOutcome:
@@ -75,7 +115,7 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
         else None
     )
 
-    adapter = get_adapter(task.adapter_id) or get_adapter(website.adapter_id)
+    adapter = resolve_adapter(db, task.adapter_id) or resolve_adapter(db, website.adapter_id)
     if adapter is None:
         adapter = adapter_for_website(website)
     if adapter is None:
@@ -104,7 +144,7 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
         )
 
     project_settings = project.settings.__dict__ if project and project.settings else {}
-    config = _adapter_config(db, adapter.key, task.project_id)
+    config = _adapter_config(db, adapter, task.project_id)
     evidence_dir = settings.managed_files_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 

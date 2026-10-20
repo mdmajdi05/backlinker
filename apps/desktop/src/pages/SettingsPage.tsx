@@ -40,19 +40,21 @@ export function SettingsPage() {
   const storage = useAsync(() => api.storage.status(apiClient), []);
 
   const status = backend.status;
+  const native = backend.native;
+  const refreshLogs = backend.refreshLogs;
 
   React.useEffect(() => {
     if (status?.port) setPort(String(status.port));
   }, [status?.port]);
 
   React.useEffect(() => {
-    if (!backend.native) return;
-    void backend.refreshLogs();
+    if (!native) return;
+    void refreshLogs();
     const timer = window.setInterval(() => {
-      void backend.refreshLogs();
+      void refreshLogs();
     }, 5000);
     return () => window.clearInterval(timer);
-  }, [backend]);
+  }, [native, refreshLogs]);
 
   function switchToCloud() {
     const url = cloudUrl.trim();
