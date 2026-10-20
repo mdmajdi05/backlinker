@@ -18,6 +18,9 @@ dist/
 # Tauri
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
+apps/desktop/.sidecar-venv/
+apps/desktop/.sidecar-build/
+apps/desktop/.playwright-browsers/
 
 # Runtime data (never commit local databases or secrets)
 data/
