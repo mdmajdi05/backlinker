@@ -23,6 +23,7 @@ help:
 	@echo "  make smoke            Run the end-to-end smoke test"
 	@echo "  make acceptance       Run the end-to-end acceptance test (full product loop)"
 	@echo "  make browser-check    Prove that a real browser submits a form"
+	@echo "  make desktop-check    Prove the packaged desktop app starts and keeps its session"
 	@echo "  make agent-smoke      Prove the local agent claims and executes a task"
 	@echo "  make verify           Run every check (scripts/verify_all.sh)"
 
@@ -78,6 +79,9 @@ acceptance:
 
 browser-check:
 	./scripts/check_browser_automation.py
+
+desktop-check:
+	cd apps/desktop && ../../$(PY) scripts/check-desktop.py
 
 agent-smoke:
 	./scripts/smoke_local_agent.py

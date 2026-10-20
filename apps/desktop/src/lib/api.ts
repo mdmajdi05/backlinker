@@ -25,13 +25,43 @@ export const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_BACKEND_PORT}`;
  */
 let localToken: string | null = null;
 
-function desktopFetch(
+/**
+ * Refreshes the local token. The backend may have been restarted (or a second
+ * instance of the app may own it), in which case the token of the previous
+ * launch is stale and every request would answer with 401.
+ */
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setTokenProvider(provider: (() => Promise<string | null>) | null): void {
+  tokenProvider = provider;
+}
+
+async function desktopFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  if (localToken) headers.set("X-Local-Token", localToken);
-  return fetch(input, { ...init, headers });
+  const attempt = async (): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    if (localToken) headers.set("X-Local-Token", localToken);
+    return fetch(input, { ...init, headers });
+  };
+
+  let response = await attempt();
+
+  if (response.status === 401 && localToken && tokenProvider) {
+    // The token of the running backend changed - fetch it once more and
+    // repeat the request exactly once.
+    try {
+      const fresh = await tokenProvider();
+      if (fresh && fresh !== localToken) {
+        localToken = fresh;
+        response = await attempt();
+      }
+    } catch {
+      /* the refresh failed - the original response is returned */
+    }
+  }
+  return response;
 }
 
 function safeGet(key: string): string | null {

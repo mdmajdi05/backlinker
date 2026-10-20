@@ -73,12 +73,18 @@ impl BackendState {
         let data_dir = app_data_dir();
         let logs_dir = data_dir.join("logs");
         let _ = fs::create_dir_all(&logs_dir);
+        // The local token is persisted in the application data directory so
+        // that every launch of the app - and every sidecar it starts - speaks
+        // the same language.  A random token per launch would break the
+        // session as soon as the app is restarted while the old backend is
+        // still running.
+        let token = load_or_create_token(&data_dir);
         Self {
             inner: Mutex::new(Inner {
                 port: DEFAULT_PORT,
                 log_path: logs_dir.join("backend.log"),
                 data_dir,
-                token: random_token(),
+                token,
                 restarts: 0,
                 last_error: None,
                 started_at: None,
@@ -174,6 +180,19 @@ impl BackendState {
             }
         };
         inner.sidecar_path = Some(sidecar.clone());
+
+        // A backend of a previous launch may still be running on the port.
+        // Reusing a healthy one is the best case; a stale process that no
+        // longer answers is stopped so the new sidecar can bind.
+        if http_health(port, &token).unwrap_or(false) {
+            inner.healthy = true;
+            inner.started_at = Some(now_iso8601());
+            inner.last_error = None;
+            return Ok(());
+        }
+        if free_port(port) {
+            inner.healthy = false;
+        }
 
         let mut command = Command::new(&sidecar);
         command
@@ -292,7 +311,24 @@ impl BackendState {
 
                 ticks += 1;
                 if state.child_exited() {
-                    let log_path = state.log_path();
+                    let (log_path, port, token) = {
+                        let inner = state.inner.lock().expect("backend state poisoned");
+                        (inner.log_path.clone(), inner.port, inner.token.clone())
+                    };
+                    // A backend that is already running (for example the one
+                    // of a previous launch that was adopted) is not a crash -
+                    // keep using it instead of restarting in a loop.
+                    if http_health(port, &token).unwrap_or(false) {
+                        let mut inner = state.inner.lock().expect("backend state poisoned");
+                        inner.healthy = true;
+                        inner.last_error = None;
+                        append_log(
+                            &log_path,
+                            "desktop",
+                            "Using the backend that is already running on this port.",
+                        );
+                        continue;
+                    }
                     append_log(
                         &log_path,
                         "desktop",
@@ -371,11 +407,6 @@ impl BackendState {
     fn is_stale(&self, generation: u64) -> bool {
         self.shutdown.load(Ordering::SeqCst)
             || self.generation.load(Ordering::SeqCst) != generation
-    }
-
-    fn log_path(&self) -> PathBuf {
-        let inner = self.inner.lock().expect("backend state poisoned");
-        inner.log_path.clone()
     }
 
     fn child_exited(&self) -> bool {
@@ -530,6 +561,76 @@ pub fn append_log(log_path: &Path, source: &str, message: &str) {
         .open(log_path)
     {
         let _ = writeln!(file, "[{}] [{}] {}", now_iso8601(), source, message);
+    }
+}
+
+/// Name of the file that holds the shared local token.
+const TOKEN_FILE: &str = "local-token";
+
+/// Load the persisted local token or create it on the first launch.
+///
+/// The token lives in the application data directory (mode 0600) so that the
+/// desktop app and the sidecar it supervises always agree - even after a
+/// crash, a reinstall of the app or a second instance of the app.
+fn load_or_create_token(data_dir: &Path) -> String {
+    let path = data_dir.join(TOKEN_FILE);
+    if let Ok(existing) = fs::read_to_string(&path) {
+        let trimmed = existing.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    let token = random_token();
+    let _ = fs::create_dir_all(data_dir);
+    if fs::write(&path, &token).is_ok() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
+    }
+    token
+}
+
+/// Stop a stale process that still holds the port.
+fn free_port(port: u16) -> bool {
+    let output = Command::new("/usr/sbin/lsof")
+        .args(["-ti", &format!(":{port}")])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    let pids: Vec<u32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect();
+    if pids.is_empty() {
+        return false;
+    }
+    for pid in pids {
+        let _ = Command::new("/bin/kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+    // Give the process a moment to release the socket.
+    for _ in 0..20 {
+        std::thread::sleep(Duration::from_millis(150));
+        if !port_is_open(port) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check whether something still listens on the given port.
+fn port_is_open(port: u16) -> bool {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let address = format!("127.0.0.1:{port}");
+    match address.parse() {
+        Ok(parsed) => TcpStream::connect_timeout(&parsed, Duration::from_millis(400)).is_ok(),
+        Err(_) => false,
     }
 }
 

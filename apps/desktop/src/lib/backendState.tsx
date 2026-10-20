@@ -10,7 +10,7 @@ import {
   type AgentStatus,
   type BackendStatus,
 } from "./backend";
-import { setApiBaseUrl, ensureLocalAccount } from "./api";
+import { setApiBaseUrl, ensureLocalAccount, setTokenProvider } from "./api";
 import { useAuth } from "./auth";
 
 export interface BackendContextValue {
@@ -88,6 +88,25 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
           : "Cannot read the backend status",
       );
     }
+  }, [mode, useLocalSession]);
+
+  // A request that was rejected with 401 refreshes the token once, so a
+  // backend that was restarted in the meantime does not lock the user out.
+  React.useEffect(() => {
+    setTokenProvider(async () => {
+      try {
+        const next = await getBackendStatus();
+        setStatus(next);
+        if (next.localToken) {
+          useLocalSession(next.localToken);
+          if (mode === "local") setApiBaseUrl(next.baseUrl);
+        }
+        return next.localToken ?? null;
+      } catch {
+        return null;
+      }
+    });
+    return () => setTokenProvider(null);
   }, [mode, useLocalSession]);
 
   const refreshLogs = React.useCallback(async () => {

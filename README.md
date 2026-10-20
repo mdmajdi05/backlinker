@@ -679,6 +679,7 @@ nodejs.org).  Everything below was actually run:
 | Automation engine | `apps/api: python scripts/check_automation.py` | pass (providers, adapters, scoring, statuses) |
 | Hybrid local-agent path | `scripts/smoke_local_agent.py` | pass (register → claim → execute → report → attempt + events) |
 | **Real browser automation** | `scripts/check_browser_automation.py` | pass - a real Chromium fills the form with the profile facts, submits it, the success signal is detected and the backlink record is created (never simulated) |
+| **Packaged desktop app** | `apps/desktop/scripts/check-desktop.py` | pass - first launch, second launch while the backend runs (no port conflict, no restart loop, one backend) and a full restart keep the local session valid (no 401) |
 | Full product loop | `scripts/acceptance.py` | pass (profile → project → discovery → approve → queue → worker → activity → metrics → 9-sheet report → re-import preview → commit) |
 | Migrations | `alembic upgrade head → downgrade base → upgrade head` | pass (29 tables, both dialects) |
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |
