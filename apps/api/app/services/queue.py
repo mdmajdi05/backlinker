@@ -78,6 +78,13 @@ def enqueue(
     if existing is not None:
         return existing, False
 
+    # The payload is stored as JSON - fail early with a clear message instead
+    # of letting the database driver raise a serialization error.
+    try:
+        json.dumps(payload or {})
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"The task payload is not JSON serialisable: {exc}") from exc
+
     task = Task(
         project_id=project_id,
         opportunity_id=opportunity_id,

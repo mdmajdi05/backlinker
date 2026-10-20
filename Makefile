@@ -70,6 +70,12 @@ build-desktop:
 smoke:
 	cd apps/api && ../../$(PY) scripts/smoke_core.py
 
+acceptance:
+	./scripts/acceptance.py
+
+agent-smoke:
+	./scripts/smoke_local_agent.py
+
 verify:
 	./scripts/verify_all.sh
 

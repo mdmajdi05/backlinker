@@ -82,18 +82,20 @@ def start_discovery(payload: DiscoveryRequest, db: DbSession, user: CurrentUser)
     profile = (
         db.get(BusinessProfile, project.business_profile_id) if project.business_profile_id else None
     )
+    # The task payload is stored as JSON, therefore it may only contain plain
+    # values.  The worker reloads the business profile from the database, so
+    # only the search criteria travel with the task.
     criteria = {
         "query": payload.query or "",
-        "keywords": payload.keywords,
-        "countries": payload.countries,
+        "keywords": list(payload.keywords or []),
+        "countries": list(payload.countries or []),
         "language": payload.language,
         "category": payload.category,
         "limit": payload.limit,
-        "seeds": payload.seeds,
-        "config": payload.config,
-        "profile": profile,
+        "seeds": list(payload.seeds or []),
+        "config": dict(payload.config or {}),
         "project_id": project.id,
-        "excluded_domains": (profile.excluded_domains if profile else []),
+        "excluded_domains": list(profile.excluded_domains) if profile else [],
     }
     task, _created = queue_service.enqueue(
         db,

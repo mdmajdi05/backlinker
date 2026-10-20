@@ -185,6 +185,28 @@ class LandingPageIn(BaseModel):
     kind: str = "LANDING"
 
 
+class ProjectPatch(BaseModel):
+    """Partial update - every field is optional."""
+
+    name: str | None = None
+    description: str | None = None
+    target_website: str | None = None
+    business_profile_id: str | None = None
+    status: str | None = None
+
+    @field_validator("target_website")
+    @classmethod
+    def _website(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from app.core.net import validate_http_url
+
+        v = v.strip()
+        if not v.startswith(("http://", "https://")):
+            v = "https://" + v
+        return validate_http_url(v).rstrip("/")
+
+
 class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None

@@ -23,6 +23,7 @@ from app.schemas import (
     ProjectDetailOut,
     ProjectIn,
     ProjectOut,
+    ProjectPatch,
     ProjectSettingsIn,
     ProjectSettingsOut,
 )
@@ -153,11 +154,9 @@ def get_project(project_id: str, db: DbSession, user: CurrentUser) -> ProjectDet
 
 
 @router.patch("/{project_id}", response_model=ProjectOut)
-def update_project(project_id: str, payload: ProjectIn, db: DbSession, user: CurrentUser) -> ProjectOut:
+def update_project(project_id: str, payload: ProjectPatch, db: DbSession, user: CurrentUser) -> ProjectOut:
     project = _get_project(db, project_id, user)
     data = payload.model_dump(exclude_unset=True)
-    data.pop("settings", None)
-    data.pop("landing_pages", None)
     for field, value in data.items():
         if value is not None:
             setattr(project, field, value)
