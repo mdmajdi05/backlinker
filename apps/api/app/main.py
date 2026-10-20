@@ -17,6 +17,7 @@ from app.api.routes import (
     campaigns,
     dataflow,
     discovery,
+    integrations,
     misc,
     profiles,
     projects,
@@ -165,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix=prefix)
     app.include_router(registry.router, prefix=prefix)
     app.include_router(discovery.router, prefix=prefix)
+    app.include_router(integrations.router, prefix=prefix)
     app.include_router(queue.router, prefix=prefix)
     app.include_router(verification.router, prefix=prefix)
     app.include_router(dataflow.imports_router, prefix=prefix)

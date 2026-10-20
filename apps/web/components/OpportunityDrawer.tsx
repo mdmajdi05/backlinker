@@ -7,7 +7,10 @@ import {
   Alert,
   Badge,
   Button,
+  Dialog,
   Drawer,
+  Field,
+  Input,
   KeyValue,
   Select,
   StatusBadge,
@@ -38,6 +41,8 @@ export function OpportunityDrawer({
   const toast = useToast();
   const action = useAction();
   const [projectId, setProjectId] = React.useState("");
+  const [excludeOpen, setExcludeOpen] = React.useState(false);
+  const [excludeReason, setExcludeReason] = React.useState("");
 
   const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
 
@@ -90,6 +95,21 @@ export function OpportunityDrawer({
     }
   };
 
+  const excludeDomain = async () => {
+    if (!opportunity?.domain) return;
+    const outcome = await action.run(() =>
+      api.opportunities.excludeDomain(apiClient, opportunity.domain as string, {
+        reason: excludeReason.trim() || undefined,
+      }),
+    );
+    if (outcome.ok) {
+      toast.push(`Domain ${opportunity.domain} excluded`, "success");
+      setExcludeOpen(false);
+      setExcludeReason("");
+      onChanged?.();
+    }
+  };
+
   const breakdown = opportunity?.score_breakdown ?? null;
 
   return (
@@ -120,6 +140,16 @@ export function OpportunityDrawer({
             <Tooltip label="Retries the linked task, or creates a new queue task when none exists">
               <Button variant="outline" size="sm" onClick={retry} loading={action.pending}>
                 Retry
+              </Button>
+            </Tooltip>
+            <Tooltip label="Excludes every opportunity of this domain from discovery">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!opportunity.domain}
+                onClick={() => setExcludeOpen(true)}
+              >
+                Exclude domain
               </Button>
             </Tooltip>
             <Button size="sm" onClick={addToQueue} loading={action.pending}>
@@ -297,6 +327,39 @@ export function OpportunityDrawer({
           </CardSection>
         </div>
       ) : null}
+
+      <Dialog
+        open={excludeOpen}
+        onClose={() => setExcludeOpen(false)}
+        title={`Exclude ${opportunity?.domain ?? "domain"}?`}
+        description="The backend adds the domain to the exclusion list so it is not discovered again."
+        width="sm"
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setExcludeOpen(false)}
+              disabled={action.pending}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={excludeDomain} loading={action.pending}>
+              Exclude domain
+            </Button>
+          </>
+        }
+      >
+        <Field label="Reason" hint="Optional note stored with the exclusion.">
+          <Input
+            value={excludeReason}
+            onChange={(event) => setExcludeReason(event.target.value)}
+            placeholder="Spam directory"
+          />
+        </Field>
+        {action.error ? (
+          <p className="mt-2 text-xs text-danger">{errorMessage(action.error)}</p>
+        ) : null}
+      </Dialog>
     </Drawer>
   );
 }

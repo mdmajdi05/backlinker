@@ -168,10 +168,25 @@ in `localStorage` (`autobacklinker.desktop.mode`).
 
 ```bash
 npm run sidecar                 # on an Apple Silicon / Intel machine
-npm run tauri:build
-# -> src-tauri/target/release/bundle/dmg/Auto Backlinker_1.0.0_aarch64.dmg
+npm run tauri:build             # -> Auto Backlinker.app
+bash scripts/build-dmg.sh       # -> Auto Backlinker_1.0.0_<arch>.dmg
+# -> src-tauri/target/release/bundle/dmg/Auto Backlinker_1.0.0_x64.dmg
 # -> src-tauri/target/release/bundle/macos/Auto Backlinker.app
 ```
+
+> **What was actually built on the development machine:** the PyInstaller
+> sidecar (`autobacklinker-api-x86_64-apple-darwin`, 27 MB), the native
+> application bundle (`Auto Backlinker.app`, 32 MB, containing the desktop
+> binary, the sidecar and the icon) and the disk image
+> (`Auto Backlinker_1.0.0_x64.dmg`, 30 MB).  The DMG was verified to mount and
+> to contain the application plus the `/Applications` symlink, and the bundled
+> backend was started from inside the bundle - it created its SQLite database
+> and answered `/health`.
+>
+> Tauri's own DMG step needs AppleScript automation of the Finder, which the
+> build machine does not permit ("AppleEvent timed out").  `build-dmg.sh`
+> creates the same disk image with `hdiutil` only, so the packaging works in
+> CI and on headless build agents as well.
 
 Signing and notarisation are **not** part of the open source build. To ship a
 signed build you need:

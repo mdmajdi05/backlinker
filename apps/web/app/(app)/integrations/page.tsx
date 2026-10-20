@@ -22,6 +22,7 @@ import {
 import { apiClient, errorMessage } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 import { AI_PROVIDER_KEYS, probeCredentials, saveCredential } from "@/lib/integrations";
+import type { IntegrationProvider } from "@/lib/integrations";
 import { humanize } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, TableSkeleton } from "@/components/States";
@@ -44,7 +45,8 @@ export default function IntegrationsPage() {
     available: boolean;
     checked: boolean;
     credentials: Array<{ id: string; provider: string; label: string; status: string }>;
-  }>({ available: false, checked: false, credentials: [] });
+    providers: IntegrationProvider[];
+  }>({ available: false, checked: false, credentials: [], providers: [] });
 
   const [row, setRow] = React.useState<CredentialRow>(EMPTY_ROW);
   const [aiRow, setAiRow] = React.useState<CredentialRow>({ ...EMPTY_ROW, provider: "openai" });
@@ -63,6 +65,7 @@ export default function IntegrationsPage() {
           label: credential.label,
           status: credential.status,
         })),
+        providers: result.providers,
       });
     });
     return () => {
@@ -103,7 +106,12 @@ export default function IntegrationsPage() {
       );
       setRow(EMPTY_ROW);
       const refreshed = await probeCredentials();
-      setProbe((prev) => ({ ...prev, available: refreshed.available, credentials: refreshed.credentials }));
+      setProbe((prev) => ({
+        ...prev,
+        available: refreshed.available,
+        credentials: refreshed.credentials,
+        providers: refreshed.providers,
+      }));
     } catch (err) {
       setProviderError(errorMessage(err));
     }
@@ -139,10 +147,52 @@ export default function IntegrationsPage() {
       />
 
       {credentialUnavailableReason ? (
-        <Alert tone="warning" title="Credential storage is not available yet">
-          {credentialUnavailableReason} The typed API client for this project does not define a
-          credential endpoint, so nothing is stored locally and no success is simulated.
+        <Alert tone="warning" title="Credential storage is not available">
+          {credentialUnavailableReason} The backend did not answer the credential endpoint, so
+          nothing is stored locally and no success is simulated.
         </Alert>
+      ) : null}
+
+      {probe.providers.length > 0 ? (
+        <Card>
+          <CardHeader
+            title="Supported providers"
+            description="What the backend can use once the credential is stored"
+          />
+          <CardBody className="p-0">
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Provider</Th>
+                  <Th>Purpose</Th>
+                  <Th>Status</Th>
+                  <Th>Documentation</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {probe.providers.map((provider) => (
+                  <tr key={provider.key}>
+                    <Td className="font-medium text-content">{provider.name}</Td>
+                    <Td className="text-content-muted">{provider.purpose}</Td>
+                    <Td>
+                      <StatusBadge status={provider.configured ? "CONFIGURED" : "MISSING"} />
+                    </Td>
+                    <Td>
+                      <a
+                        href={provider.docs}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-accent underline-offset-2 hover:underline"
+                      >
+                        Docs
+                      </a>
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </CardBody>
+        </Card>
       ) : null}
 
       {probe.available ? (

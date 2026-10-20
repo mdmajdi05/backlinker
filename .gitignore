@@ -27,5 +27,10 @@ data/
 .env
 .env.local
 
+# Build artifacts (large binaries stay on disk, the manifest is tracked)
+release/macos/*.dmg
+release/macos/*.app/
+release/macos/autobacklinker-api-*
+
 # OS
 .DS_Store

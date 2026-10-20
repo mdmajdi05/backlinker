@@ -228,6 +228,9 @@ export class ApiClient {
    * Server-Sent Events subscription. Falls back to polling when the browser
    * does not support EventSource (not the case in modern browsers, but the
    * Tauri webview on some platforms has quirks).
+   *
+   * `EventSource` cannot send an `Authorization` header, therefore the token
+   * is passed as the `access_token` query parameter.
    */
   subscribe(
     path: string,
@@ -237,7 +240,8 @@ export class ApiClient {
     if (typeof EventSource === "undefined") {
       return () => undefined;
     }
-    const url = `${this.baseUrl}${path}`;
+    const separator = path.includes("?") ? "&" : "?";
+    const url = `${this.baseUrl}${path}${this.token ? `${separator}access_token=${encodeURIComponent(this.token)}` : ""}`;
     const es = new EventSource(url, {
       withCredentials: false,
     } as EventSourceInit);
@@ -386,6 +390,38 @@ export const api = {
   devices: {
     list: (c: ApiClient) => c.get<Device[]>("/api/v1/devices"),
     revoke: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/devices/${id}`),
+  },
+
+  integrations: {
+    providers: (c: ApiClient) =>
+      c.get<
+        Array<{
+          key: string;
+          name: string;
+          purpose: string;
+          docs: string;
+          configured: boolean;
+        }>
+      >("/api/v1/integrations/providers"),
+    credentials: (c: ApiClient) =>
+      c.get<
+        Array<{
+          id: string;
+          provider: string;
+          label: string;
+          status: string;
+          has_value: boolean;
+          masked_hint: string;
+          updated_at: string;
+        }>
+      >("/api/v1/integrations/credentials"),
+    saveCredential: (c: ApiClient, body: { provider: string; label?: string; secret?: string }) =>
+      c.post<{ id: string; provider: string; masked_hint: string }>(
+        "/api/v1/integrations/credentials",
+        body,
+      ),
+    deleteCredential: (c: ApiClient, id: string) =>
+      c.delete<void>(`/api/v1/integrations/credentials/${id}`),
   },
 
   dashboard: {

@@ -483,6 +483,31 @@ def dashboard_metrics(
 
 @events_router.get("/stream")
 async def stream(request: Request, project_id: str | None = Query(default=None)):
+    """Server-Sent Events stream.
+
+    ``EventSource`` cannot send an ``Authorization`` header, therefore the
+    token is accepted as the ``access_token`` query parameter as well.  The
+    stream is authenticated either way.
+    """
+    from app.core.security import decode_access_token
+
+    token = request.query_params.get("access_token")
+    header = request.headers.get("authorization")
+    if not token and header and header.lower().startswith("bearer "):
+        token = header.split(" ", 1)[1]
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "not_authenticated", "message": "The event stream requires a token"},
+        )
+    try:
+        decode_access_token(token)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "invalid_token", "message": "Invalid or expired token"},
+        ) from exc
+
     async def generator():
         async for event in event_stream(project_id):
             if await request.is_disconnected():
@@ -494,7 +519,11 @@ async def stream(request: Request, project_id: str | None = Query(default=None))
     return StreamingResponse(
         generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

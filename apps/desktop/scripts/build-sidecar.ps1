@@ -82,10 +82,13 @@ $SpecPath = Join-Path $BuildDir "sidecar.spec"
 # -*- mode: python ; coding: utf-8 -*-
 import os
 
-api_dir = os.environ.get("AUTOBL_API_DIR", r"$ApiDir")
-datas = [(os.path.join(api_dir, "app"), "app")]
+from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = [
+api_dir = os.environ.get("AUTOBL_API_DIR", r"$ApiDir")
+
+# Every module of the backend package is collected explicitly: the API uses
+# lazy imports inside functions, which the static analysis alone misses.
+hiddenimports = collect_submodules("app") + [
     "uvicorn.logging",
     "uvicorn.loops.auto",
     "uvicorn.protocols.http.auto",
@@ -99,7 +102,7 @@ a = Analysis(
     [r"$ScriptDir\sidecar_launcher.py"],
     pathex=[api_dir],
     binaries=[],
-    datas=datas,
+    datas=[],
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],

@@ -1,12 +1,13 @@
 "use client";
 
 import { apiClient } from "./api";
+import { api } from "@autobacklinker/api-client";
 import type { IntegrationCredential } from "@autobacklinker/shared-types";
 
 /**
- * Credential storage is not part of the typed transport yet. The helpers below
- * probe the backend for the documented REST shape and surface a clear
- * "not available" state instead of pretending that a key was saved.
+ * Integration credentials live on the backend (`/api/v1/integrations/*`).
+ * Secrets are encrypted at rest and are never returned - the API only reports
+ * whether a credential exists and shows a masked hint.
  */
 export const CREDENTIALS_PATH = "/api/v1/integrations/credentials";
 
@@ -17,9 +18,18 @@ export interface CredentialInput {
   model?: string;
 }
 
+export interface IntegrationProvider {
+  key: string;
+  name: string;
+  purpose: string;
+  docs: string;
+  configured: boolean;
+}
+
 export interface CredentialsProbe {
   available: boolean;
   credentials: IntegrationCredential[];
+  providers: IntegrationProvider[];
   /** Set when the endpoint responded with something other than 404. */
   error: unknown;
 }
@@ -31,13 +41,18 @@ function isMissing(error: unknown): boolean {
 
 export async function probeCredentials(): Promise<CredentialsProbe> {
   try {
-    const credentials = await apiClient.get<IntegrationCredential[]>(CREDENTIALS_PATH);
-    return { available: true, credentials, error: null };
+    const [credentials, providers] = await Promise.all([
+      apiClient.get<IntegrationCredential[]>(CREDENTIALS_PATH),
+      api.integrations
+        .providers(apiClient)
+        .catch(() => [] as IntegrationProvider[]),
+    ]);
+    return { available: true, credentials, providers, error: null };
   } catch (error) {
     if (isMissing(error)) {
-      return { available: false, credentials: [], error: null };
+      return { available: false, credentials: [], providers: [], error: null };
     }
-    return { available: false, credentials: [], error };
+    return { available: false, credentials: [], providers: [], error };
   }
 }
 

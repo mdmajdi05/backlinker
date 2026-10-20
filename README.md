@@ -682,15 +682,18 @@ nodejs.org).  Everything below was actually run:
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |
 | Web client | `npm run build` (Next.js) | pass (17 routes) |
 | Desktop client | `npm run build` (Vite + `tsc --noEmit`) | pass |
+| Desktop sidecar | `scripts/build-sidecar.sh` (PyInstaller) | pass - 69 MB executable (Playwright package included), starts, creates the SQLite database, answers `/health` |
+| Native macOS bundle | `npm run tauri:build` + `scripts/build-dmg.sh` | pass - `Auto Backlinker.app` and `Auto Backlinker_1.0.0_x64.dmg` (71 MB); the DMG mounts and contains the app plus the bundled backend (artifacts in `release/macos/`) |
 
 Not executed here, and therefore **not claimed as working**:
 
-* **The native desktop bundle** (`npm run tauri build`): the Rust sources,
-  `tauri.conf.json`, the sidecar build scripts and the icon generator are
-  complete, but this machine has neither Rust nor the Xcode command line
-  tools, so no `.dmg` / `.msi` artifact was produced.  Run the build on a
-  machine with Rust 1.77+ and the Xcode CLT (macOS) or the MSVC build tools
-  (Windows).
+* **The Windows installer.**  The Tauri configuration declares the `msi` and
+  `nsis` targets and the PowerShell sidecar script exists, but the build
+  machine is macOS - the Windows artifact has to be produced on Windows (or
+  with the `windows-*-msvc` cross toolchain and the NSIS tooling).
+* **Code signing.**  The `.app` / `.dmg` are unsigned; a distributable build
+  needs an Apple Developer ID certificate plus notarization (and an
+  Authenticode certificate for Windows).
 * **The Docker image and the compose stack**: Docker is not installed here;
   the compose file and Dockerfile are provided but were not built.
 * **PostgreSQL and Redis at runtime**: the SQLAlchemy models, migrations and
@@ -699,6 +702,12 @@ Not executed here, and therefore **not claimed as working**:
 * **Live submission to a real third-party directory**: no form was submitted
   to a live site during development or testing; the form adapters were
   exercised against a local HTTP fixture.
+
+> Tauri's own `bundle_dmg.sh` step needs AppleScript automation of the
+> Finder, which is not permitted on this build machine ("AppleEvent timed
+> out").  `apps/desktop/scripts/build-dmg.sh` therefore creates the disk
+> image with `hdiutil` only - the same deliverable, without the decorative
+> background image.
 
 ---
 

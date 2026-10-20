@@ -73,8 +73,25 @@ if [[ ! -d "${API_DIR}/app" ]]; then
   exit 1
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "${PYTHON_BIN}" ]]; then
+  # The backend needs CPython >= 3.11.  Prefer an explicit interpreter, then
+  # the newest one we can find on this machine.
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if command -v "${candidate}" >/dev/null 2>&1; then
+      if "${candidate}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+        PYTHON_BIN="${candidate}"
+        break
+      fi
+    fi
+  done
+fi
+if [[ -z "${PYTHON_BIN}" ]]; then
+  echo "No CPython >= 3.11 was found. Set PYTHON_BIN to a suitable interpreter." >&2
+  exit 1
+fi
+
+if [[ ! -d "${VENV_DIR}/bin" ]]; then
   echo "==> Creating the build virtual environment (${VENV_DIR})"
   "${PYTHON_BIN}" -m venv "${VENV_DIR}"
 fi
@@ -82,11 +99,19 @@ VENV_PY="${VENV_DIR}/bin/python"
 
 echo "==> Installing the backend dependencies"
 "${VENV_PY}" -m pip install --upgrade pip wheel >/dev/null
-if [[ -f "${API_DIR}/requirements.txt" ]]; then
-  "${VENV_PY}" -m pip install -r "${API_DIR}/requirements.txt"
-else
-  "${VENV_PY}" -m pip install "fastapi" "uvicorn[standard]" "sqlalchemy" "pydantic" "pydantic-settings" "httpx" "pyjwt" "python-multipart" "openpyxl" "beautifulsoup4" "lxml"
-fi
+# The desktop bundle is SQLite only, therefore the PostgreSQL driver and the
+# development tools are not part of the sidecar.  Everything else comes from
+# the shared requirements file so the two never drift apart.
+#
+# Playwright (the Python package, not the browsers) is required at build
+# time: PyInstaller analyses the imports of the backend, and the adapter
+# package imports Playwright. Without it the dynamic provider imports
+# (app/services/discovery/impl/*) would be missing from the bundle.
+"${VENV_PY}" -m pip install \
+  "fastapi" "uvicorn[standard]" "sqlalchemy>=2.0" "pydantic>=2.9" "pydantic-settings>=2.6" \
+  "alembic>=1.14" "httpx>=0.27" "openpyxl>=3.1" "python-multipart>=0.0.12" "pyjwt>=2.9" \
+  "email-validator>=2.2" "beautifulsoup4>=4.12" "lxml>=5.3" "tenacity>=9.0" "structlog>=24.4" \
+  "playwright>=1.44"
 "${VENV_PY}" -m pip install pyinstaller
 
 mkdir -p "${BINARIES_DIR}"
@@ -98,10 +123,13 @@ cat > "${BUILD_DIR}/sidecar.spec" <<EOF
 # -*- mode: python ; coding: utf-8 -*-
 import os
 
-api_dir = os.environ.get("AUTOBL_API_DIR", "${API_DIR}")
-datas = [(os.path.join(api_dir, "app"), "app")]
+from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = [
+api_dir = os.environ.get("AUTOBL_API_DIR", "${API_DIR}")
+
+# Every module of the backend package is collected explicitly: the API uses
+# lazy imports inside functions, which the static analysis alone misses.
+hiddenimports = collect_submodules("app") + [
     "uvicorn.logging",
     "uvicorn.loops.auto",
     "uvicorn.protocols.http.auto",
@@ -115,7 +143,7 @@ a = Analysis(
     ["${SCRIPT_DIR}/sidecar_launcher.py"],
     pathex=[api_dir],
     binaries=[],
-    datas=datas,
+    datas=[],
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
@@ -140,12 +168,17 @@ exe = EXE(
 EOF
 
 echo "==> Running PyInstaller"
-AUTOBL_API_DIR="${API_DIR}" "${VENV_PY}" -m PyInstaller \
+# A .spec file may not be combined with --specpath, the spec already lives in
+# the build directory and defines the output paths itself.
+# PYTHONPATH makes the backend package importable for the isolated
+# subprocess that PyInstaller uses to collect the submodules.
+AUTOBL_API_DIR="${API_DIR}" \
+PYTHONPATH="${API_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
+  "${VENV_PY}" -m PyInstaller \
   --noconfirm \
   --clean \
   --distpath "${BUILD_DIR}/dist" \
   --workpath "${BUILD_DIR}/work" \
-  --specpath "${BUILD_DIR}" \
   "${BUILD_DIR}/sidecar.spec" >/dev/null
 
 BUILT="${BUILD_DIR}/dist/autobacklinker-api${EXT}"

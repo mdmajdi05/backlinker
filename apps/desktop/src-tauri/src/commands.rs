@@ -124,6 +124,10 @@ pub async fn save_file(
 }
 
 #[tauri::command]
+// The shell plugin is still a hard requirement of this build (it is listed in
+// Cargo.toml); its `open` helper is deprecated in favour of tauri-plugin-opener
+// but works on every supported platform.
+#[allow(deprecated)]
 pub fn open_path(app: AppHandle, path: String) -> Result<(), String> {
     app.shell()
         .open(path, None)

@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -512,8 +512,15 @@ pub fn locate_sidecar(app: &AppHandle) -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.is_file())
 }
 
+/// Serialises the log writes - stdout and stderr are pumped by two threads.
+fn log_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// Appends a line to the backend log file.
 pub fn append_log(log_path: &Path, source: &str, message: &str) {
+    let _guard = log_lock().lock().unwrap_or_else(|error| error.into_inner());
     if let Some(parent) = log_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
