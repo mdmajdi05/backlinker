@@ -1,0 +1,248 @@
+# Auto Backlinker - Desktop app (Tauri 2)
+
+The desktop client is a thin, native front end for the **same** FastAPI backend
+that the web client uses. It adds everything a desktop application needs:
+
+* a **bundled local backend** (Python sidecar) that runs on `127.0.0.1` only,
+* **native notifications** for important events,
+* a **native file picker** for Excel/CSV imports,
+* **native save dialogs** for report downloads,
+* **local task controls** (pause / resume / cancel) for tasks whose
+  `execution_environment` is `LOCAL`,
+* a **local backend status panel** (start / stop / restart, health, data
+  directory, log tail).
+
+The UI reuses the shared design system (`packages/ui`) and the shared API
+client (`packages/api-client`) - there is no second implementation of the
+protocol and no mock data anywhere in this app.
+
+---
+
+## 1. Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Node.js | 20+ (22 recommended) | `~/.local/node/bin` on the dev machines |
+| Rust | 1.77.2+ | `rustup` - **required for `tauri` commands only** |
+| Xcode CLT | macOS only | `xcode-select --install` (needed by the Rust linker) |
+| Python | 3.11+ | only to build the backend sidecar |
+
+The frontend (`npm run dev`, `npm run build`) works **without** Rust - the
+Tauri shell is only required for the native features.
+
+## 2. Install
+
+```bash
+cd apps/desktop
+npm install
+```
+
+The shared packages are consumed through the file protocol
+(`file:../../packages/ui`, ...), therefore `apps/desktop` has its own
+`package-lock.json` and does not need an npm workspace at the repository root.
+
+> The `overrides` block in `package.json` rewrites the `workspace:*` dependency
+> of `packages/api-client` to a local path so that `npm install` works outside
+> of a workspace.
+
+## 3. Development
+
+```bash
+# 1. frontend only (browser preview, no native features)
+npm run dev            # http://localhost:1420
+
+# 2. full desktop app (Vite + Rust)
+npm run tauri:dev      # requires Rust + Xcode CLT
+```
+
+`npm run tauri:dev` starts Vite on port 1420 and the Tauri window that loads
+`http://localhost:1420`.
+
+Useful scripts:
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Vite dev server (browser preview) |
+| `npm run build` | `tsc --noEmit` + production build into `dist/` |
+| `npm run typecheck` | TypeScript only |
+| `npm run tauri` | raw Tauri CLI (`tauri info`, `tauri dev`, ...) |
+| `npm run tauri:dev` | desktop app in development mode |
+| `npm run tauri:build` | desktop bundle (`.dmg`, `.app`, `.msi`, `.nsis`) |
+| `npm run sidecar` | builds the backend sidecar (`scripts/build-sidecar.sh`) |
+| `npm run icons` | regenerates the placeholder icons |
+
+### The backend sidecar
+
+`npm run tauri:build` requires the sidecar binary, because it is declared in
+`src-tauri/tauri.conf.json` as `bundle.externalBin`:
+
+```json
+"externalBin": ["binaries/autobacklinker-api"]
+```
+
+Tauri looks the file up as
+`src-tauri/binaries/autobacklinker-api-<target-triple>` (`.exe` on Windows).
+Build it **on every platform you want to ship**:
+
+```bash
+# macOS / Linux
+npm run sidecar                    # -> src-tauri/binaries/autobacklinker-api-aarch64-apple-darwin
+# or with an explicit API checkout
+scripts/build-sidecar.sh --api-dir ../../apps/api
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\build-sidecar.ps1
+```
+
+The script creates a virtual environment, installs the backend requirements,
+runs PyInstaller and copies the artefact to `src-tauri/binaries/`.
+
+**Playwright browsers** are *not* bundled into the executable (they are
+~400 MB). Two options:
+
+1. `PLAYWRIGHT_BROWSERS_PATH=./.playwright-browsers scripts/build-sidecar.sh`
+   copies the browsers to `src-tauri/binaries/playwright-browsers` - add
+   `"binaries/playwright-browsers"` to `bundle.resources` in
+   `src-tauri/tauri.conf.json` to ship them.
+2. Install them on the target machine:
+   `python -m playwright install chromium`.
+
+Without a browser runtime the agent reports browser tasks as
+*"manual intervention required"* - it never fails silently.
+
+### How the backend is started and stopped
+
+The Rust side (`src-tauri/src/backend.rs`) owns the process:
+
+* the app starts the sidecar automatically when the window opens,
+* the sidecar receives `AUTOBL_DATA_DIR`, `AUTOBL_ENVIRONMENT=desktop`,
+  `AUTOBL_STORAGE_MODE=local`, `AUTOBL_WORKER_ENABLED=true` and a random
+  `AUTOBL_LOCAL_TOKEN`,
+* it is started with `--host 127.0.0.1 --port <port>` - **never** `0.0.0.0`,
+* a supervisor thread polls the health endpoint (`GET /health`) every few
+  seconds, restarts a crashed backend (exponential backoff, max. 3 restarts)
+  and kills the process when the app exits,
+* stdout/stderr are captured into `<data dir>/logs/backend.log`,
+* the UI can start, stop and restart it from **Settings → Local backend**.
+
+The machine token is sent to the frontend as `localToken` and used in the
+`X-Local-Token` header (see `apps/api/app/api/deps.py`).
+
+### Where the data is stored
+
+| Platform | Location |
+|----------|----------|
+| macOS | `~/Library/Application Support/AutoBacklinker` |
+| Windows | `%APPDATA%\AutoBacklinker` |
+| Linux | `$XDG_DATA_HOME/auto-backlinker` (`~/.local/share/auto-backlinker`) |
+
+Inside that directory:
+
+```
+autobacklinker.db     SQLite database (local storage mode)
+logs/backend.log      stdout/stderr of the sidecar
+backups/              storage backups
+files/                managed uploads (imports, exports)
+```
+
+The local agent keeps its own state in `~/.autobacklinker/agent.json` (mode
+`0600`) and its log in `~/.autobacklinker/logs/agent.log`.
+
+### Cloud synchronisation
+
+The desktop app can talk to a hosted backend instead of the local sidecar:
+
+1. open **Settings → Cloud synchronisation**,
+2. enter the base URL of the deployment (`https://backlinks.example.com`),
+3. press **Use this backend** - the client switches to the remote API and
+   shows the sign in screen,
+4. sign in with your cloud account (the JWT is sent as
+   `Authorization: Bearer ...`).
+
+**Back to local backend** restores the loopback sidecar. The choice is stored
+in `localStorage` (`autobacklinker.desktop.mode`).
+
+## 4. Production builds
+
+### macOS
+
+```bash
+npm run sidecar                 # on an Apple Silicon / Intel machine
+npm run tauri:build
+# -> src-tauri/target/release/bundle/dmg/Auto Backlinker_1.0.0_aarch64.dmg
+# -> src-tauri/target/release/bundle/macos/Auto Backlinker.app
+```
+
+Signing and notarisation are **not** part of the open source build. To ship a
+signed build you need:
+
+* an **Apple Developer Program** membership (paid),
+* a *Developer ID Application* certificate installed in the keychain,
+* a **Developer ID Installer** certificate for the `.dmg`,
+* a notarisation ticket:
+
+```bash
+codesign --deep --force --options runtime --timestamp \
+  --sign "Developer ID Application: <TEAM> (<TEAMID>)" \
+  "src-tauri/target/release/bundle/macos/Auto Backlinker.app"
+
+xcrun notarytool submit "Auto Backlinker_1.0.0_aarch64.dmg" \
+  --keychain-profile "AC_PASSWORD" --wait
+xcrun stapler staple "Auto Backlinker_1.0.0_aarch64.dmg"
+```
+
+Without notarisation macOS Gatekeeper will block the application on other
+machines.
+
+### Windows
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\build-sidecar.ps1
+npm run tauri:build
+# -> src-tauri\target\release\bundle\nsis\Auto Backlinker_1.0.0_x64-setup.exe
+# -> src-tauri\target\release\bundle\msi\Auto Backlinker_1.0.0_x64_en-US.msi
+```
+
+Signing requires an **Authenticode** code signing certificate
+(Sectigo / DigiCert / Azure Code Signing) in a PFX file and the environment
+variables `TAURI_SIGNING_PRIVATE_KEY` (base64 PKCS#12) and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The MSI additionally needs
+`TAURI_BUNDLE_MSI_WIX_FILE` or the WiX toolset v3.14 installed.
+
+Unsigned builds trigger the "Windows protected your PC" dialog - that is
+expected for an internal build.
+
+### What a developer needs for `npm run tauri build`
+
+1. **Rust toolchain**: `rustup toolchain install stable`
+   (`rustc 1.77.2` or newer).
+2. **Xcode Command Line Tools** on macOS (`xcode-select --install`) - the Rust
+   linker needs them.
+3. **A sidecar binary** for the target triple:
+   `npm run sidecar` (see above). Without it the bundler fails with
+   *"external binary autobacklinker-api not found"*.
+4. **The frontend build**: `npm run build` (the Tauri `beforeBuildCommand`
+   runs it automatically).
+5. Optional: signing certificates / notarisation credentials.
+
+## 5. Security model
+
+* the sidecar binds to `127.0.0.1` only and uses a random per-launch token,
+* the token is only handed to the local web view,
+* the Tauri capabilities (`src-tauri/capabilities/default.json`) grant exactly
+  the permissions the app uses (dialog, notification, shell open, process
+  restart/exit, scoped file access),
+* the local agent only executes an allowlist of task types and rejects any
+  payload that contains an executable/command field,
+* the agent log is redacted (API keys, bearer tokens and passwords are
+  replaced with `***`).
+
+## 6. Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| "The backend sidecar binary is missing" | run `npm run sidecar` |
+| Backend does not become healthy | check **Settings → Local backend → log tail** |
+| Port already in use | change the port in **Settings → Local backend** |
+| Browser tasks need manual help | install Playwright + Chromium on the machine |
+| `npm install` fails on `workspace:*` | the `overrides` block rewrites it - do not remove it |

@@ -1,0 +1,52 @@
+# Runtime and development dependencies of the Auto Backlinker API.
+#
+# The pins match the versions of the project virtual environment
+# (``.venv`` in the repository root).  Install them with:
+#
+#   apps/api/scripts/bootstrap.sh
+#
+# PostgreSQL support needs the PostgreSQL driver.  It is listed as an
+# optional extra because the desktop bundle only uses SQLite:
+#
+#   pip install "psycopg[binary]>=3.1,<4"
+#
+# The line below is enabled by default so cloud mode works out of the box -
+# comment it out for a minimal SQLite-only installation.
+psycopg[binary]==3.3.6
+
+# --- web framework -------------------------------------------------------
+fastapi==0.150.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+
+# --- data model ----------------------------------------------------------
+sqlalchemy==2.1.5
+alembic==1.20.0
+pydantic==2.14.1
+pydantic-settings==2.16.0
+email-validator==2.3.0
+
+# --- security ------------------------------------------------------------
+pyjwt==2.15.1
+
+# --- automation ----------------------------------------------------------
+httpx==0.28.1
+beautifulsoup4==4.15.0
+lxml==6.1.3
+playwright==1.64.0
+tenacity==9.2.1
+
+# --- reporting -----------------------------------------------------------
+openpyxl==3.1.5
+
+# --- background processing ------------------------------------------------
+celery==5.6.3
+redis==8.1.0
+
+# --- observability --------------------------------------------------------
+structlog==26.1.0
+
+# --- development / test ---------------------------------------------------
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.17.1

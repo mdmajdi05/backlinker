@@ -1,0 +1,47 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "useDefineForClassFields": true,
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react-dom/client": ["./node_modules/@types/react-dom/client"],
+      "clsx": ["./node_modules/clsx"],
+      "tailwind-merge": ["./node_modules/tailwind-merge"],
+      "@autobacklinker/ui": ["./node_modules/@autobacklinker/ui/src/index.ts"],
+      "@autobacklinker/ui/styles.css": [
+        "./node_modules/@autobacklinker/ui/src/styles.css"
+      ],
+      "@autobacklinker/ui/tailwind-preset": [
+        "./node_modules/@autobacklinker/ui/tailwind-preset.js"
+      ],
+      "@autobacklinker/shared-types": [
+        "./node_modules/@autobacklinker/shared-types/src/index.ts"
+      ],
+      "@autobacklinker/api-client": [
+        "./node_modules/@autobacklinker/api-client/src/index.ts"
+      ]
+    }
+  },
+  "include": ["src", "vite.config.ts", "tailwind.config.ts"],
+  "exclude": ["node_modules", "dist", "src-tauri"]
+}

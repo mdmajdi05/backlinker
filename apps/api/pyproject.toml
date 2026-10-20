@@ -1,0 +1,62 @@
+[project]
+name = "autobacklinker-api"
+version = "1.0.0"
+description = "Backend API, automation engine and background workers for Auto Backlinker"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "alembic",
+    "pydantic",
+    "pydantic-settings",
+    "email-validator",
+    "pyjwt",
+    "httpx",
+    "openpyxl",
+    "python-multipart",
+    "beautifulsoup4",
+    "lxml",
+    "playwright",
+    "tenacity",
+    "structlog",
+    "celery",
+    "redis",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+exclude = [".venv", "__pycache__", "alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "S", "ASYNC"]
+ignore = [
+    "B008",    # FastAPI dependency injection uses function calls in defaults
+    "B904",    # allow bare Exception re-raise patterns used in the worker
+    "SIM108",  # ternaries are not always clearer
+    "RUF001",  # unicode dashes in strings are intentional
+    "RUF002",
+    "RUF003",
+    "S101",    # asserts are used in the verification scripts
+    "E501",    # long lines are handled by the formatter
+    "UP046",   # PEP 695 generics are not required
+    "UP047",
+    "RUF005",  # list concatenation reads better in the query builders
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B", "SIM"]
+"scripts/*" = ["S", "B", "E402"]
+"alembic/versions/*" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+# "alembic" is the third party package, not the local migration folder.
+known-third-party = ["alembic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]

@@ -1,0 +1,31 @@
+/* The shared design system (tokens + base layer) lives in packages/ui. */
+@import "@autobacklinker/ui/styles.css";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  /* Desktop chrome --------------------------------------------------- */
+
+  .abk-desktop-scroll {
+    scrollbar-gutter: stable;
+  }
+
+  .abk-drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .abk-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}

@@ -1,0 +1,133 @@
+# Local / cloud stack for the Auto Backlinker API.
+#
+#   docker compose -f infrastructure/docker-compose.yml up -d
+#   docker compose -f infrastructure/docker-compose.yml logs -f api
+#
+# The API is then available on http://localhost:8000 (docs on /docs).
+
+name: auto-backlinker
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: autobacklinker-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-autobacklinker}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-autobacklinker}
+      POSTGRES_DB: ${POSTGRES_DB:-autobacklinker}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-autobacklinker} -d ${POSTGRES_DB:-autobacklinker}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: autobacklinker-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: ..
+      dockerfile: infrastructure/api.Dockerfile
+    image: auto-backlinker/api:latest
+    container_name: autobacklinker-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AUTOBL_ENVIRONMENT: ${AUTOBL_ENVIRONMENT:-cloud}
+      AUTOBL_STORAGE_MODE: ${AUTOBL_STORAGE_MODE:-cloud}
+      AUTOBL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autobacklinker}:${POSTGRES_PASSWORD:-autobacklinker}@postgres:5432/${POSTGRES_DB:-autobacklinker}
+      AUTOBL_SECRET_KEY: ${AUTOBL_SECRET_KEY:-dev-only-insecure-secret-key-change-me-please-000000}
+      AUTOBL_CORS_ORIGINS: ${AUTOBL_CORS_ORIGINS:-["http://localhost:3000"]}
+      AUTOBL_DATA_DIR: /data
+      AUTOBL_WORKER_ENABLED: "false"
+      AUTOBL_USE_CELERY: ${AUTOBL_USE_CELERY:-false}
+      AUTOBL_CELERY_BROKER_URL: redis://redis:6379/0
+      AUTOBL_CELERY_RESULT_BACKEND: redis://redis:6379/1
+      AUTOBL_AI_PROVIDER: ${AUTOBL_AI_PROVIDER:-}
+      AUTOBL_AI_BASE_URL: ${AUTOBL_AI_BASE_URL:-}
+      AUTOBL_AI_API_KEY: ${AUTOBL_AI_API_KEY:-}
+      AUTOBL_AI_MODEL: ${AUTOBL_AI_MODEL:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - api_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infrastructure/api.Dockerfile
+    image: auto-backlinker/api:latest
+    container_name: autobacklinker-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    command: ["python", "-m", "app.workers.runner"]
+    environment:
+      AUTOBL_ENVIRONMENT: ${AUTOBL_ENVIRONMENT:-cloud}
+      AUTOBL_STORAGE_MODE: ${AUTOBL_STORAGE_MODE:-cloud}
+      AUTOBL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-autobacklinker}:${POSTGRES_PASSWORD:-autobacklinker}@postgres:5432/${POSTGRES_DB:-autobacklinker}
+      AUTOBL_SECRET_KEY: ${AUTOBL_SECRET_KEY:-dev-only-insecure-secret-key-change-me-please-000000}
+      AUTOBL_DATA_DIR: /data
+      AUTOBL_RUN_MIGRATIONS: "0"
+      AUTOBL_WORKER_ENABLED: "false"
+      AUTOBL_WORKER_ID: ${AUTOBL_WORKER_ID:-worker-1}
+      AUTOBL_USE_CELERY: ${AUTOBL_USE_CELERY:-false}
+      AUTOBL_CELERY_BROKER_URL: redis://redis:6379/0
+      AUTOBL_CELERY_RESULT_BACKEND: redis://redis:6379/1
+      AUTOBL_AI_PROVIDER: ${AUTOBL_AI_PROVIDER:-}
+      AUTOBL_AI_BASE_URL: ${AUTOBL_AI_BASE_URL:-}
+      AUTOBL_AI_API_KEY: ${AUTOBL_AI_API_KEY:-}
+      AUTOBL_AI_MODEL: ${AUTOBL_AI_MODEL:-}
+    volumes:
+      - api_data:/data
+
+  # web:
+  #   build:
+  #     context: ..
+  #     dockerfile: infrastructure/web.Dockerfile
+  #   image: auto-backlinker/web:latest
+  #   container_name: autobacklinker-web
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - api
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+  #   ports:
+  #     - "3000:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_data:

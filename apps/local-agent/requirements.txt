@@ -1,0 +1,16 @@
+# The local automation agent only needs the Python standard library.
+# The optional extras below enable browser automation.
+#
+#   pip install -r requirements.txt
+#   python -m playwright install chromium
+#
+# Playwright is intentionally optional: without it the agent still performs the
+# API based tasks and reports browser tasks as "manual intervention required".
+
+# --- optional: browser automation -------------------------------------------
+# playwright>=1.44
+
+# --- optional: reuse of the backend adapter framework -----------------------
+# The agent imports apps/api/app/services/adapters through sys.path. Install the
+# backend requirements when you want the full adapter set:
+#   pip install -r ../../apps/api/requirements.txt

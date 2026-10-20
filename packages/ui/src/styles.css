@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --surface: 255 255 255;
+  --surface-raised: 249 250 251;
+  --surface-sunken: 244 246 248;
+  --content: 15 23 42;
+  --content-muted: 71 85 105;
+  --content-subtle: 148 163 184;
+  --line: 226 232 240;
+  --line-strong: 203 213 225;
+  --accent: 79 70 229;
+  --accent-hover: 67 56 202;
+  --accent-soft: 238 242 255;
+  --accent-fg: 255 255 255;
+  --success: 22 163 74;
+  --success-soft: 240 253 244;
+  --warning: 217 119 6;
+  --warning-soft: 255 251 235;
+  --danger: 220 38 38;
+  --danger-soft: 254 242 242;
+  --info: 2 132 199;
+  --info-soft: 240 249 255;
+}
+
+.dark {
+  --surface: 15 23 42;
+  --surface-raised: 22 30 46;
+  --surface-sunken: 12 18 32;
+  --content: 241 245 249;
+  --content-muted: 160 174 192;
+  --content-subtle: 119 130 148;
+  --line: 39 51 72;
+  --line-strong: 55 70 96;
+  --accent: 129 140 248;
+  --accent-hover: 153 162 255;
+  --accent-soft: 30 33 66;
+  --accent-fg: 15 23 42;
+  --success: 74 222 128;
+  --success-soft: 20 45 34;
+  --warning: 251 191 36;
+  --warning-soft: 56 43 12;
+  --danger: 248 113 113;
+  --danger-soft: 61 26 28;
+  --info: 56 189 248;
+  --info-soft: 17 45 62;
+}
+
+@layer base {
+  html,
+  body,
+  #__next {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-surface-sunken text-content antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-line-strong;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .abk-card {
+    @apply rounded-lg border border-line bg-surface shadow-card;
+  }
+
+  .abk-table-wrap {
+    @apply w-full overflow-x-auto;
+  }
+
+  .abk-table {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .abk-table thead th {
+    @apply sticky top-0 z-10 whitespace-nowrap border-b border-line bg-surface-raised px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-content-muted;
+  }
+
+  .abk-table tbody td {
+    @apply border-b border-line/70 px-3 py-2 align-middle text-content;
+  }
+
+  .abk-table tbody tr:hover {
+    @apply bg-surface-raised;
+  }
+}

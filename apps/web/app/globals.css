@@ -1,0 +1,35 @@
+@import "@autobacklinker/ui/styles.css";
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+  }
+}
+
+@layer components {
+  .abk-nav-link {
+    @apply flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium text-content-muted transition-colors;
+  }
+
+  .abk-nav-link:hover {
+    @apply bg-surface-sunken text-content;
+  }
+
+  .abk-nav-link[data-active="true"] {
+    @apply bg-accent-soft text-accent;
+  }
+
+  .abk-scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}

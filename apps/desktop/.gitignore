@@ -1,0 +1,17 @@
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# Sidecar build artefacts
+.sidecar-venv/
+.sidecar-build/
+src-tauri/binaries/autobacklinker-api*
+src-tauri/binaries/playwright-browsers/
+
+# OS
+.DS_Store

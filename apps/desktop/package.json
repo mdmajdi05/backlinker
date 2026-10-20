@@ -1,0 +1,48 @@
+{
+  "name": "@autobacklinker/desktop",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Auto Backlinker desktop client (Tauri 2 + React + Vite)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "icons": "python3 scripts/generate-icons.py",
+    "sidecar": "bash scripts/build-sidecar.sh"
+  },
+  "dependencies": {
+    "@autobacklinker/api-client": "file:../../packages/api-client",
+    "@autobacklinker/shared-types": "file:../../packages/shared-types",
+    "@autobacklinker/ui": "file:../../packages/ui",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "@tauri-apps/plugin-fs": "^2.4.0",
+    "@tauri-apps/plugin-notification": "^2.3.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "@tauri-apps/plugin-shell": "^2.3.0",
+    "clsx": "^2.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "overrides": {
+    "@autobacklinker/shared-types": "file:../../packages/shared-types"
+  }
+}

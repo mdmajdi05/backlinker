@@ -1,0 +1,482 @@
+"use client";
+
+import * as React from "react";
+import { api } from "@autobacklinker/api-client";
+import type { Opportunity } from "@autobacklinker/shared-types";
+import {
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  Field,
+  Input,
+  Pagination,
+  Select,
+  StatusBadge,
+  Table,
+  Td,
+  Th,
+  Toolbar,
+  Tooltip,
+  useToast,
+} from "@autobacklinker/ui";
+import { apiClient, errorMessage } from "@/lib/api";
+import { useAction, useDebounced, useResource } from "@/lib/hooks";
+import { formatDateTime, formatDecimal } from "@/lib/format";
+import {
+  ALL_OPPORTUNITY_CATEGORIES,
+  ALL_OPPORTUNITY_STATUSES,
+  CATEGORY_LABELS,
+  OPPORTUNITY_STATUS_LABELS,
+} from "@/lib/constants";
+import { PageHeader } from "@/components/PageHeader";
+import { AsyncSection, TableSkeleton } from "@/components/States";
+import { OpportunityDrawer } from "@/components/OpportunityDrawer";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+
+const PAGE_SIZE = 25;
+
+type SortKey = "name" | "domain" | "score" | "status" | "created_at" | "updated_at";
+
+type BulkAction = "approve" | "reject" | "exclude" | "delete" | "queue" | "add_to_project";
+
+const DESTRUCTIVE: BulkAction[] = ["reject", "exclude", "delete"];
+
+export default function RegistryPage() {
+  const toast = useToast();
+  const action = useAction();
+
+  const [page, setPage] = React.useState(1);
+  const [projectId, setProjectId] = React.useState("");
+  const [status, setStatus] = React.useState("");
+  const [category, setCategory] = React.useState("");
+  const [domain, setDomain] = React.useState("");
+  const [minScore, setMinScore] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const [sort, setSort] = React.useState<SortKey>("updated_at");
+  const [order, setOrder] = React.useState<"asc" | "desc">("desc");
+
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [detail, setDetail] = React.useState<Opportunity | null>(null);
+  const [confirmAction, setConfirmAction] = React.useState<BulkAction | null>(null);
+  const [bulkProjectId, setBulkProjectId] = React.useState("");
+
+  const debouncedSearch = useDebounced(search, 400);
+  const debouncedDomain = useDebounced(domain, 400);
+
+  const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
+
+  const opportunities = useResource(
+    () =>
+      api.opportunities.list(apiClient, {
+        page,
+        page_size: PAGE_SIZE,
+        project_id: projectId || undefined,
+        status: status || undefined,
+        category: category || undefined,
+        domain: debouncedDomain || undefined,
+        min_score: minScore || undefined,
+        search: debouncedSearch || undefined,
+        sort,
+        order,
+      }),
+    [page, projectId, status, category, debouncedDomain, minScore, debouncedSearch, sort, order],
+  );
+
+  const rows = opportunities.data?.items ?? [];
+
+  React.useEffect(() => {
+    setSelected([]);
+  }, [page, projectId, status, category, debouncedDomain, minScore, debouncedSearch]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sort === key) {
+      setOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(key);
+      setOrder("desc");
+    }
+    setPage(1);
+  };
+
+  const sortIndicator = (key: SortKey) => (sort === key ? (order === "asc" ? " ▲" : " ▼") : "");
+
+  const allSelected = rows.length > 0 && rows.every((row) => selected.includes(row.id));
+
+  const toggleAll = () => {
+    if (allSelected) {
+      setSelected((prev) => prev.filter((id) => !rows.some((row) => row.id === id)));
+    } else {
+      setSelected((prev) => Array.from(new Set([...prev, ...rows.map((row) => row.id)])));
+    }
+  };
+
+  const toggleOne = (id: string) => {
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+    );
+  };
+
+  const runBulk = async (bulkAction: BulkAction) => {
+    if (selected.length === 0) return;
+    const outcome = await action.run(() =>
+      api.opportunities.bulk(apiClient, {
+        opportunity_ids: selected,
+        action: bulkAction,
+        project_id: bulkAction === "add_to_project" ? bulkProjectId || undefined : undefined,
+      }),
+    );
+    if (outcome.ok && outcome.data) {
+      const affected = outcome.data.affected;
+      toast.push(`${affected} opportunit${affected === 1 ? "y" : "ies"} updated`, "success");
+      setSelected([]);
+      setConfirmAction(null);
+      opportunities.reload();
+    }
+  };
+
+  const bulkDisabledReason =
+    selected.length === 0
+      ? "Select at least one opportunity first."
+      : confirmAction === "add_to_project" && !bulkProjectId
+        ? "Choose the target project for this bulk action."
+        : null;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Website Registry"
+        description="Every discovered opportunity with its score, state and submission readiness."
+        actions={
+          <Button variant="outline" size="sm" onClick={opportunities.reload} loading={opportunities.refreshing}>
+            Refresh
+          </Button>
+        }
+      />
+
+      <Card>
+        <Toolbar>
+          <Field label="Search" className="w-56">
+            <Input
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Name, URL or notes"
+            />
+          </Field>
+          <Field label="Project" className="w-52">
+            <Select
+              value={projectId}
+              onChange={(event) => {
+                setProjectId(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All projects</option>
+              {(projects.data?.items ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Status" className="w-44">
+            <Select
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All statuses</option>
+              {ALL_OPPORTUNITY_STATUSES.map((value) => (
+                <option key={value} value={value}>
+                  {OPPORTUNITY_STATUS_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Category" className="w-52">
+            <Select
+              value={category}
+              onChange={(event) => {
+                setCategory(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All categories</option>
+              {ALL_OPPORTUNITY_CATEGORIES.map((value) => (
+                <option key={value} value={value}>
+                  {CATEGORY_LABELS[value] ?? value}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Domain" className="w-44">
+            <Input
+              value={domain}
+              onChange={(event) => {
+                setDomain(event.target.value);
+                setPage(1);
+              }}
+              placeholder="example.com"
+            />
+          </Field>
+          <Field label="Min score" className="w-28">
+            <Input
+              type="number"
+              min={0}
+              step="0.1"
+              value={minScore}
+              onChange={(event) => {
+                setMinScore(event.target.value);
+                setPage(1);
+              }}
+              placeholder="0"
+            />
+          </Field>
+          {(projectId || status || category || domain || minScore || search) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setProjectId("");
+                setStatus("");
+                setCategory("");
+                setDomain("");
+                setMinScore("");
+                setSearch("");
+                setPage(1);
+              }}
+            >
+              Reset filters
+            </Button>
+          )}
+        </Toolbar>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
+          <span className="text-xs text-content-muted">
+            {selected.length} selected
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("approve")}
+            >
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("reject")}
+            >
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("exclude")}
+            >
+              Exclude
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("queue")}
+            >
+              Add to queue
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("add_to_project")}
+            >
+              Add to project
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={selected.length === 0}
+              onClick={() => setConfirmAction("delete")}
+            >
+              Delete
+            </Button>
+          </div>
+          {confirmAction === "add_to_project" ? (
+            <Select
+              className="w-56"
+              value={bulkProjectId}
+              onChange={(event) => setBulkProjectId(event.target.value)}
+              aria-label="Target project"
+            >
+              <option value="">Select target project…</option>
+              {(projects.data?.items ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          ) : null}
+        </div>
+
+        <CardBody className="p-0">
+          <AsyncSection
+            loading={opportunities.loading}
+            error={opportunities.error}
+            data={opportunities.data}
+            onRetry={opportunities.reload}
+            isEmpty={rows.length === 0}
+            emptyTitle="No opportunities match these filters"
+            emptyDescription="Adjust the filters or run a discovery to populate the registry."
+            skeleton={<TableSkeleton rows={8} columns={7} />}
+          >
+            <Table>
+              <thead>
+                <tr>
+                  <Th className="w-10">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all opportunities on this page"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                    />
+                  </Th>
+                  <Th>
+                    <button type="button" onClick={() => toggleSort("name")} className="font-semibold uppercase">
+                      Name{sortIndicator("name")}
+                    </button>
+                  </Th>
+                  <Th>
+                    <button type="button" onClick={() => toggleSort("domain")} className="font-semibold uppercase">
+                      Domain{sortIndicator("domain")}
+                    </button>
+                  </Th>
+                  <Th>Category</Th>
+                  <Th>
+                    <button type="button" onClick={() => toggleSort("score")} className="font-semibold uppercase">
+                      Score{sortIndicator("score")}
+                    </button>
+                  </Th>
+                  <Th>
+                    <button type="button" onClick={() => toggleSort("status")} className="font-semibold uppercase">
+                      Status{sortIndicator("status")}
+                    </button>
+                  </Th>
+                  <Th>
+                    <button type="button" onClick={() => toggleSort("updated_at")} className="font-semibold uppercase">
+                      Updated{sortIndicator("updated_at")}
+                    </button>
+                  </Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.id}
+                    className="cursor-pointer"
+                    onClick={() => setDetail(row)}
+                  >
+                    <Td onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.name}`}
+                        checked={selected.includes(row.id)}
+                        onChange={() => toggleOne(row.id)}
+                      />
+                    </Td>
+                    <Td>
+                      <p className="font-medium text-content">{row.name}</p>
+                      <p className="max-w-xs truncate text-xs text-content-muted">{row.opportunity_url}</p>
+                    </Td>
+                    <Td className="text-xs">{row.domain}</Td>
+                    <Td>
+                      <Badge tone="neutral">
+                        {CATEGORY_LABELS[row.category] ?? row.category}
+                      </Badge>
+                    </Td>
+                    <Td className="tabular-nums">{formatDecimal(row.score, 1)}</Td>
+                    <Td>
+                      <StatusBadge status={row.status} />
+                    </Td>
+                    <Td className="text-xs text-content-muted">{formatDateTime(row.updated_at)}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            {opportunities.data ? (
+              <Pagination
+                page={opportunities.data.page}
+                pages={opportunities.data.pages}
+                total={opportunities.data.total}
+                onPageChange={setPage}
+              />
+            ) : null}
+          </AsyncSection>
+        </CardBody>
+      </Card>
+
+      <OpportunityDrawer
+        opportunity={detail}
+        open={Boolean(detail)}
+        onClose={() => setDetail(null)}
+        onChanged={opportunities.reload}
+      />
+
+      <ConfirmDialog
+        open={confirmAction !== null}
+        title={
+          confirmAction === "delete"
+            ? "Delete opportunities?"
+            : confirmAction === "approve"
+              ? "Approve opportunities?"
+              : confirmAction === "reject"
+                ? "Reject opportunities?"
+                : confirmAction === "exclude"
+                  ? "Exclude opportunities?"
+                  : confirmAction === "queue"
+                    ? "Add opportunities to the queue?"
+                    : "Add opportunities to a project?"
+        }
+        description={
+          confirmAction
+            ? `${selected.length} opportunit${selected.length === 1 ? "y" : "ies"} will be processed by the backend.`
+            : undefined
+        }
+        confirmLabel={
+          confirmAction === "delete"
+            ? "Delete permanently"
+            : confirmAction === "approve"
+              ? "Approve"
+              : confirmAction === "reject"
+                ? "Reject"
+                : confirmAction === "exclude"
+                  ? "Exclude"
+                  : confirmAction === "queue"
+                    ? "Add to queue"
+                    : "Add to project"
+        }
+        destructive={confirmAction !== null && DESTRUCTIVE.includes(confirmAction)}
+        pending={action.pending}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => confirmAction && runBulk(confirmAction)}
+      >
+        {action.error ? (
+          <p className="text-xs text-danger">{errorMessage(action.error)}</p>
+        ) : null}
+        {bulkDisabledReason ? (
+          <Tooltip label={bulkDisabledReason}>
+            <span className="text-xs text-danger">{bulkDisabledReason}</span>
+          </Tooltip>
+        ) : null}
+      </ConfirmDialog>
+    </div>
+  );
+}

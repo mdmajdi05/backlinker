@@ -1,0 +1,17 @@
+{
+  "name": "auto-backlinker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Autonomous AI backlink discovery, automation, verification and reporting platform",
+  "scripts": {
+    "api": "cd apps/api && .venv/bin/python -m uvicorn app.main:app --reload --port 8000",
+    "worker": "cd apps/api && .venv/bin/python -m app.workers.runner",
+    "web": "cd apps/web && npm run dev",
+    "web:build": "cd apps/web && npm run build",
+    "desktop:dev": "cd apps/desktop && npm run tauri dev",
+    "desktop:build": "cd apps/desktop && npm run tauri build",
+    "install:all": "cd apps/api && ./scripts/bootstrap.sh && cd ../web && npm install && cd ../desktop && npm install",
+    "test:api": "cd apps/api && .venv/bin/python -m pytest -q",
+    "lint:api": "cd apps/api && .venv/bin/python -m ruff check app tests"
+  }
+}

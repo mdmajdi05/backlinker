@@ -1,0 +1,617 @@
+//! Supervision of the bundled Python backend (the "sidecar").
+//!
+//! The sidecar is a self contained FastAPI application that is shipped next
+//! to the desktop binary. It is started with a private configuration:
+//!
+//! * it only listens on `127.0.0.1` (never on a public interface),
+//! * it stores its database inside the OS application data directory,
+//! * it runs with a random, per launch API token.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use rand::RngCore;
+use serde::Serialize;
+use tauri::{AppHandle, Manager};
+
+/// Maximum number of automatic restarts after a crash.
+pub const MAX_RESTARTS: u32 = 3;
+/// Default port of the local backend.
+pub const DEFAULT_PORT: u16 = 8765;
+/// Maximum number of log lines kept in memory / returned to the UI.
+const MAX_LOG_LINES: usize = 2000;
+
+/// Serializable snapshot of the sidecar state.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendStatus {
+    pub running: bool,
+    pub healthy: bool,
+    pub pid: Option<u32>,
+    pub port: u16,
+    pub base_url: String,
+    pub data_dir: String,
+    pub log_path: String,
+    pub local_token: Option<String>,
+    pub restarts: u32,
+    pub last_error: Option<String>,
+    pub started_at: Option<String>,
+    pub version: Option<String>,
+    pub sidecar_path: Option<String>,
+    pub mode: String,
+}
+
+struct Inner {
+    port: u16,
+    data_dir: PathBuf,
+    log_path: PathBuf,
+    token: String,
+    restarts: u32,
+    last_error: Option<String>,
+    started_at: Option<String>,
+    healthy: bool,
+    sidecar_path: Option<PathBuf>,
+}
+
+/// Shared state between the Tauri commands and the supervisor thread.
+pub struct BackendState {
+    inner: Mutex<Inner>,
+    child: Arc<Mutex<Option<Child>>>,
+    supervisor: Mutex<Option<JoinHandle<()>>>,
+    generation: AtomicU64,
+    shutdown: AtomicBool,
+}
+
+impl BackendState {
+    pub fn new() -> Self {
+        let data_dir = app_data_dir();
+        let logs_dir = data_dir.join("logs");
+        let _ = fs::create_dir_all(&logs_dir);
+        Self {
+            inner: Mutex::new(Inner {
+                port: DEFAULT_PORT,
+                log_path: logs_dir.join("backend.log"),
+                data_dir,
+                token: random_token(),
+                restarts: 0,
+                last_error: None,
+                started_at: None,
+                healthy: false,
+                sidecar_path: None,
+            }),
+            child: Arc::new(Mutex::new(None)),
+            supervisor: Mutex::new(None),
+            generation: AtomicU64::new(0),
+            shutdown: AtomicBool::new(false),
+        }
+    }
+
+    pub fn status(&self) -> BackendStatus {
+        let inner = self.inner.lock().expect("backend state poisoned");
+        let pid = self
+            .child
+            .lock()
+            .expect("backend child poisoned")
+            .as_ref()
+            .map(|child| child.id());
+        BackendStatus {
+            running: pid.is_some(),
+            healthy: inner.healthy,
+            pid,
+            port: inner.port,
+            base_url: format!("http://127.0.0.1:{}", inner.port),
+            data_dir: inner.data_dir.to_string_lossy().to_string(),
+            log_path: inner.log_path.to_string_lossy().to_string(),
+            local_token: Some(inner.token.clone()),
+            restarts: inner.restarts,
+            last_error: inner.last_error.clone(),
+            started_at: inner.started_at.clone(),
+            version: None,
+            sidecar_path: inner
+                .sidecar_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            mode: "desktop".to_string(),
+        }
+    }
+
+    /// Starts (or restarts) the sidecar and (re)arms the supervisor.
+    pub fn start(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        port: Option<u16>,
+    ) -> Result<BackendStatus, String> {
+        self.stop_process();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+
+        let requested_port = port.unwrap_or(DEFAULT_PORT);
+        let port = if requested_port == 0 {
+            DEFAULT_PORT
+        } else {
+            requested_port
+        };
+
+        self.spawn_process(app, port)?;
+        self.spawn_supervisor(app.clone());
+        Ok(self.status())
+    }
+
+    /// Spawns the sidecar process (without touching the supervisor lifecycle).
+    fn spawn_process(self: &Arc<Self>, app: &AppHandle, port: u16) -> Result<(), String> {
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        inner.port = port;
+        inner.healthy = false;
+        inner.last_error = None;
+
+        let data_dir = inner.data_dir.clone();
+        let log_path = inner.log_path.clone();
+        let token = inner.token.clone();
+
+        if let Err(err) = fs::create_dir_all(&data_dir) {
+            let message = format!("Cannot create the data directory: {err}");
+            inner.last_error = Some(message.clone());
+            return Err(message);
+        }
+        if let Some(parent) = log_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
+        let sidecar = match locate_sidecar(app) {
+            Some(path) => path,
+            None => {
+                let message = "The backend sidecar binary is missing. Build it with \
+                              `npm run sidecar` (scripts/build-sidecar.sh) before starting \
+                              the local backend."
+                    .to_string();
+                inner.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+        inner.sidecar_path = Some(sidecar.clone());
+
+        let mut command = Command::new(&sidecar);
+        command
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .env("AUTOBL_DATA_DIR", &data_dir)
+            .env("AUTOBL_ENVIRONMENT", "desktop")
+            .env("AUTOBL_STORAGE_MODE", "local")
+            .env("AUTOBL_WORKER_ENABLED", "true")
+            .env("AUTOBL_LOCAL_TOKEN", &token)
+            .env("AUTOBL_HOST", "127.0.0.1")
+            .env("AUTOBL_PORT", port.to_string())
+            .current_dir(&data_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(err) => {
+                let message = format!("Cannot start the backend sidecar: {err}");
+                inner.last_error = Some(message.clone());
+                return Err(message);
+            }
+        };
+
+        inner.started_at = Some(now_iso8601());
+        inner.restarts = 0;
+
+        if let Some(stdout) = child.stdout.take() {
+            spawn_log_pump(stdout, log_path.clone(), "stdout");
+        }
+        if let Some(stderr) = child.stderr.take() {
+            spawn_log_pump(stderr, log_path.clone(), "stderr");
+        }
+
+        append_log(
+            &log_path,
+            "desktop",
+            &format!("Started backend sidecar {sidecar:?} on port {port}"),
+        );
+
+        *self.child.lock().expect("backend child poisoned") = Some(child);
+        Ok(())
+    }
+
+    /// Stops the sidecar (the supervisor thread exits with it).
+    pub fn stop(&self) -> Result<BackendStatus, String> {
+        self.stop_process();
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        let mut inner = self.inner.lock().expect("backend state poisoned");
+        inner.healthy = false;
+        inner.started_at = None;
+        Ok(self.status())
+    }
+
+    /// Called when the application exits.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.stop_process();
+    }
+
+    fn stop_process(&self) {
+        let mut guard = self.child.lock().expect("backend child poisoned");
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// Returns the last `lines` lines of the backend log file.
+    pub fn logs(&self, lines: usize) -> Vec<String> {
+        let log_path = {
+            let inner = self.inner.lock().expect("backend state poisoned");
+            inner.log_path.clone()
+        };
+        let file = match File::open(&log_path) {
+            Ok(file) => file,
+            Err(_) => return Vec::new(),
+        };
+        let reader = BufReader::new(file);
+        let mut collected: Vec<String> = Vec::new();
+        for line in reader.lines() {
+            match line {
+                Ok(line) => {
+                    collected.push(line);
+                    if collected.len() > MAX_LOG_LINES {
+                        collected.remove(0);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let take = lines.clamp(1, MAX_LOG_LINES);
+        let start = collected.len().saturating_sub(take);
+        collected.split_off(start)
+    }
+
+    fn spawn_supervisor(self: &Arc<Self>, app: AppHandle) {
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let state = Arc::clone(self);
+        let handle = thread::spawn(move || {
+            let mut backoff_secs: u64 = 1;
+            let mut ticks: u64 = 0;
+            loop {
+                if state.is_stale(generation) {
+                    break;
+                }
+                thread::sleep(Duration::from_secs(2));
+                if state.is_stale(generation) {
+                    break;
+                }
+
+                ticks += 1;
+                if state.child_exited() {
+                    let log_path = state.log_path();
+                    append_log(
+                        &log_path,
+                        "desktop",
+                        "The backend sidecar exited unexpectedly.",
+                    );
+
+                    let restarts = {
+                        let mut inner = state.inner.lock().expect("backend state poisoned");
+                        inner.healthy = false;
+                        inner.restarts += 1;
+                        inner.restarts
+                    };
+                    if restarts > MAX_RESTARTS {
+                        let mut inner = state.inner.lock().expect("backend state poisoned");
+                        inner.last_error = Some(format!(
+                            "The backend crashed {restarts} times and was not restarted automatically."
+                        ));
+                        let message = inner.last_error.clone().unwrap_or_default();
+                        append_log(&log_path, "desktop", &message);
+                        break;
+                    }
+
+                    let delay = backoff_secs.min(30);
+                    append_log(
+                        &log_path,
+                        "desktop",
+                        &format!(
+                            "Restarting the backend in {delay}s (restart {restarts}/{MAX_RESTARTS})."
+                        ),
+                    );
+                    thread::sleep(Duration::from_secs(delay));
+                    backoff_secs = (backoff_secs * 2).min(30);
+
+                    let port = {
+                        let inner = state.inner.lock().expect("backend state poisoned");
+                        inner.port
+                    };
+                    if let Err(err) = state.spawn_process(&app, port) {
+                        let mut inner = state.inner.lock().expect("backend state poisoned");
+                        inner.last_error = Some(err);
+                    }
+                    continue;
+                }
+
+                // Health probe (roughly every 10 seconds).
+                if ticks % 5 == 0 {
+                    let (port, token) = {
+                        let inner = state.inner.lock().expect("backend state poisoned");
+                        (inner.port, inner.token.clone())
+                    };
+                    let healthy = http_health(port, &token).unwrap_or(false);
+                    let mut inner = state.inner.lock().expect("backend state poisoned");
+                    inner.healthy = healthy;
+                    if !healthy {
+                        inner.last_error =
+                            Some("The backend does not answer on the health endpoint yet.".to_string());
+                    } else if inner
+                        .last_error
+                        .as_deref()
+                        .map(|message| message.contains("health endpoint"))
+                        .unwrap_or(false)
+                    {
+                        inner.last_error = None;
+                    }
+                }
+            }
+        });
+
+        let mut supervisor = self.supervisor.lock().expect("backend supervisor poisoned");
+        if let Some(previous) = supervisor.take() {
+            let _ = previous.join();
+        }
+        *supervisor = Some(handle);
+    }
+
+    fn is_stale(&self, generation: u64) -> bool {
+        self.shutdown.load(Ordering::SeqCst)
+            || self.generation.load(Ordering::SeqCst) != generation
+    }
+
+    fn log_path(&self) -> PathBuf {
+        let inner = self.inner.lock().expect("backend state poisoned");
+        inner.log_path.clone()
+    }
+
+    fn child_exited(&self) -> bool {
+        let mut guard = self.child.lock().expect("backend child poisoned");
+        match guard.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(_)) => {
+                    *guard = None;
+                    true
+                }
+                Ok(None) => false,
+                Err(_) => {
+                    *guard = None;
+                    true
+                }
+            },
+            None => false,
+        }
+    }
+}
+
+impl Default for BackendState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+/// The OS application data directory of the product (not the bundle id).
+pub fn app_data_dir() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        let base = std::env::var("APPDATA").unwrap_or_else(|_| {
+            let profile = std::env::var("USERPROFILE").unwrap_or_default();
+            PathBuf::from(profile)
+                .join("AppData")
+                .join("Roaming")
+                .to_string_lossy()
+                .to_string()
+        });
+        PathBuf::from(base).join("AutoBacklinker")
+    } else if cfg!(target_os = "macos") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("AutoBacklinker")
+    } else {
+        let base = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .to_string_lossy()
+                .to_string()
+        });
+        PathBuf::from(base).join("auto-backlinker")
+    }
+}
+
+/// Directory that holds the local agent configuration and logs.
+pub fn agent_home_dir() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    PathBuf::from(home).join(".autobacklinker")
+}
+
+/// A random, URL safe token used for the local API.
+pub fn random_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+/// The target triple used to name the sidecar binary.
+pub fn target_triple() -> String {
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "aarch64",
+        "x86_64" => "x86_64",
+        other => other,
+    };
+    let os = match std::env::consts::OS {
+        "macos" => "apple-darwin",
+        "windows" => "pc-windows-msvc",
+        "linux" => "unknown-linux-gnu",
+        other => other,
+    };
+    format!("{arch}-{os}")
+}
+
+/// Finds the bundled sidecar binary.
+pub fn locate_sidecar(app: &AppHandle) -> Option<PathBuf> {
+    let suffix = std::env::consts::EXE_SUFFIX;
+    let triple = target_triple();
+    let names = [
+        format!("autobacklinker-api-{triple}{suffix}"),
+        format!("autobacklinker-api{suffix}"),
+    ];
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        for name in names.iter() {
+            candidates.push(resource_dir.join("binaries").join(name));
+            candidates.push(resource_dir.join(name));
+        }
+        // macOS: the sidecar is copied next to the executable
+        // (<app>.app/Contents/MacOS/<name>).
+        if let Some(macos_dir) = resource_dir.parent().map(|parent| parent.join("MacOS")) {
+            for name in names.iter() {
+                candidates.push(macos_dir.join(name));
+            }
+        }
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(dir) = executable.parent() {
+            for name in names.iter() {
+                candidates.push(dir.join("binaries").join(name));
+                candidates.push(dir.join(name));
+            }
+        }
+    }
+    // Development mode: the sidecar lives in the crate directory.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    for name in names.iter() {
+        candidates.push(manifest.join(name));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+/// Appends a line to the backend log file.
+pub fn append_log(log_path: &Path, source: &str, message: &str) {
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
+        let _ = writeln!(file, "[{}] [{}] {}", now_iso8601(), source, message);
+    }
+}
+
+fn spawn_log_pump<R: Read + Send + 'static>(
+    source: R,
+    log_path: PathBuf,
+    label: &'static str,
+) {
+    thread::spawn(move || {
+        let reader = BufReader::new(source);
+        for line in reader.lines() {
+            match line {
+                Ok(line) => append_log(&log_path, label, &line),
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+/// Minimal HTTP health probe (no external dependency).
+fn http_health(port: u16, token: &str) -> Result<bool, String> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|err| err.to_string())?;
+    let timeout = Some(Duration::from_secs(3));
+    let _ = stream.set_read_timeout(timeout);
+    let _ = stream.set_write_timeout(timeout);
+
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nAuthorization: Bearer {token}\r\nX-Local-Token: {token}\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| err.to_string())?;
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(size) => {
+                buffer.extend_from_slice(&chunk[..size]);
+                if buffer.len() > 32 * 1024 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let text = String::from_utf8_lossy(&buffer);
+    let status_line = text.lines().next().unwrap_or_default();
+    let code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok(code >= 200 && code < 400)
+}
+
+/// Current UTC time in ISO-8601 (second precision).
+pub fn now_iso8601() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    format_epoch(seconds)
+}
+
+/// Formats a unix timestamp as ISO-8601 without pulling in a date library.
+pub fn format_epoch(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let remainder = seconds % 86_400;
+    let hour = remainder / 3600;
+    let minute = (remainder % 3600) / 60;
+    let second = remainder % 60;
+
+    // Days since 1970-01-01 -> civil date (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
+}

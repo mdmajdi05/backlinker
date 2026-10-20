@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Only the permissions the Auto Backlinker desktop window actually uses: the native file dialogs (imports and report downloads), notifications, opening files, restarting the app and scoped file access.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "notification:default",
+    "shell:allow-open",
+    "process:allow-restart",
+    "process:allow-exit",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-exists",
+    "fs:scope-app-recursive",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$HOME/Downloads/**",
+        "$HOME/Documents/**",
+        "$HOME/Desktop/**"
+      ]
+    }
+  ]
+}
