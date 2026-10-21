@@ -362,6 +362,174 @@ class BulkActionRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------
+# The central website list
+# --------------------------------------------------------------------------
+
+class WebsiteStats(BaseModel):
+    """How the work on one website went (computed from its tasks)."""
+
+    opportunities: int = 0
+    submitted: int = 0
+    verified: int = 0
+    failed: int = 0
+    pending: int = 0
+    waiting_for_details: int = 0
+    last_attempt_at: datetime | None = None
+
+
+class WebsiteListItem(BaseModel):
+    """One row of the central list of websites."""
+
+    id: str
+    name: str
+    domain: str
+    opportunity_url: str
+    category: str
+    niche: str
+    status: str
+    submission_method: str
+    score: float
+    notes: str | None = None
+    excluded_until: datetime | None = None
+    #: The projects that use this website.
+    project_ids: list[str] = []
+    project_count: int = 0
+    stats: WebsiteStats = Field(default_factory=WebsiteStats)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebsiteStatsRow(BaseModel):
+    """One row of the per website statistics."""
+
+    domain: str
+    name: str
+    category: str
+    status: str
+    opportunities: int = 0
+    submitted: int = 0
+    verified: int = 0
+    failed: int = 0
+    pending: int = 0
+    waiting_for_details: int = 0
+    last_attempt_at: datetime | None = None
+    notes: str | None = None
+
+
+class WebsiteCreateIn(BaseModel):
+    """A website that is added to the central list by hand."""
+
+    opportunity_url: str
+    name: str = ""
+    category: str = "BUSINESS_DIRECTORY"
+    niche: str = ""
+    notes: str | None = None
+    submission_method: str = "UNKNOWN"
+
+    @field_validator("opportunity_url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        from app.core.net import validate_http_url
+
+        candidate = (value or "").strip()
+        if not candidate.startswith(("http://", "https://")):
+            candidate = f"https://{candidate}"
+        return validate_http_url(candidate)
+
+
+class WebsiteUpdateIn(BaseModel):
+    """The editable fields of a website of the central list."""
+
+    name: str | None = None
+    category: str | None = None
+    niche: str | None = None
+    notes: str | None = None
+    status: str | None = None
+    excluded_until: datetime | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        from app.services.websites import WEBSITE_STATUSES
+
+        status = value.strip().upper().replace(" ", "_").replace("-", "_")
+        if status not in WEBSITE_STATUSES:
+            raise ValueError(
+                f"'{value}' is not a website status ({', '.join(WEBSITE_STATUSES)})"
+            )
+        return status
+
+
+class WebsiteImportRowOut(BaseModel):
+    """One row of an import into the central list."""
+
+    row: int
+    action: str
+    reason: str
+    domain: str
+
+
+class WebsiteImportResult(BaseModel):
+    """The result of importing a spreadsheet into the central list."""
+
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    invalid: int = 0
+    rows: list[WebsiteImportRowOut] = []
+
+
+class WebsiteChooseIn(BaseModel):
+    """The websites an operator picks from the central list for a project."""
+
+    website_ids: list[str] = []
+    #: Only websites of this category are taken (the others are skipped).
+    category: str | None = None
+    #: Only websites of this niche are taken (the others are skipped).
+    niche: str | None = None
+    anchor_text: str | None = None
+    target_landing_page: str | None = None
+
+    @field_validator("target_landing_page")
+    @classmethod
+    def _validate_landing_page(cls, value: str | None) -> str | None:
+        if not value:
+            return value
+        from app.core.net import validate_http_url
+
+        candidate = value.strip()
+        if not candidate.startswith(("http://", "https://")):
+            candidate = f"https://{candidate}"
+        return validate_http_url(candidate)
+
+
+class WebsiteChooseResult(BaseModel):
+    """The result of adding websites of the central list to a project."""
+
+    linked: int = 0
+    skipped: int = 0
+    tasks_created: int = 0
+    task_ids: list[str] = []
+
+
+class DetailsGapReport(BaseModel):
+    """Which details an opportunity still misses.
+
+    ``derivable`` are the missing fields the business profile can fill,
+    ``not_derivable`` the ones it cannot - with a plain reason.
+    """
+
+    required: list[str] = []
+    filled: list[str] = []
+    missing: list[str] = []
+    derivable: list[str] = []
+    not_derivable: list[dict[str, str]] = []
+    source: str = "none"
+
+
+# --------------------------------------------------------------------------
 # Discovery
 # --------------------------------------------------------------------------
 

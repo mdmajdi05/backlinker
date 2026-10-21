@@ -189,6 +189,9 @@ class Website(IdMixin, TimestampMixin, Base):
     domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     opportunity_url: Mapped[str] = mapped_column(String(1000), nullable=False)
     category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    #: Free text niche of the site ("pet care", "saas", ...).  It is the second
+    #: axis the central list is filtered by (beside the category).
+    niche: Mapped[str] = mapped_column(String(160), default="", nullable=False, index=True)
     discovery_source: Mapped[str] = mapped_column(String(120), default="manual", nullable=False, index=True)
     discovery_provider: Mapped[str | None] = mapped_column(String(120), nullable=True)
     discovery_run_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

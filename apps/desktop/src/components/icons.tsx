@@ -5,6 +5,7 @@ export type IconName =
   | "projects"
   | "discovery"
   | "registry"
+  | "websites"
   | "queue"
   | "automation"
   | "verification"
@@ -48,6 +49,13 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <ellipse cx="12" cy="6" rx="8" ry="3" />
       <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
       <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+    </>
+  ),
+  websites: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18" />
     </>
   ),
   queue: (

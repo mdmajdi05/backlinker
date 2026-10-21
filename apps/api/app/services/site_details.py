@@ -576,3 +576,110 @@ def generate_details(
     db.commit()
     db.refresh(details)
     return details, generated, source
+
+
+# --------------------------------------------------------------------------
+# The gap report
+# --------------------------------------------------------------------------
+#: The business profile attribute a field can be derived from.
+PROFILE_SOURCE: dict[str, str] = {
+    "company_name": "name",
+    "email": "contact_email",
+    "phone": "contact_phone",
+    "website": "primary_website",
+    "logo_path": "logo_path",
+    "categories": "preferred_categories",
+    "country": "target_countries",
+    "state": "target_regions",
+}
+
+#: The plain reason why a field cannot be derived from the business profile.
+NOT_DERIVABLE_REASON: dict[str, str] = {
+    "company_name": "the business profile has no company name",
+    "description": "the business profile has no description that could be reused",
+    "email": "the business profile has no e-mail address",
+    "phone": "the business profile has no phone number",
+    "website": "the business profile has no website",
+    "address": "the business profile has no street address",
+    "city": "the business profile has no city",
+    "state": "the business profile has no state or region",
+    "country": "the business profile has no target country",
+    "postal_code": "the business profile has no postal code",
+    "logo_path": "the business profile has no logo",
+    "categories": "the business profile has no preferred categories",
+    "founded_year": "the business profile has no year founded",
+    "employee_count": "the business profile has no number of employees",
+}
+
+
+def derivable_from_profile(profile: BusinessProfile | None, field: str) -> bool:
+    """Could this field be filled from the business profile?
+
+    The rules are the ones of :func:`generate_details`: a field is derivable
+    when the profile really carries a value for it.  Everything else stays
+    missing - nothing is invented.
+    """
+    if profile is None:
+        return False
+    fixed = target_field(field)
+    if fixed == "description":
+        return _profile_has_content(profile)
+    attribute = PROFILE_SOURCE.get(fixed)
+    if attribute is None:
+        return False
+    value = getattr(profile, attribute, None)
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return bool(str(value or "").strip())
+
+
+def not_derivable_reason(profile: BusinessProfile | None, field: str) -> str:
+    """Why this field cannot be derived from the business profile."""
+    if profile is None:
+        return "the project has no business profile"
+    reason = NOT_DERIVABLE_REASON.get(target_field(field))
+    if reason:
+        return reason
+    return f"the business profile cannot provide '{label_for(field)}'"
+
+
+def gap_report(db: Session, opportunity: Opportunity) -> dict[str, Any]:
+    """Which details an opportunity still misses.
+
+    The report answers three questions:
+
+    * which details does the target site ask for (``required``),
+    * which of them are filled already (``filled``) and which are still
+      missing (``missing``),
+    * which of the missing ones the business profile could provide
+      (``derivable``) and which ones it cannot (``not_derivable``) - the
+      latter with a plain reason.
+    """
+    details = get_details(db, opportunity.id)
+    required = required_field_names(db, opportunity)
+    filled = [name for name in required if is_filled(details, name)]
+    missing = [name for name in required if not is_filled(details, name)]
+
+    profile = _profile_of(db, opportunity)
+    derivable: list[str] = []
+    not_derivable: list[dict[str, str]] = []
+    for name in missing:
+        if derivable_from_profile(profile, name):
+            derivable.append(name)
+        else:
+            not_derivable.append(
+                {
+                    "field": name,
+                    "label": label_for(name),
+                    "reason": not_derivable_reason(profile, name),
+                }
+            )
+
+    return {
+        "required": required,
+        "filled": filled,
+        "missing": missing,
+        "derivable": derivable,
+        "not_derivable": not_derivable,
+        "source": "profile" if profile is not None else "none",
+    }

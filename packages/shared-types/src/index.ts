@@ -745,6 +745,82 @@ export interface ExecutionSettings {
   states?: Record<string, string>;
 }
 
+/** State of a website in the central list. */
+export const WebsiteStatus = {
+  DISCOVERED: "DISCOVERED",
+  NEEDS_REVIEW: "NEEDS_REVIEW",
+  APPROVED: "APPROVED",
+  ACTIVE: "ACTIVE",
+  /** The site is reachable but does not accept listings any more. */
+  NOT_WORKING: "NOT_WORKING",
+  /** The site closed down. */
+  DELETED: "DELETED",
+  EXCLUDED: "EXCLUDED",
+  REJECTED: "REJECTED",
+  DUPLICATE: "DUPLICATE",
+} as const;
+export type WebsiteStatus = (typeof WebsiteStatus)[keyof typeof WebsiteStatus];
+
+export const WEBSITE_STATUSES = Object.values(WebsiteStatus) as WebsiteStatus[];
+
+/** How the work on one website went. */
+export interface WebsiteStats {
+  opportunities: number;
+  submitted: number;
+  verified: number;
+  failed: number;
+  pending: number;
+  waiting_for_details: number;
+  last_attempt_at: string | null;
+}
+
+/** One row of the central website list. */
+export interface WebsiteListItem {
+  id: string;
+  name: string;
+  domain: string;
+  opportunity_url: string;
+  category: string;
+  niche: string;
+  status: string;
+  submission_method: string;
+  score: number;
+  notes: string | null;
+  excluded_until: string | null;
+  project_ids: string[];
+  project_count: number;
+  stats: WebsiteStats;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The result of importing websites into the central list. */
+export interface WebsiteImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  invalid: number;
+  rows: Array<{ row: number; action: string; reason: string; domain: string }>;
+}
+
+/** The result of adding websites from the central list to a project. */
+export interface WebsiteChooseResult {
+  linked: number;
+  skipped: number;
+  tasks_created: number;
+  task_ids: string[];
+}
+
+/** Which details could not be derived from the business profile. */
+export interface DetailsGapReport {
+  required: string[];
+  filled: string[];
+  missing: string[];
+  derivable: string[];
+  not_derivable: Array<{ field: string; label: string; reason: string }>;
+  source: string;
+}
+
 export interface WorkerStatus {
   execution: ExecutionSettings;
   running_jobs: number;

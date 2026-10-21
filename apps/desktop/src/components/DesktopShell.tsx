@@ -15,6 +15,7 @@ import { DiscoveryPage } from "../pages/DiscoveryPage";
 import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { OnboardingPage } from "../pages/OnboardingPage";
 import { RegistryPage } from "../pages/RegistryPage";
+import { WebsiteListPage } from "../pages/WebsiteListPage";
 import { QueuePage } from "../pages/QueuePage";
 import { AutomationPage } from "../pages/AutomationPage";
 import { AutomationPanel } from "./AutomationPanel";
@@ -313,6 +314,8 @@ function renderRoute(route: string) {
       return <DiscoveryPage />;
     case "registry":
       return <RegistryPage />;
+    case "websites":
+      return <WebsiteListPage />;
     case "queue":
       return <QueuePage />;
     case "automation":

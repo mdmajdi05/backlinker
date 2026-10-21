@@ -29,6 +29,7 @@ from app.api.routes import (
     storage,
     sync,
     verification,
+    websites,
 )
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
@@ -197,6 +198,7 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix=prefix)
     app.include_router(autopilot.router, prefix=prefix)
     app.include_router(registry.router, prefix=prefix)
+    app.include_router(websites.router, prefix=prefix)
     app.include_router(site_details.router, prefix=prefix)
     app.include_router(discovery.router, prefix=prefix)
     app.include_router(integrations.router, prefix=prefix)

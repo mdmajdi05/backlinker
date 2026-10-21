@@ -11,6 +11,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/projects", label: "Projects", icon: "▤", group: "workspace" },
   { href: "/discovery", label: "Opportunity Discovery", icon: "◎", group: "workspace" },
   { href: "/registry", label: "Website Registry", icon: "▦", group: "workspace" },
+  { href: "/websites", label: "Website list", icon: "▥", group: "workspace" },
   { href: "/queue", label: "Backlink Queue", icon: "≣", group: "operations" },
   { href: "/automation", label: "Live Automation", icon: "◈", group: "operations" },
   { href: "/verification", label: "Verification", icon: "✓", group: "operations" },

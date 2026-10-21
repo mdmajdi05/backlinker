@@ -13,6 +13,7 @@ import {
   Input,
   KeyValue,
   Select,
+  Skeleton,
   StatusBadge,
   Tabs,
   Tooltip,
@@ -28,8 +29,20 @@ import {
   VERIFICATION_STATUS_LABELS,
 } from "@/lib/constants";
 import { DetailsStateBadge, SubmissionDetailsPanel } from "@/components/SubmissionDetailsPanel";
+import { ErrorPanel } from "@/components/States";
+import { loadDetailsGap, type DetailsGap, type GapField } from "@/lib/details-gap";
 
-export type OpportunityDrawerTab = "details" | "overview";
+export type OpportunityDrawerTab = "details" | "gap" | "overview";
+
+/** The report before the backend answered. */
+const EMPTY_GAP: DetailsGap = {
+  required: [],
+  filled: [],
+  missing: [],
+  derivable: [],
+  notDerivable: [],
+  source: "none",
+};
 
 export function OpportunityDrawer({
   opportunity,
@@ -57,6 +70,38 @@ export function OpportunityDrawer({
   }, [open, initialTab]);
 
   const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
+
+  /* The gap report answers what this site asks for and what the business
+   * profile of the project can supply. */
+  const gapReport = useResource(
+    async () => {
+      if (!opportunity) throw new Error("No opportunity selected");
+      return loadDetailsGap(apiClient, opportunity.id, opportunity.project_id);
+    },
+    [opportunity?.id, tab],
+    { enabled: Boolean(opportunity) && tab === "gap" },
+  );
+
+  const gap = gapReport.data?.gap ?? EMPTY_GAP;
+
+  /** Fills the empty fields the business profile can supply. */
+  const generateGap = async () => {
+    if (!opportunity) return;
+    const outcome = await action.run(() =>
+      api.submissionDetails.generate(apiClient, opportunity.id),
+    );
+    if (outcome.ok && outcome.data) {
+      const generated = outcome.data.generated.length;
+      toast.push(
+        generated > 0
+          ? `The backend filled ${generated} field(s) from the business profile`
+          : "The backend did not find anything to derive from the business profile",
+        generated > 0 ? "success" : "info",
+      );
+      gapReport.reload();
+      onChanged?.();
+    }
+  };
 
   const updateStatus = async (status: OpportunityStatus, message: string) => {
     if (!opportunity) return;
@@ -218,6 +263,7 @@ export function OpportunityDrawer({
           <Tabs
             tabs={[
               { id: "details", label: "Submission details" },
+              { id: "gap", label: "Gap report" },
               { id: "overview", label: "Overview" },
             ]}
             active={tab}
@@ -226,6 +272,117 @@ export function OpportunityDrawer({
 
           {tab === "details" ? (
             <SubmissionDetailsPanel opportunityId={opportunity.id} onChanged={onChanged} />
+          ) : tab === "gap" ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-content">Gap report</h3>
+                  <p className="text-xs text-content-muted">
+                    What this site asks for, what your business profile can supply and what
+                    only you can fill in.
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={generateGap}
+                  loading={action.pending}
+                  disabled={gap.derivable.length === 0}
+                  title={
+                    gap.derivable.length === 0
+                      ? "There is no missing value the business profile could supply"
+                      : "Fill the empty fields from the business profile"
+                  }
+                >
+                  Generate the derivable ones
+                </Button>
+              </div>
+
+              {gapReport.loading && !gapReport.data ? (
+                <div className="space-y-2" aria-busy="true" aria-live="polite">
+                  <span className="sr-only">Loading the gap report…</span>
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-20 w-full" />
+                </div>
+              ) : gapReport.error ? (
+                <ErrorPanel
+                  error={gapReport.error}
+                  onRetry={gapReport.reload}
+                  title="Could not load the gap report"
+                />
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone="neutral">{gap.required.length} required</Badge>
+                    <Badge tone={gap.missing.length > 0 ? "warning" : "success"}>
+                      {gap.missing.length} missing
+                    </Badge>
+                    <Badge tone="info">{gap.derivable.length} derivable</Badge>
+                    <Badge tone={gap.notDerivable.length > 0 ? "danger" : "neutral"}>
+                      {gap.notDerivable.length} not derivable
+                    </Badge>
+                    {gap.source === "none" ? (
+                      <Tooltip label="The project of this opportunity has no business profile - nothing can be derived from it.">
+                        <span>
+                          <Badge tone="neutral">no business profile</Badge>
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                  </div>
+
+                  {gap.required.length === 0 ? (
+                    <Alert tone="neutral" title="This site does not ask for any details">
+                      The backend reports no required fields for this opportunity - the
+                      submission runs without asking you for anything.
+                    </Alert>
+                  ) : gap.missing.length === 0 ? (
+                    <Alert tone="success" title="Everything this site asks for is filled in">
+                      The submission can run without asking you for anything else.
+                    </Alert>
+                  ) : null}
+
+                  {gap.missing.length > 0 ? (
+                    <section className="rounded-lg border border-line">
+                      <h4 className="border-b border-line px-3 py-2 text-xs font-semibold text-content">
+                        Still missing
+                      </h4>
+                      <ul className="divide-y divide-line">
+                        {gap.missing.map((field) => (
+                          <li key={field.name} className="px-3 py-2">
+                            <GapRow field={field} />
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+
+                  {gap.filled.length > 0 ? (
+                    <section className="rounded-lg border border-line">
+                      <h4 className="border-b border-line px-3 py-2 text-xs font-semibold text-content">
+                        Already filled in
+                      </h4>
+                      <ul className="divide-y divide-line">
+                        {gap.filled.map((field) => (
+                          <li key={field.name} className="px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-medium text-content">
+                                {field.label}
+                              </span>
+                              <Badge tone="success">filled</Badge>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+
+                  <p className="text-[11px] text-content-subtle">
+                    {gapReport.data?.source === "client"
+                      ? "The backend does not expose the gap endpoint yet - the classification below is derived in the client from the business profile."
+                      : "The classification comes from the gap endpoint of the backend - nothing is invented."}
+                  </p>
+                </>
+              )}
+            </div>
           ) : (
             <div className="space-y-4">
               <CardSection title="Submission details">
@@ -413,5 +570,27 @@ function CardSection({ title, children }: { title: string; children: React.React
       <h3 className="border-b border-line px-3 py-2 text-xs font-semibold text-content">{title}</h3>
       <div className="p-3">{children}</div>
     </section>
+  );
+}
+
+/** One field of the gap report with the reason why it can (not) be derived. */
+function GapRow({ field }: { field: GapField }) {
+  return (
+    <div className="space-y-0.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-content">{field.label}</span>
+        {field.derivable ? (
+          <Badge tone="success">derivable</Badge>
+        ) : (
+          <Badge tone="warning">not derivable</Badge>
+        )}
+        {field.field ? (
+          <span className="font-mono text-[10px] text-content-subtle">{field.field}</span>
+        ) : (
+          <span className="font-mono text-[10px] text-content-subtle">{field.name}</span>
+        )}
+      </div>
+      <p className="text-xs text-content-muted">{field.reason}</p>
+    </div>
   );
 }

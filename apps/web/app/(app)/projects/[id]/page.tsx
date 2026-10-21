@@ -21,10 +21,13 @@ import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, CardSkeleton, ErrorPanel } from "@/components/States";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { AutoPilotPanel } from "@/components/AutoPilotPanel";
+import { AddToProjectDialog } from "@/components/AddToProjectDialog";
+import { WebsiteListPanel } from "@/components/WebsiteListPanel";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
+  const [addOpen, setAddOpen] = React.useState(false);
 
   const project = useResource(() => api.projects.get(apiClient, projectId), [projectId]);
   const settings = useResource(
@@ -148,6 +151,26 @@ export default function ProjectDetailPage() {
 
             <Card>
               <CardHeader
+                title="Add from website list"
+                description="Pick the websites of the central list for this project"
+              />
+              <CardBody>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="max-w-xl text-xs text-content-muted">
+                    The central list holds every website you know - added by hand or imported
+                    from a spreadsheet. Choose the sites this project should work on, filter
+                    them by category or niche and link them in one step. The anchor text and
+                    the target landing page of the project are filled in and stay editable.
+                  </p>
+                  <Button size="sm" onClick={() => setAddOpen(true)}>
+                    Add from website list
+                  </Button>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader
                 title="Auto pilot"
                 description="Automatic submission for the websites of this project"
               />
@@ -155,6 +178,20 @@ export default function ProjectDetailPage() {
                 <AutoPilotPanel projectId={projectId} projectName={data.name} />
               </CardBody>
             </Card>
+
+            <div className="space-y-2">
+              <h2 className="text-sm font-semibold text-content">Websites of this project</h2>
+              <p className="text-xs text-content-muted">
+                The websites of the central list that this project works on - with the
+                counters of the submissions. Mark a site that stopped working here, it keeps
+                its place in the central list.
+              </p>
+              <WebsiteListPanel
+                projectId={projectId}
+                showProjectFilter={false}
+                onChanged={project.reload}
+              />
+            </div>
 
             <Card>
               <CardHeader
@@ -177,6 +214,13 @@ export default function ProjectDetailPage() {
           </>
         ) : null}
       </AsyncSection>
+
+      <AddToProjectDialog
+        projectId={projectId}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onChanged={project.reload}
+      />
     </div>
   );
 }

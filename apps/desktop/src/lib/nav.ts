@@ -5,6 +5,7 @@ export type RouteId =
   | "projects"
   | "discovery"
   | "registry"
+  | "websites"
   | "queue"
   | "automation"
   | "verification"
@@ -50,6 +51,13 @@ export const NAV_ENTRIES: NavEntry[] = [
     id: "registry",
     label: "Registry",
     description: "Every discovered opportunity and its review state.",
+    group: "workspace",
+    implemented: true,
+  },
+  {
+    id: "websites",
+    label: "Website list",
+    description: "The central list of the sites where the backlinks are made.",
     group: "workspace",
     implemented: true,
   },

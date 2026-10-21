@@ -18,10 +18,8 @@ import {
 import { api, apiClient, type AutoPilotState } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
-import {
-  SubmissionDetailsPanel,
-  useSubmissionDetailsStates,
-} from "../components/SubmissionDetailsPanel";
+import { OpportunityDrawer } from "../components/OpportunityDrawer";
+import { useSubmissionDetailsStates } from "../components/SubmissionDetailsPanel";
 import { formatNumber, hostOf, truncate } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Opportunity, Project } from "@autobacklinker/shared-types";
@@ -395,9 +393,8 @@ export function RegistryPage() {
       ) : null}
 
       {detailsFor ? (
-        <SubmissionDetailsPanel
-          opportunityId={detailsFor.id}
-          opportunityName={detailsFor.name}
+        <OpportunityDrawer
+          opportunity={detailsFor}
           onClose={() => setDetailsFor(null)}
           onChanged={detailStates.reload}
         />

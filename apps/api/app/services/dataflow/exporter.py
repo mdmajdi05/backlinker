@@ -3,12 +3,18 @@
 Builds the operational reports of the platform as an ``.xlsx`` workbook (or a
 flat ``.csv``) and stores them inside the managed data directory.
 
-Nine sheets are produced, using the sheet names of the shared contract
+Ten sheets are produced, using the sheet names of the shared contract
 (``ReportSheet``):
 
-``Executive Summary``, ``All Opportunities``, ``Verified Backlinks``,
-``Pending Tasks``, ``Failed Tasks``, ``Skipped Tasks``,
-``Verification History``, ``Activity Log`` and ``Import Errors``.
+``Executive Summary``, ``All Opportunities``, ``Per website``,
+``Verified Backlinks``, ``Pending Tasks``, ``Failed Tasks``,
+``Skipped Tasks``, ``Verification History``, ``Activity Log`` and
+``Import Errors``.
+
+The ``Per website`` sheet holds one row per website (domain) with the
+counters of the submissions: how many opportunities it has, how many of them
+were submitted, verified, failed, are still pending or wait for the details of
+the site.  It is the sheet the operator uses to decide what to retry.
 
 Unknown values are written as empty cells - the exporter never invents data.
 """
@@ -44,12 +50,19 @@ from app.db.models import (
 
 log = get_logger(__name__)
 
-__all__ = ["COLUMNS", "REPORT_SHEETS", "generate_report"]
+__all__ = [
+    "COLUMNS",
+    "REPORT_SHEETS",
+    "WEBSITE_COLUMNS",
+    "generate_report",
+    "report_failed_task_ids",
+]
 
 #: Sheet names (mirrors ``ReportSheet`` in ``packages/shared-types``).
 REPORT_SHEETS: tuple[str, ...] = (
     "Executive Summary",
     "All Opportunities",
+    "Per website",
     "Verified Backlinks",
     "Pending Tasks",
     "Failed Tasks",
@@ -58,6 +71,37 @@ REPORT_SHEETS: tuple[str, ...] = (
     "Activity Log",
     "Import Errors",
 )
+
+#: The column set of the "Per website" sheet (one row per website / domain).
+WEBSITE_COLUMNS: tuple[str, ...] = (
+    "Domain",
+    "Website",
+    "Category",
+    "Status",
+    "Opportunities",
+    "Submitted",
+    "Verified",
+    "Failed",
+    "Pending",
+    "Waiting for details",
+    "Last attempt",
+    "Notes",
+)
+
+#: Task statuses that count as "the backlink was submitted" in the sheet.
+WEBSITE_SUBMITTED_STATUSES = ("SUBMITTED", "PUBLISHED_UNVERIFIED", "VERIFIED_LIVE")
+
+#: Task statuses that count as "the backlink is live" in the sheet.
+WEBSITE_VERIFIED_STATUSES = ("VERIFIED_LIVE",)
+
+#: Task statuses that count as "the submission failed" in the sheet.
+WEBSITE_FAILED_STATUSES = ("FAILED",)
+
+#: Task statuses that count as "the work is still in flight" in the sheet.
+WEBSITE_PENDING_STATUSES = ("QUEUED", "RUNNING", "RETRY_SCHEDULED")
+
+#: Task statuses that count as "a human has to provide the site details".
+WEBSITE_WAITING_STATUSES = ("WAITING_FOR_USER",)
 
 #: The column set of the opportunity / task shaped sheets.
 COLUMNS: tuple[str, ...] = (
@@ -149,6 +193,7 @@ DATE_COLUMNS = frozenset(
         "Next Scheduled Retry",
         "Timestamp",
         "Created At",
+        "Last attempt",
     }
 )
 
@@ -169,7 +214,7 @@ def generate_report(db: Session, job: ExportJob) -> None:
     path = directory / f"report-{job.id}.{suffix}"
 
     if suffix == "csv":
-        _write_csv(path, data["opportunities"])
+        _write_csv(path, data)
     else:
         _write_workbook(path, data)
 

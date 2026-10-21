@@ -23,9 +23,12 @@ import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { AutoPilotPanel } from "../components/AutoPilotPanel";
+import { AddToProjectDialog } from "../components/AddToProjectDialog";
 import { formatDate, formatNumber, titleCase } from "../lib/format";
 import { navigate } from "../lib/router";
 import { openPath, sendNativeNotification } from "../lib/backend";
+import { fetchWebsites, websiteStatusLabel } from "../lib/websites";
+import { isMissingEndpoint } from "../lib/api";
 import type {
   BusinessProfile,
   ExecutionEnvironment,
@@ -342,6 +345,7 @@ function SettingsForm({
 export function ProjectDetailPage({ projectId }: { projectId: string }) {
   const toast = useToast();
   const [switching, setSwitching] = React.useState(false);
+  const [choosingWebsites, setChoosingWebsites] = React.useState(false);
 
   const project = useAsync(
     () => api.projects.get(apiClient, projectId),
@@ -375,6 +379,10 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
   const allProjects = useAsync(
     () => api.projects.list(apiClient, { page: 1, page_size: 100 }),
     [],
+  );
+  const linkedWebsites = useAsync(
+    () => fetchWebsites({ page: 1, page_size: 100, project_id: projectId }),
+    [projectId],
   );
   const profile = useAsync(
     () => {
@@ -690,6 +698,117 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
 
       <Card>
         <CardHeader
+          title="Websites of this project"
+          description="The sites this project works on - they are picked from the central website list."
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setChoosingWebsites(true)}
+            >
+              Add from the website list
+            </Button>
+          }
+        />
+        <CardBody className="p-0">
+          {linkedWebsites.loading && !linkedWebsites.data ? (
+            <div className="p-4">
+              <LoadingBlock rows={2} />
+            </div>
+          ) : null}
+
+          {linkedWebsites.error ? (
+            <div className="p-4">
+              {isMissingEndpoint(linkedWebsites.error) ? (
+                <Alert
+                  tone="warning"
+                  title="The local backend does not know the website list yet"
+                >
+                  The endpoint <code>/api/v1/websites</code> answers with 404.
+                  The central list of the websites - and with it the button that
+                  adds them to a project - needs a newer backend.
+                </Alert>
+              ) : (
+                <ErrorBlock
+                  message={linkedWebsites.error}
+                  onRetry={linkedWebsites.reload}
+                />
+              )}
+            </div>
+          ) : null}
+
+          {linkedWebsites.data && linkedWebsites.data.items.length > 0 ? (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Website</Th>
+                  <Th>Category</Th>
+                  <Th>Niche</Th>
+                  <Th>State</Th>
+                  <Th className="text-right">Submitted</Th>
+                  <Th className="text-right">Failed</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {linkedWebsites.data.items.map((item) => (
+                  <tr key={item.id}>
+                    <Td>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-content">
+                          {item.name || item.domain}
+                        </p>
+                        <p className="truncate text-xs text-content-subtle">
+                          {item.domain}
+                        </p>
+                      </div>
+                    </Td>
+                    <Td className="whitespace-nowrap text-xs">
+                      {item.category.replace(/_/g, " ")}
+                    </Td>
+                    <Td className="whitespace-nowrap text-xs">
+                      {item.niche || "-"}
+                    </Td>
+                    <Td>
+                      <Badge tone="neutral">
+                        {websiteStatusLabel(item.status)}
+                      </Badge>
+                    </Td>
+                    <Td className="text-right text-xs tabular-nums">
+                      {formatNumber(item.stats.submitted)}
+                    </Td>
+                    <Td className="text-right text-xs tabular-nums text-danger">
+                      {formatNumber(item.stats.failed)}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          ) : null}
+
+          {!linkedWebsites.loading &&
+          !linkedWebsites.error &&
+          linkedWebsites.data &&
+          linkedWebsites.data.items.length === 0 ? (
+            <div className="p-4">
+              <NothingYet
+                title="No website in this project yet"
+                description="Pick the sites this project should work on from the central website list."
+                action={
+                  <Button
+                    size="sm"
+                    onClick={() => setChoosingWebsites(true)}
+                  >
+                    Add from the website list
+                  </Button>
+                }
+              />
+            </div>
+          ) : null}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
           title="Switch project"
           description="Every project of this installation"
         />
@@ -721,6 +840,20 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           ) : null}
         </CardBody>
       </Card>
+
+      <AddToProjectDialog
+        projectId={projectId}
+        projectName={data?.name}
+        open={choosingWebsites}
+        onClose={() => setChoosingWebsites(false)}
+        onAdded={() => linkedWebsites.reload()}
+        defaultAnchorText={
+          profile.data?.preferred_anchors?.[0] || profile.data?.name || ""
+        }
+        defaultTargetLandingPage={
+          data?.target_website || landingPages[0]?.url || ""
+        }
+      />
     </div>
   );
 }

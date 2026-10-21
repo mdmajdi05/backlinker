@@ -131,6 +131,41 @@ countries, excluded domains, monthly target and campaign goals.
 
 ---
 
+## The website list — `/api/v1/websites`
+
+The central list of websites where the backlinks are made. It is independent
+of the projects: a project picks the sites it wants from it.
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/websites` | Paginated list with the per website statistics. Filters: `search`, `category`, `niche`, `status`, `project_id`, `sort`, `order`. Rows with `status=DELETED` are hidden unless they are asked for. | yes |
+| POST | `/api/v1/websites` | Add a website to the list by hand (`opportunity_url`, `name`, `category`, `niche`, `notes`, `submission_method`). A duplicate domain + URL answers `409 duplicate`. | yes |
+| PATCH | `/api/v1/websites/{id}` | Edit name, category, niche, notes, status (`ACTIVE`, `NEEDS_REVIEW`, `APPROVED`, `NOT_WORKING`, `EXCLUDED`, `REJECTED`, `DELETED`, …) or the exclusion date. | yes |
+| DELETE | `/api/v1/websites/{id}` | Soft delete: the status becomes `DELETED`, the opportunities, the tasks and the history stay. | yes |
+| POST | `/api/v1/websites/import` | Import Excel/CSV into the list. Answers how many rows were created, updated, skipped (a deleted site is never resurrected) or invalid - always with a reason. | yes |
+| GET | `/api/v1/websites/stats` | One row per domain: opportunities, submitted, verified, failed, pending, waiting for details, last attempt. Computed, never stored. | yes |
+| POST | `/api/v1/projects/{id}/websites/choose` | Pick websites from the list into a project (`website_ids`, optional `category`, `niche`, `anchor_text`, `target_landing_page`). Creates the opportunity and the submission task; a second run changes nothing. | yes |
+
+## Submission details — `/api/v1/opportunities/{id}/details`
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/opportunities/{id}/details` | The values the target site asks for, plus `required`, `missing` and `complete`. | yes |
+| PUT | `/api/v1/opportunities/{id}/details` | Save the fields that were sent. | yes |
+| DELETE | `/api/v1/opportunities/{id}/details` | Clear the details of this opportunity. | yes |
+| GET | `/api/v1/opportunities/{id}/details/required` | Only the required, the missing and the complete flag. | yes |
+| GET | `/api/v1/opportunities/{id}/details/gaps` | Which details are missing, which of them can be derived from the business profile and which cannot - with a plain reason. | yes |
+| POST | `/api/v1/opportunities/{id}/details/generate` | Fill the empty fields from the business profile (AI when it is configured, the deterministic profile facts otherwise). Never invents facts. | yes |
+
+## Automatic submission — `/api/v1/projects/{id}/autopilot`
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/projects/{id}/autopilot` | The state: `enabled`, `categories`, `waiting`, `submitted`, `pending`, `queued`. | yes |
+| POST | `/api/v1/projects/{id}/autopilot` | Switch it on or off (`enabled`, `categories`). When it is on, approving an opportunity queues it automatically. | yes |
+
+---
+
 ## Registry / opportunities
 
 | Method | Path | Purpose | Auth |
@@ -259,6 +294,21 @@ optional `project_id` field.
 | PATCH | `/api/v1/adapters/{adapter_id}` | Enable / disable an adapter or change its metadata. | yes |
 | GET | `/api/v1/adapters/{adapter_id}/configuration` | Per-project configuration of the adapter. | yes |
 | PUT | `/api/v1/adapters/{adapter_id}/configuration` | Store the configuration (`project_id` optional = global). | yes |
+
+---
+
+## Browser automation and the worker — `/api/v1`
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/browser/status` | Is the isolated browser runtime ready? Includes the isolation guarantees (own profile, headless default, extensions and sync disabled). | yes |
+| POST | `/api/v1/browser/install` | Download the browser runtime into the data directory of this installation. | yes |
+| GET | `/api/v1/worker/status` | The execution state, the running jobs, the machine load and the effective limit. | yes |
+| PUT | `/api/v1/worker/settings` | `max_browser_jobs`, `resource_preference`, `headless`, `per_domain_limit`, `per_domain_requests_per_minute`, `task_timeout_seconds`, `page_timeout_seconds`. | yes |
+| POST | `/api/v1/worker/pause` | Stop claiming new jobs - the running ones finish. | yes |
+| POST | `/api/v1/worker/resume` | Claim jobs again. | yes |
+| POST | `/api/v1/worker/stop` | Stop claiming and cancel the running jobs. | yes |
+| GET | `/api/v1/resources` | The current CPU, memory and disk measurement with the effective concurrency. | yes |
 
 ---
 

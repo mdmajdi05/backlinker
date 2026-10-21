@@ -70,6 +70,10 @@ import type {
   StorageStatus,
   SubmissionDetails,
   SubmissionDetailsUpdate,
+  WebsiteChooseResult,
+  WebsiteImportResult,
+  WebsiteListItem,
+  WebsiteStats,
   StorageTestResult,
   SyncChangesResponse,
   SyncEntityPushRequest,
@@ -595,7 +599,22 @@ export const api = {
     update: (c: ApiClient, opportunityId: string, body: SubmissionDetailsUpdate) => c.put<SubmissionDetails>(`/api/v1/opportunities/${opportunityId}/details`, body).then((value) => normalizeSubmissionDetails(value)),
     remove: (c: ApiClient, opportunityId: string) => c.delete<void>(`/api/v1/opportunities/${opportunityId}/details`),
     required: (c: ApiClient, opportunityId: string) => c.get<{ required: string[]; missing: string[]; complete: boolean }>(`/api/v1/opportunities/${opportunityId}/details/required`),
+    gaps: (c: ApiClient, opportunityId: string) => c.get<DetailsGapReport>(`/api/v1/opportunities/${opportunityId}/details/gaps`),
     generate: (c: ApiClient, opportunityId: string) => c.post<GenerateDetailsResult>(`/api/v1/opportunities/${opportunityId}/details/generate`).then(normalizeGenerateResult),
+  },
+
+  /**
+   * The central list of websites where the backlinks are made.  It is
+   * independent of the projects - a project picks the sites it wants from it.
+   */
+  websites: {
+    list: (c: ApiClient, query?: Query) => c.get<Paginated<WebsiteListItem>>("/api/v1/websites", { ...query }),
+    create: (c: ApiClient, body: Record<string, unknown>) => c.post<WebsiteListItem>("/api/v1/websites", body),
+    update: (c: ApiClient, id: string, body: Record<string, unknown>) => c.patch<WebsiteListItem>(`/api/v1/websites/${id}`, body),
+    remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/websites/${id}`),
+    importFile: (c: ApiClient, file: File, fields: Record<string, string> = {}) => c.upload<WebsiteImportResult>("/api/v1/websites/import", file, fields),
+    stats: (c: ApiClient, projectId?: string) => c.get<WebsiteStatsRow[]>("/api/v1/websites/stats", { project_id: projectId }),
+    chooseForProject: (c: ApiClient, projectId: string, body: Record<string, unknown>) => c.post<WebsiteChooseResult>(`/api/v1/projects/${projectId}/websites/choose`, body),
   },
 
   /** The automatic submission of a project. */
@@ -697,4 +716,30 @@ export function normalizeGenerateResult(value: unknown): GenerateDetailsResult {
     generated: asStringList(raw.generated),
     source: asString(raw.source) ?? "profile",
   };
+}
+
+/** One row of the per website statistics. */
+export interface WebsiteStatsRow {
+  domain: string;
+  name: string;
+  category: string;
+  status: string;
+  opportunities: number;
+  submitted: number;
+  verified: number;
+  failed: number;
+  pending: number;
+  waiting_for_details: number;
+  last_attempt_at: string | null;
+  notes: string | null;
+}
+
+/** Which details of an opportunity could not be derived from the profile. */
+export interface DetailsGapReport {
+  required: string[];
+  filled: string[];
+  missing: string[];
+  derivable: string[];
+  not_derivable: Array<{ field: string; label: string; reason: string }>;
+  source: string;
 }
