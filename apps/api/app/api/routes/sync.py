@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 
 from app.api.deps import CurrentUser, DbSession
+from app.schemas import SyncChangeOut, SyncChangesOut
 from app.services import sync as sync_service
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -82,12 +83,12 @@ def receive_change(entity_type: str, payload: dict, db: DbSession, user: Current
     return {"ok": True, "entity_type": entity_type, "entity_id": entity_id, "version": version}
 
 
-@router.get("/changes")
+@router.get("/changes", response_model=SyncChangesOut)
 def list_changes(
     db: DbSession,
     user: CurrentUser,
     since: datetime | None = Query(default=None),
-    limit: int = Query(default=200, le=1000),
+    limit: int = Query(default=200, ge=1, le=1000),
 ) -> dict:
     """Serve the changes a local workspace should pull."""
     from sqlalchemy import select
@@ -101,14 +102,14 @@ def list_changes(
     changes = db.execute(stmt).scalars().all()
     return {
         "changes": [
-            {
-                "entity_type": change.entity_type,
-                "entity_id": change.entity_id,
-                "operation": change.operation,
-                "version": change.version,
-                "payload": change.payload,
-                "created_at": change.created_at.isoformat() if change.created_at else None,
-            }
+            SyncChangeOut(
+                entity_type=change.entity_type,
+                entity_id=change.entity_id,
+                operation=change.operation,
+                version=change.version,
+                payload=change.payload or {},
+                created_at=change.created_at.isoformat() if change.created_at else None,
+            )
             for change in changes
         ]
     }

@@ -6,7 +6,7 @@ import csv
 import io
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 
@@ -20,6 +20,7 @@ from app.schemas import (
     ImportCommitRequest,
     ImportJobOut,
     ImportPreviewOut,
+    ImportRowOut,
     PaginatedResponse,
 )
 from app.services.events import record_event
@@ -126,9 +127,24 @@ def commit_import(import_id: str, payload: ImportCommitRequest, db: DbSession, u
 
 
 @imports_router.get("", response_model=PaginatedResponse[ImportJobOut])
-def list_imports(db: DbSession, user: CurrentUser, page: Pagination) -> PaginatedResponse:
-    stmt = select(ImportJob).order_by(ImportJob.created_at.desc())
+def list_imports(
+    db: DbSession,
+    user: CurrentUser,
+    page: Pagination,
+    project_id: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+) -> PaginatedResponse:
+    stmt = select(ImportJob)
     count_stmt = select(func.count()).select_from(ImportJob)
+    conditions = []
+    if project_id:
+        conditions.append(ImportJob.project_id == project_id)
+    if status_filter:
+        conditions.append(ImportJob.status == status_filter)
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
+    stmt = stmt.order_by(ImportJob.created_at.desc())
     result = paginate(db, stmt, ImportJob, page.page, page.page_size, count_stmt)
     return PaginatedResponse(
         items=[ImportJobOut.model_validate(j) for j in result.items],
@@ -147,19 +163,22 @@ def get_import(import_id: str, db: DbSession, user: CurrentUser) -> ImportJob:
     return job
 
 
-@imports_router.get("/{import_id}/rows")
+@imports_router.get("/{import_id}/rows", response_model=list[ImportRowOut])
 def get_import_rows(import_id: str, db: DbSession, user: CurrentUser) -> list[dict]:
+    job = db.get(ImportJob, import_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Import job not found"})
     rows = db.execute(
         select(ImportRow).where(ImportRow.import_job_id == import_id).order_by(ImportRow.row_number)
     ).scalars().all()
     return [
-        {
-            "row_number": row.row_number,
-            "action": row.action,
-            "reason": row.reason,
-            "errors": row.errors,
-            "raw": row.raw,
-        }
+        ImportRowOut(
+            row_number=row.row_number,
+            action=row.action,
+            reason=row.reason,
+            errors=row.errors,
+            raw=row.raw or {},
+        )
         for row in rows
     ]
 
@@ -225,9 +244,27 @@ def create_report(payload: ExportCreateRequest, db: DbSession, user: CurrentUser
 
 
 @reports_router.get("", response_model=PaginatedResponse[ExportJobOut])
-def list_reports(db: DbSession, user: CurrentUser, page: Pagination) -> PaginatedResponse:
-    stmt = select(ExportJob).order_by(ExportJob.created_at.desc())
+def list_reports(
+    db: DbSession,
+    user: CurrentUser,
+    page: Pagination,
+    project_id: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    format_filter: str | None = Query(default=None, alias="format"),
+) -> PaginatedResponse:
+    stmt = select(ExportJob)
     count_stmt = select(func.count()).select_from(ExportJob)
+    conditions = []
+    if project_id:
+        conditions.append(ExportJob.project_id == project_id)
+    if status_filter:
+        conditions.append(ExportJob.status == status_filter)
+    if format_filter:
+        conditions.append(ExportJob.format == format_filter)
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
+    stmt = stmt.order_by(ExportJob.created_at.desc())
     result = paginate(db, stmt, ExportJob, page.page, page.page_size, count_stmt)
     return PaginatedResponse(
         items=[ExportJobOut.model_validate(j) for j in result.items],

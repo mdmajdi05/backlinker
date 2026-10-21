@@ -89,14 +89,41 @@ def stop_app(process: subprocess.Popen) -> None:
 
 
 def kill_strays() -> None:
+    """Stop everything that belongs to a previous launch of the application."""
     subprocess.run(["/usr/bin/pkill", "-f", "autobacklinker-desktop"], capture_output=True)
     subprocess.run(["/usr/bin/pkill", "-f", "autobacklinker-api"], capture_output=True)
+    # The bundled backend runs as a python process.
+    subprocess.run(["/usr/bin/pkill", "-f", "sidecar_launcher.py"], capture_output=True)
+    subprocess.run(["/usr/bin/pkill", "-f", "app.main:app"], capture_output=True)
     time.sleep(3)
+    # Whatever still *listens* on the port has to go - a backend of an older
+    # installation would answer with a different token.
+    for _ in range(10):
+        pids = listening_pids()
+        if not pids:
+            return
+        for pid in pids:
+            subprocess.run(["/bin/kill", "-TERM", pid], capture_output=True)
+        time.sleep(1)
+
+
+def listening_pids() -> set[str]:
+    """The processes that *listen* on the port.
+
+    ``lsof -ti`` also matches client connections (the web view of the app
+    talks to the backend), so the listening sockets are requested explicitly.
+    """
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", f"-iTCP:{PORT}", "-sTCP:LISTEN", "-t"],
+        capture_output=True,
+        text=True,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def listeners_on_port() -> int:
-    result = subprocess.run(["/usr/sbin/lsof", "-ti", f":{PORT}"], capture_output=True, text=True)
-    return len([line for line in result.stdout.splitlines() if line.strip()])
+    """How many backends listen on the port."""
+    return len(listening_pids())
 
 
 def main() -> int:

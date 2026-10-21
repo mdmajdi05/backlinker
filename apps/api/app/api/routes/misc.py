@@ -25,6 +25,7 @@ from app.db.models import (
 from app.db.repositories import paginate
 from app.schemas import (
     ActivityEventOut,
+    AdapterConfigurationOut,
     AdapterOut,
     DashboardMetricsOut,
     DeviceHeartbeatRequest,
@@ -125,6 +126,15 @@ def list_adapters(db: DbSession, user: CurrentUser) -> list[AutomationAdapter]:
     return list(db.execute(select(AutomationAdapter).order_by(AutomationAdapter.name)).scalars().all())
 
 
+@adapters_router.get("/{adapter_id}", response_model=AdapterOut)
+def get_adapter(adapter_id: str, db: DbSession, user: CurrentUser) -> AutomationAdapter:
+    """One adapter including its requirements and restrictions."""
+    adapter = db.get(AutomationAdapter, adapter_id)
+    if adapter is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Adapter not found"})
+    return adapter
+
+
 @adapters_router.patch("/{adapter_id}", response_model=AdapterOut)
 def update_adapter(adapter_id: str, payload: dict, db: DbSession, user: CurrentUser) -> AutomationAdapter:
     adapter = db.get(AutomationAdapter, adapter_id)
@@ -152,26 +162,20 @@ def update_adapter(adapter_id: str, payload: dict, db: DbSession, user: CurrentU
     return adapter
 
 
-@adapters_router.get("/{adapter_id}/configuration")
-def adapter_configuration(adapter_id: str, db: DbSession, user: CurrentUser) -> list[dict]:
+@adapters_router.get("/{adapter_id}/configuration", response_model=list[AdapterConfigurationOut])
+def adapter_configuration(
+    adapter_id: str, db: DbSession, user: CurrentUser
+) -> list[AdapterConfiguration]:
     rows = db.execute(
         select(AdapterConfiguration).where(AdapterConfiguration.adapter_id == adapter_id)
     ).scalars().all()
-    return [
-        {
-            "id": row.id,
-            "adapter_id": row.adapter_id,
-            "project_id": row.project_id,
-            "config": row.config,
-        }
-        for row in rows
-    ]
+    return list(rows)
 
 
-@adapters_router.put("/{adapter_id}/configuration")
+@adapters_router.put("/{adapter_id}/configuration", response_model=AdapterConfigurationOut)
 def set_adapter_configuration(
     adapter_id: str, payload: dict, db: DbSession, user: CurrentUser
-) -> dict:
+) -> AdapterConfiguration:
     adapter = db.get(AutomationAdapter, adapter_id)
     if adapter is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Adapter not found"})
@@ -188,7 +192,7 @@ def set_adapter_configuration(
     row.config = payload.get("config") or {}
     db.commit()
     db.refresh(row)
-    return {"id": row.id, "adapter_id": row.adapter_id, "project_id": row.project_id, "config": row.config}
+    return row
 
 
 # --------------------------------------------------------------------------
@@ -527,22 +531,22 @@ async def stream(request: Request, project_id: str | None = Query(default=None))
     )
 
 
-@events_router.get("/recent")
+@events_router.get("/recent", response_model=list[ActivityEventOut])
 def recent_events(db: DbSession, user: CurrentUser, limit: int = Query(default=50, le=200)) -> list[dict]:
     rows = db.execute(
         select(TaskEvent).order_by(TaskEvent.created_at.desc()).limit(limit)
     ).scalars().all()
     return [
-        {
-            "id": row.id,
-            "event_type": row.event_type,
-            "message": row.message,
-            "level": row.level,
-            "project_id": row.project_id,
-            "task_id": row.task_id,
-            "execution_environment": row.execution_environment,
-            "metadata": row.meta,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        }
+        ActivityEventOut(
+            id=row.id,
+            event_type=row.event_type,
+            message=row.message,
+            level=row.level,
+            project_id=row.project_id,
+            task_id=row.task_id,
+            execution_environment=row.execution_environment,
+            metadata=row.meta or {},
+            created_at=row.created_at,
+        )
         for row in rows
     ]

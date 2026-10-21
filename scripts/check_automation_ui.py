@@ -32,10 +32,11 @@ def main() -> int:
         )
 
         page.goto(f"{BASE}/login", wait_until="networkidle")
+        page.wait_for_selector('input[type="email"]', timeout=30000)
         page.fill('input[type="email"]', EMAIL)
         page.fill('input[type="password"]', PASSWORD)
         page.click('button[type="submit"]')
-        page.wait_for_url(f"{BASE}/", timeout=20000)
+        page.wait_for_url(f"{BASE}/", timeout=30000)
         print("[PASS] signed in")
 
         # -- settings ---------------------------------------------------

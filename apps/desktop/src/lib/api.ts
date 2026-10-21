@@ -1,7 +1,21 @@
 /**
- * The desktop client talks to the very same FastAPI backend as the web
- * client - only the base URL differs. In desktop mode the base URL points at
- * the local sidecar (127.0.0.1), in cloud mode at the remote deployment.
+ * The transport of the desktop client.
+ *
+ * The desktop app is *local first*: it talks to the bundled FastAPI sidecar
+ * that runs on the loopback interface of this machine and it never needs a
+ * hosted ("cloud") backend.  Everything in this module is built around that
+ * rule:
+ *
+ *   * the client always starts on the local sidecar,
+ *   * the machine token of the sidecar is sent as `X-Local-Token` and *only*
+ *     to a loopback address - it never leaves the machine,
+ *   * a hosted backend is used only when the operator selects one explicitly
+ *     (Settings -> Cloud synchronisation) and the switch is reversible,
+ *   * if the local backend is not reachable yet the client waits and retries
+ *     instead of talking to something else.
+ *
+ * The desktop client speaks the same protocol as the web client - only the
+ * base URL differs.
  */
 
 import { ApiClient, api } from "@autobacklinker/api-client";
@@ -9,60 +23,39 @@ import { DEFAULT_BACKEND_PORT } from "./backend";
 
 export type SessionMode = "local" | "cloud";
 
-const BASE_URL_KEY = "autobacklinker.desktop.baseUrl";
+/** The hosted backend the operator selected (never used automatically). */
+const CLOUD_URL_KEY = "autobacklinker.desktop.cloudUrl";
+/** Base URL of an older version - migrated, never connected to silently. */
+const LEGACY_BASE_URL_KEY = "autobacklinker.desktop.baseUrl";
+/** The JWT of the *cloud* session. */
 const TOKEN_KEY = "autobacklinker.desktop.token";
+/** The last selected session mode (informational - see `getSessionMode`). */
 const MODE_KEY = "autobacklinker.desktop.mode";
+/** The generated password of the local account. */
 const LOCAL_ACCOUNT_KEY = "autobacklinker.desktop.localAccount";
+/** The id of the local account of this installation. */
+const LOCAL_ACCOUNT_ID_KEY = "autobacklinker.desktop.localAccountId";
 
-export const LOCAL_ACCOUNT_EMAIL = "local@auto-backlinker.app";
+export const LOCAL_ACCOUNT_DOMAIN = "auto-backlinker.app";
+/** The default address of the local account (see `getLocalAccountEmail`). */
+export const LOCAL_ACCOUNT_EMAIL = `local@${LOCAL_ACCOUNT_DOMAIN}`;
 
 export const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_BACKEND_PORT}`;
 
 /**
- * The bundled backend authenticates loopback clients with a shared token
- * that is sent in the `X-Local-Token` header (see apps/api/app/api/deps.py).
- * A cloud session uses the regular `Authorization: Bearer <jwt>` header.
+ * How long a request waits for the local backend to come up.  The Rust
+ * supervisor starts the sidecar a moment after the window opens and the
+ * bundled CPython needs a few seconds to boot - the client waits for it
+ * instead of failing (and instead of falling back to anything else).
  */
-let localToken: string | null = null;
+const LOCAL_RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 5000, 5000, 5000];
 
-/**
- * Refreshes the local token. The backend may have been restarted (or a second
- * instance of the app may own it), in which case the token of the previous
- * launch is stale and every request would answer with 401.
- */
-let tokenProvider: (() => Promise<string | null>) | null = null;
+/** How long a request waits for the local session to become usable. */
+const LOCAL_SESSION_WAIT_MS = 15000;
 
-export function setTokenProvider(provider: (() => Promise<string | null>) | null): void {
-  tokenProvider = provider;
-}
-
-async function desktopFetch(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  const attempt = async (): Promise<Response> => {
-    const headers = new Headers(init?.headers);
-    if (localToken) headers.set("X-Local-Token", localToken);
-    return fetch(input, { ...init, headers });
-  };
-
-  let response = await attempt();
-
-  if (response.status === 401 && localToken && tokenProvider) {
-    // The token of the running backend changed - fetch it once more and
-    // repeat the request exactly once.
-    try {
-      const fresh = await tokenProvider();
-      if (fresh && fresh !== localToken) {
-        localToken = fresh;
-        response = await attempt();
-      }
-    } catch {
-      /* the refresh failed - the original response is returned */
-    }
-  }
-  return response;
-}
+/* ------------------------------------------------------------------ */
+/* Storage helpers                                                      */
+/* ------------------------------------------------------------------ */
 
 function safeGet(key: string): string | null {
   try {
@@ -81,62 +74,489 @@ function safeSet(key: string, value: string | null): void {
   }
 }
 
-export const apiClient = new ApiClient({
-  baseUrl: safeGet(BASE_URL_KEY) ?? DEFAULT_BASE_URL,
-  token: safeGet(TOKEN_KEY),
+/* ------------------------------------------------------------------ */
+/* Loopback detection                                                   */
+/* ------------------------------------------------------------------ */
+
+const LOOPBACK_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "0.0.0.0",
+]);
+
+/**
+ * True for every address that belongs to this machine.
+ *
+ * Only loopback targets receive the local machine token - a hosted backend
+ * must never see it.
+ */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (LOOPBACK_HOSTS.has(host)) return true;
+    return /^127(?:\.\d{1,3}){3}$/.test(host);
+  } catch {
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Credentials                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The shared token of the local backend (sent as `X-Local-Token`).
+ *
+ * The bundled backend authenticates loopback clients with that token (see
+ * apps/api/app/api/deps.py).  A cloud session uses the regular
+ * `Authorization: Bearer <jwt>` header instead.
+ */
+let localToken: string | null = null;
+
+/**
+ * The JWT of the local account.  It is used for the event stream (an
+ * `EventSource` cannot send headers) and in the browser preview, where the
+ * Rust supervisor that owns the machine token is not available.
+ */
+let localAccessToken: string | null = null;
+
+/** The JWT of the signed in cloud account. */
+let cloudToken: string | null = safeGet(TOKEN_KEY);
+
+/** The base URL of the local sidecar (the Rust supervisor may change it). */
+let localBaseUrl = DEFAULT_BASE_URL;
+
+/**
+ * Refreshes the local token. The backend may have been restarted (or a second
+ * instance of the app may own it), in which case the token of the previous
+ * launch is stale and every request would answer with 401.
+ */
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setTokenProvider(provider: (() => Promise<string | null>) | null): void {
+  tokenProvider = provider;
+}
+
+/* ------------------------------------------------------------------ */
+/* Session mode                                                         */
+/* ------------------------------------------------------------------ */
+
+type SessionModeListener = (mode: SessionMode) => void;
+const sessionModeListeners = new Set<SessionModeListener>();
+
+/** Notifies the UI when the client switches between local and cloud. */
+export function onSessionModeChange(listener: SessionModeListener): () => void {
+  sessionModeListeners.add(listener);
+  return () => {
+    sessionModeListeners.delete(listener);
+  };
+}
+
+function notifySessionMode(): void {
+  const mode = getSessionMode();
+  sessionModeListeners.forEach((listener) => {
+    try {
+      listener(mode);
+    } catch {
+      /* a broken listener must not break the transport */
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* The local session gate                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The local session needs a credential: the machine token of the sidecar (or
+ * the JWT of the local account).  It is not available in the first
+ * milliseconds of the application, therefore the requests wait for it instead
+ * of running into a 401.
+ */
+let sessionReadyPromise: Promise<void> | null = null;
+let sessionReadyResolve: (() => void) | null = null;
+let accessTokenPromise: Promise<void> | null = null;
+let accessTokenResolve: (() => void) | null = null;
+
+function sessionReady(): Promise<void> {
+  if (!sessionReadyPromise) {
+    sessionReadyPromise = new Promise((resolve) => {
+      sessionReadyResolve = resolve;
+    });
+  }
+  return sessionReadyPromise;
+}
+
+function accessTokenReady(): Promise<void> {
+  if (!accessTokenPromise) {
+    accessTokenPromise = new Promise((resolve) => {
+      accessTokenResolve = resolve;
+    });
+  }
+  return accessTokenPromise;
+}
+
+function markSessionReady(): void {
+  const resolve = sessionReadyResolve;
+  sessionReadyPromise = null;
+  sessionReadyResolve = null;
+  resolve?.();
+}
+
+function markAccessTokenReady(): void {
+  const resolve = accessTokenResolve;
+  accessTokenPromise = null;
+  accessTokenResolve = null;
+  resolve?.();
+}
+
+/** Waits for the local session; returns false when it does not arrive. */
+async function waitForLocalSession(timeoutMs: number): Promise<boolean> {
+  if (localToken || localAccessToken) return true;
+  return waitFor(sessionReady(), timeoutMs);
+}
+
+/** Waits for the JWT of the local account (the event stream needs it). */
+async function waitForAccessToken(timeoutMs: number): Promise<boolean> {
+  if (localAccessToken) return true;
+  return waitFor(accessTokenReady(), timeoutMs);
+}
+
+async function waitFor(
+  promise: Promise<void>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: number | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = window.setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), timeout]);
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Transport                                                            */
+/* ------------------------------------------------------------------ */
+
+function requestUrl(input: RequestInfo | URL): string | null {
+  try {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.toString();
+    if (typeof Request !== "undefined" && input instanceof Request) {
+      return input.url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function desktopFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = requestUrl(input);
+  // The machine token belongs to this machine - it is only ever sent to a
+  // loopback address.
+  const local = url !== null && isLoopbackUrl(url);
+
+  const attempt = async (): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    if (local) {
+      if (localToken) headers.set("X-Local-Token", localToken);
+      // The shared client builds the headers before the request is sent; the
+      // local account token may only be known later (the account is created
+      // on the first start), therefore it is added here as well.
+      if (localAccessToken && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${localAccessToken}`);
+      }
+    }
+    return fetch(input, { ...init, headers });
+  };
+
+  let response: Response;
+
+  try {
+    response = await attempt();
+  } catch (error) {
+    if (!local) throw error;
+    // The local backend is not reachable *yet* (it is still starting): wait
+    // for it and retry.  The client never falls back to another host.
+    response = await retryLocalBackend(attempt, error);
+  }
+
+  if (response.status === 401 && local) {
+    if (localToken && tokenProvider) {
+      // The token of the running backend changed - fetch it once more and
+      // repeat the request exactly once.
+      try {
+        const fresh = await tokenProvider();
+        if (fresh && fresh !== localToken) {
+          localToken = fresh;
+          response = await attempt();
+        }
+      } catch {
+        /* the refresh failed - the original response is returned */
+      }
+    }
+    if (response.status === 401 && !(localToken || localAccessToken)) {
+      // The local session was not ready yet (the local account is created on
+      // the first start) - wait for it and repeat the request once.
+      if (await waitForLocalSession(LOCAL_SESSION_WAIT_MS)) {
+        response = await attempt();
+      }
+    }
+    if (response.status === 401 && localAccessToken && !localToken) {
+      // The JWT of the local account expired - sign in again and repeat the
+      // request exactly once.
+      if (await refreshLocalAccessToken()) {
+        response = await attempt();
+      }
+    }
+  }
+
+  return response;
+}
+
+async function retryLocalBackend(
+  attempt: () => Promise<Response>,
+  lastError: unknown,
+): Promise<Response> {
+  for (const delay of LOCAL_RETRY_DELAYS_MS) {
+    await sleep(delay);
+    try {
+      return await attempt();
+    } catch {
+      /* the sidecar is still starting - keep waiting */
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * Makes sure that *every* request to the local backend carries the machine
+ * token - also the ones that do not go through the shared API client (for
+ * example the report download).
+ */
+function installLocalTokenInterceptor(): void {
+  if (typeof window === "undefined" || typeof window.fetch !== "function") {
+    return;
+  }
+  const original = window.fetch.bind(window);
+  const marker = original as typeof original & { __autobacklinker?: boolean };
+  if (marker.__autobacklinker) return;
+
+  const patched = async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    try {
+      const url = requestUrl(input);
+      if (url && isLoopbackUrl(url) && localToken) {
+        const headers = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        );
+        if (!headers.has("X-Local-Token")) {
+          headers.set("X-Local-Token", localToken);
+          if (input instanceof Request) {
+            return original(new Request(input, { headers }));
+          }
+          return original(input, { ...init, headers });
+        }
+      }
+    } catch {
+      /* the interceptor must never break a request */
+    }
+    return original(input, init);
+  };
+
+  (patched as typeof patched & { __autobacklinker?: boolean }).__autobacklinker =
+    true;
+  window.fetch = patched;
+}
+
+installLocalTokenInterceptor();
+
+/**
+ * The desktop client.
+ *
+ * The only difference to the shared client is the event stream: an
+ * `EventSource` cannot send headers, therefore the token travels as the
+ * `access_token` query parameter.  In the local mode the stream waits for
+ * the local account - an unauthenticated stream would be rejected by the
+ * backend and would retry forever.
+ */
+class DesktopApiClient extends ApiClient {
+  override subscribe(
+    path: string,
+    onMessage: (event: unknown, type: string) => void,
+    onError?: (err: unknown) => void,
+  ): () => void {
+    if (getSessionMode() === "cloud" || this.token) {
+      return super.subscribe(path, onMessage, onError);
+    }
+
+    // The local session is not ready yet (the local account is created on the
+    // first start).  An `EventSource` cannot send the `X-Local-Token` header,
+    // it needs the JWT of the account - an unauthenticated stream would be
+    // rejected by the backend and would retry forever.  The stream therefore
+    // starts as soon as the account exists.
+    let stopped = false;
+    let close: (() => void) | null = null;
+    const start = () => {
+      if (stopped || close || !this.token) return;
+      close = super.subscribe(path, onMessage, onError);
+    };
+    void waitForAccessToken(LOCAL_SESSION_WAIT_MS).then((ready) => {
+      if (ready) start();
+    });
+    return () => {
+      stopped = true;
+      close?.();
+    };
+  }
+}
+
+export const apiClient = new DesktopApiClient({
+  // The client always starts on the local sidecar.  A hosted backend is only
+  // used after the operator selected one explicitly.
+  baseUrl: DEFAULT_BASE_URL,
+  token: null,
   fetchImpl: desktopFetch,
   onUnauthorized: () => {
-    safeSet(TOKEN_KEY, null);
+    // Only a cloud session can be invalidated by a 401 - the local machine
+    // session is restored by the token provider.
+    if (getSessionMode() === "cloud") {
+      cloudToken = null;
+      safeSet(TOKEN_KEY, null);
+    }
     window.dispatchEvent(new CustomEvent("autobacklinker:unauthorized"));
   },
 });
 
-export function setApiBaseUrl(url: string): void {
-  const normalized = url.replace(/\/$/, "");
-  apiClient.setBaseUrl(normalized);
-  safeSet(BASE_URL_KEY, normalized);
+/* ------------------------------------------------------------------ */
+/* Target (local sidecar / hosted backend)                              */
+/* ------------------------------------------------------------------ */
+
+/** The base URL of the local sidecar. */
+export function getLocalBaseUrl(): string {
+  return localBaseUrl;
 }
 
+/** The hosted backend the operator selected - `null` when there is none. */
+export function getCloudBaseUrl(): string | null {
+  const stored = safeGet(CLOUD_URL_KEY);
+  if (stored && !isLoopbackUrl(stored)) return stored;
+  const legacy = safeGet(LEGACY_BASE_URL_KEY);
+  if (legacy && !isLoopbackUrl(legacy)) {
+    // An older version stored the active base URL.  Keep the hosted backend
+    // as a suggestion - but never connect to it automatically.
+    safeSet(CLOUD_URL_KEY, legacy);
+    return legacy;
+  }
+  return null;
+}
+
+/**
+ * The mode follows the target: a loopback base URL is the local sidecar,
+ * everything else is a hosted backend.
+ */
+export function getSessionMode(): SessionMode {
+  return isLoopbackUrl(apiClient.baseUrl) ? "local" : "cloud";
+}
+
+/** True while the client talks to the backend of this machine. */
+export function isLocalSession(): boolean {
+  return getSessionMode() === "local";
+}
+
+/**
+ * Points the client at another backend.
+ *
+ * A loopback address is the local sidecar (the default).  Every other address
+ * is a hosted backend: it is remembered as the cloud URL and the session
+ * switches to the cloud mode - the machine token of this machine is never
+ * sent to it.
+ */
+export function setApiBaseUrl(url: string): void {
+  const normalized = url.trim().replace(/\/$/, "");
+  if (!normalized) return;
+
+  const local = isLoopbackUrl(normalized);
+  apiClient.setBaseUrl(normalized);
+
+  if (local) {
+    localBaseUrl = normalized;
+  } else {
+    safeSet(CLOUD_URL_KEY, normalized);
+  }
+
+  // The credentials always belong to the current target.
+  apiClient.setToken(local ? localAccessToken : cloudToken);
+  notifySessionMode();
+}
+
+/**
+ * Switches between the local sidecar and the remembered hosted backend.
+ */
+export function setSessionMode(mode: SessionMode): void {
+  safeSet(MODE_KEY, mode);
+  if (mode === "local") {
+    setApiBaseUrl(localBaseUrl);
+    return;
+  }
+  const cloud = getCloudBaseUrl();
+  if (cloud) {
+    setApiBaseUrl(cloud);
+    return;
+  }
+  // No hosted backend was selected - the client stays local.
+  notifySessionMode();
+}
+
+/**
+ * The session token of the *current* target.
+ *
+ * In the cloud mode this is the JWT of the signed in account, in the local
+ * mode the JWT of the local account (the machine token is sent separately as
+ * `X-Local-Token`).
+ */
 export function setApiToken(token: string | null): void {
   apiClient.setToken(token);
-  safeSet(TOKEN_KEY, token);
+  if (getSessionMode() === "cloud") {
+    cloudToken = token;
+    safeSet(TOKEN_KEY, token);
+  } else {
+    localAccessToken = token;
+    if (token) {
+      markSessionReady();
+      markAccessTokenReady();
+    }
+  }
 }
 
 /** The shared token of the local backend (sent as `X-Local-Token`). */
 export function setLocalToken(token: string | null): void {
   localToken = token;
+  if (token) markSessionReady();
 }
 
 export function getLocalToken(): string | null {
   return localToken;
 }
 
-/**
- * The bundled backend resolves the `X-Local-Token` header against the first
- * user of the local database. A fresh installation has no user at all, so the
- * desktop app creates a local account on the first start.
- */
-export async function ensureLocalAccount(): Promise<boolean> {
-  const stored = safeGet(LOCAL_ACCOUNT_KEY);
-  const password = stored ?? generateLocalPassword();
-  try {
-    await api.auth(apiClient).register({
-      email: LOCAL_ACCOUNT_EMAIL,
-      password,
-      name: "Local user",
-    });
-    safeSet(LOCAL_ACCOUNT_KEY, password);
-    return true;
-  } catch {
-    // The account already exists (or registration is disabled) - the login
-    // screen stays available for a manual sign in.
-    return false;
-  }
-}
-
-function generateLocalPassword(): string {
-  const random = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  return `local-${random}`;
+/** The JWT of the local account (used for the event stream). */
+export function getLocalAccessToken(): string | null {
+  return localAccessToken;
 }
 
 export function getApiToken(): string | null {
@@ -147,12 +567,107 @@ export function getApiBaseUrl(): string {
   return apiClient.baseUrl;
 }
 
-export function getSessionMode(): SessionMode {
-  return safeGet(MODE_KEY) === "cloud" ? "cloud" : "local";
+/* ------------------------------------------------------------------ */
+/* The local account                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The address of the local account of this installation.
+ *
+ * Every installation owns its own account, so a cleared browser storage never
+ * locks the local session out.
+ */
+export function getLocalAccountEmail(): string {
+  let id = safeGet(LOCAL_ACCOUNT_ID_KEY);
+  if (!id) {
+    id = Math.random().toString(36).slice(2, 8);
+    safeSet(LOCAL_ACCOUNT_ID_KEY, id);
+  }
+  return `local-${id}@${LOCAL_ACCOUNT_DOMAIN}`;
 }
 
-export function setSessionMode(mode: SessionMode): void {
-  safeSet(MODE_KEY, mode);
+/**
+ * The bundled backend resolves the `X-Local-Token` header against the first
+ * user of the local database.  A fresh installation has no user at all, so the
+ * desktop app creates a local account on the first start.
+ *
+ * The account also owns the event stream: the backend accepts a JWT there
+ * (an `EventSource` cannot send the `X-Local-Token` header).  The generated
+ * password is kept in the local storage of the web view, so the next start
+ * simply signs in again.
+ */
+let pendingLocalAccount: Promise<boolean> | null = null;
+
+export async function ensureLocalAccount(): Promise<boolean> {
+  if (getSessionMode() !== "local") return false;
+  // The account is ready - do not talk to the backend again.
+  if (localAccessToken) return true;
+  if (!pendingLocalAccount) {
+    pendingLocalAccount = runEnsureLocalAccount().finally(() => {
+      pendingLocalAccount = null;
+    });
+  }
+  return pendingLocalAccount;
+}
+
+async function runEnsureLocalAccount(): Promise<boolean> {
+  const email = getLocalAccountEmail();
+  const stored = safeGet(LOCAL_ACCOUNT_KEY);
+
+  if (stored) {
+    try {
+      const result = await api.auth(apiClient).login({ email, password: stored });
+      applyLocalAccessToken(result.access_token);
+      return true;
+    } catch {
+      // The account is gone (an empty database) - create it again below.
+    }
+  }
+  const password = stored ?? generateLocalPassword();
+  try {
+    const result = await api.auth(apiClient).register({
+      email,
+      password,
+      name: "Local user",
+    });
+    safeSet(LOCAL_ACCOUNT_KEY, password);
+    applyLocalAccessToken(result.access_token);
+    return true;
+  } catch {
+    // The login screen stays available for a manual sign in.
+    return false;
+  }
+}
+
+/**
+ * Signs the local account in again - the JWT of the account is only valid for
+ * a limited time.
+ */
+async function refreshLocalAccessToken(): Promise<boolean> {
+  const stored = safeGet(LOCAL_ACCOUNT_KEY);
+  if (!stored) return false;
+  try {
+    const result = await api.auth(apiClient).login({
+      email: getLocalAccountEmail(),
+      password: stored,
+    });
+    applyLocalAccessToken(result.access_token);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function applyLocalAccessToken(token: string): void {
+  localAccessToken = token;
+  if (getSessionMode() === "local") apiClient.setToken(token);
+  markSessionReady();
+  markAccessTokenReady();
+}
+
+function generateLocalPassword(): string {
+  const random = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  return `local-${random}`;
 }
 
 export { api };

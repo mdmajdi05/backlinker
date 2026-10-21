@@ -185,9 +185,9 @@ impl BackendState {
         });
 
         // A backend of a previous launch may still be running on the port.
-        // Reusing a healthy one is the best case; a stale process that no
-        // longer answers is stopped so the new sidecar can bind.
-        if http_health(port, &token).unwrap_or(false) {
+        // It is only reused when it also accepts the token of this
+        // installation - an older backend with a different token is replaced.
+        if http_authenticated(port, &token).unwrap_or(false) {
             inner.healthy = true;
             inner.started_at = Some(now_iso8601());
             inner.last_error = None;
@@ -334,7 +334,7 @@ impl BackendState {
                     // A backend that is already running (for example the one
                     // of a previous launch that was adopted) is not a crash -
                     // keep using it instead of restarting in a loop.
-                    if http_health(port, &token).unwrap_or(false) {
+                    if http_authenticated(port, &token).unwrap_or(false) {
                         let mut inner = state.inner.lock().expect("backend state poisoned");
                         inner.healthy = true;
                         inner.last_error = None;
@@ -765,6 +765,52 @@ pub fn install_browser_runtime(app: &AppHandle) -> Result<String, String> {
             output.status.code().unwrap_or(-1)
         ))
     }
+}
+
+/// Check whether the backend on the port accepts the local token.
+///
+/// A backend of an older installation may still be running with a different
+/// token.  Such a backend answers the health endpoint but refuses every
+/// request of this installation - it has to be replaced.
+fn http_authenticated(port: u16, token: &str) -> Result<bool, String> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|err| err.to_string())?;
+    let timeout = Some(Duration::from_secs(3));
+    let _ = stream.set_read_timeout(timeout);
+    let _ = stream.set_write_timeout(timeout);
+
+    let request = format!(
+        "GET /api/v1/auth/me HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: application/json\r\nAuthorization: Bearer {token}\r\nX-Local-Token: {token}\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| err.to_string())?;
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0u8; 1024];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(size) => {
+                buffer.extend_from_slice(&chunk[..size]);
+                if buffer.len() > 32 * 1024 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let text = String::from_utf8_lossy(&buffer);
+    let status_line = text.lines().next().unwrap_or_default();
+    let code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok(code == 200)
 }
 
 fn spawn_log_pump<R: Read + Send + 'static>(

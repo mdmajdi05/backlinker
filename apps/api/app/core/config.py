@@ -48,7 +48,16 @@ class Settings(BaseSettings):
     # --- security -----------------------------------------------------
     secret_key: str = "dev-only-insecure-secret-key-change-me-please-000000"  # noqa: S105
     access_token_expire_minutes: int = 60 * 12
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000", "tauri://localhost"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",  # the web client
+            "http://127.0.0.1:3000",
+            "http://localhost:1420",  # the desktop client in the browser preview
+            "http://127.0.0.1:1420",
+            "tauri://localhost",  # the packaged desktop client
+            "http://tauri.localhost",
+        ]
+    )
     local_token: str = ""
     allow_private_network: bool = False
     allow_file_uploads: bool = True

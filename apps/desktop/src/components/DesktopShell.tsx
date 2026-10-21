@@ -1,3 +1,4 @@
+import * as React from "react";
 import { Badge, Button, IconButton, Tooltip } from "@autobacklinker/ui";
 import { Icon, type IconName } from "./icons";
 import { NAV_ENTRIES, NAV_GROUPS, navEntry, type NavEntry } from "../lib/nav";
@@ -6,11 +7,17 @@ import { useTheme } from "../lib/theme";
 import { useNotifications } from "../lib/notifications";
 import { useAuth } from "../lib/auth";
 import { useRoute } from "../lib/router";
+import { getApiToken, getLocalToken } from "../lib/api";
 import { OverviewPage } from "../pages/OverviewPage";
 import { ProjectsPage } from "../pages/ProjectsPage";
+import { ProjectDetailPage } from "../pages/ProjectDetailPage";
+import { DiscoveryPage } from "../pages/DiscoveryPage";
+import { IntegrationsPage } from "../pages/IntegrationsPage";
+import { OnboardingPage } from "../pages/OnboardingPage";
 import { RegistryPage } from "../pages/RegistryPage";
 import { QueuePage } from "../pages/QueuePage";
 import { AutomationPage } from "../pages/AutomationPage";
+import { AutomationPanel } from "./AutomationPanel";
 import { VerificationPage } from "../pages/VerificationPage";
 import { ReportsPage } from "../pages/ReportsPage";
 import { ImportsPage } from "../pages/ImportsPage";
@@ -18,14 +25,83 @@ import { DevicesPage } from "../pages/DevicesPage";
 import { ActivityPage } from "../pages/ActivityPage";
 import { SettingsPage } from "../pages/SettingsPage";
 import { NotImplementedPage } from "../pages/NotImplementedPage";
+import { LoadingBlock } from "./common";
 
-function iconFor(entry: NavEntry): IconName {
-  return entry.id as IconName;
+interface ShellEntry {
+  id: string;
+  label: string;
+  description: string;
+  group: NavEntry["group"];
+  icon: IconName;
+}
+
+/**
+ * Entries of the navigation model that the desktop build adds itself - the
+ * shared navigation model is owned by the web client.
+ */
+const EXTRA_ENTRIES: ShellEntry[] = [
+  {
+    id: "onboarding",
+    label: "Setup",
+    description: "Business profile, SEO configuration and the first project.",
+    group: "workspace",
+    icon: "play",
+  },
+];
+
+/**
+ * Routes that the desktop build implements even though the shared navigation
+ * model still lists them as pending.
+ */
+const IMPLEMENTED_ROUTES = new Set(["discovery", "integrations"]);
+
+function shellEntries(): ShellEntry[] {
+  const entries: ShellEntry[] = NAV_ENTRIES.map((entry) => ({
+    id: entry.id,
+    label: entry.label,
+    description: entry.description,
+    group: entry.group,
+    icon: entry.id as IconName,
+  }));
+  return [...entries, ...EXTRA_ENTRIES];
+}
+
+function isActive(route: string, id: string): boolean {
+  return route === id || route.startsWith(`${id}/`);
+}
+
+/**
+ * The desktop client needs a session before it may talk to the backend: the
+ * bundled sidecar authenticates with a machine token, the browser preview
+ * signs the local account in.  A page that fires its requests before the
+ * session exists would only receive 401 - therefore the shell waits for it.
+ */
+function useSessionReady(): boolean {
+  const [ready, setReady] = React.useState<boolean>(
+    () => Boolean(getApiToken() || getLocalToken()),
+  );
+
+  React.useEffect(() => {
+    if (ready) return;
+    const timer = window.setInterval(() => {
+      if (getApiToken() || getLocalToken()) setReady(true);
+    }, 150);
+    // The backend may be unreachable - the pages then show their own error
+    // state instead of blocking the whole window.
+    const timeout = window.setTimeout(() => setReady(true), 4000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(timeout);
+    };
+  }, [ready]);
+
+  return ready;
 }
 
 function Sidebar() {
   const [route, go] = useRoute();
   const { status, native } = useBackend();
+  const entries = shellEntries();
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface">
@@ -50,9 +126,13 @@ function Sidebar() {
               {group.label}
             </p>
             <ul className="flex flex-col gap-0.5">
-              {NAV_ENTRIES.filter((entry) => entry.group === group.id).map(
-                (entry) => {
-                  const active = route === entry.id;
+              {entries
+                .filter((entry) => entry.group === group.id)
+                .map((entry) => {
+                  const active = isActive(route, entry.id);
+                  const pending =
+                    !IMPLEMENTED_ROUTES.has(entry.id) &&
+                    navEntry(entry.id)?.implemented === false;
                   return (
                     <li key={entry.id}>
                       <button
@@ -64,9 +144,9 @@ function Sidebar() {
                             : "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-content-muted transition-colors hover:bg-surface-sunken hover:text-content"
                         }
                       >
-                        <Icon name={iconFor(entry)} />
+                        <Icon name={entry.icon} />
                         <span className="flex-1 truncate">{entry.label}</span>
-                        {!entry.implemented ? (
+                        {pending ? (
                           <span className="text-[10px] text-content-subtle">
                             soon
                           </span>
@@ -74,8 +154,7 @@ function Sidebar() {
                       </button>
                     </li>
                   );
-                },
-              )}
+                })}
             </ul>
           </div>
         ))}
@@ -134,21 +213,39 @@ export function BackendPill({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function routeHeadline(route: string): { title: string; description: string } {
+  if (route.startsWith("projects/")) {
+    return {
+      title: "Project",
+      description: "Counters, execution settings and landing pages of one project.",
+    };
+  }
+  const extra = EXTRA_ENTRIES.find((entry) => entry.id === route);
+  if (extra) {
+    return { title: extra.label, description: extra.description };
+  }
+  const entry = navEntry(route);
+  return {
+    title: entry?.label ?? "Overview",
+    description: entry?.description ?? "",
+  };
+}
+
 function TopBar() {
   const [route] = useRoute();
-  const entry = navEntry(route);
   const { resolved, toggle } = useTheme();
   const { enabled, supported, setEnabled } = useNotifications();
   const { user, mode, logout } = useAuth();
+  const headline = routeHeadline(route);
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-line bg-surface px-5">
       <div className="min-w-0">
         <h1 className="truncate text-sm font-semibold text-content">
-          {entry?.label ?? "Overview"}
+          {headline.title}
         </h1>
         <p className="truncate text-xs text-content-muted">
-          {entry?.description ?? ""}
+          {headline.description}
         </p>
       </div>
 
@@ -202,29 +299,45 @@ function TopBar() {
 }
 
 function renderRoute(route: string) {
+  if (route.startsWith("projects/")) {
+    const projectId = route.slice("projects/".length).trim();
+    if (projectId) return <ProjectDetailPage projectId={projectId} />;
+  }
+
   switch (route) {
     case "overview":
       return <OverviewPage />;
     case "projects":
       return <ProjectsPage />;
+    case "discovery":
+      return <DiscoveryPage />;
     case "registry":
       return <RegistryPage />;
     case "queue":
       return <QueuePage />;
     case "automation":
-      return <AutomationPage />;
+      return (
+        <div className="flex flex-col gap-4">
+          <AutomationPage />
+          <AutomationPanel />
+        </div>
+      );
     case "verification":
       return <VerificationPage />;
     case "reports":
       return <ReportsPage />;
     case "imports":
       return <ImportsPage />;
+    case "integrations":
+      return <IntegrationsPage />;
     case "devices":
       return <DevicesPage />;
     case "activity":
       return <ActivityPage />;
     case "settings":
       return <SettingsPage />;
+    case "onboarding":
+      return <OnboardingPage />;
     default:
       return <NotImplementedPage route={route} />;
   }
@@ -232,6 +345,7 @@ function renderRoute(route: string) {
 
 export function DesktopShell() {
   const [route] = useRoute();
+  const ready = useSessionReady();
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-surface-sunken text-content">
@@ -240,7 +354,7 @@ export function DesktopShell() {
         <TopBar />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1400px] p-5">
-            {renderRoute(route)}
+            {ready ? renderRoute(route) : <LoadingBlock rows={5} />}
           </div>
         </main>
       </div>

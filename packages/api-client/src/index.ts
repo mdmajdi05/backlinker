@@ -10,22 +10,42 @@
 import type {
   ActivityEvent,
   Adapter,
+  AdapterConfiguration,
+  AdapterConfigurationUpdate,
+  AiStatus,
   AuthTokens,
   BacklinkRecord,
   BrowserRuntimeStatus,
-  BusinessProfile,
   BulkActionRequest,
+  BulkActionResult,
+  BusinessProfile,
+  BusinessProfileUpsert,
+  Campaign,
   DashboardMetrics,
   Device,
+  DeviceHeartbeatRequest,
+  DeviceRegisterRequest,
+  DeviceRegisterResponse,
+  DeviceTaskReport,
+  DiscoveryProvider,
   DiscoveryRequest,
   DiscoveryRun,
+  DomainExclusionRequest,
+  DomainExclusionResult,
   ExecutionSettings,
   ExportJob,
+  HealthStatus,
   ImportCommitRequest,
   ImportJob,
   ImportPreview,
+  ImportRowDetail,
+  IntegrationCredentialSummary,
+  IntegrationProvider,
   LoginRequest,
+  MergeDuplicatesRequest,
+  MergeDuplicatesResult,
   Opportunity,
+  OpportunityCreate,
   OpportunityUpdate,
   Paginated,
   PageParams,
@@ -33,17 +53,36 @@ import type {
   ProjectCreate,
   ProjectSettings,
   QueueCreateRequest,
+  QueueCreateResponse,
+  QueueStats,
   RegisterRequest,
+  ReorderResult,
+  ReportCreateRequest,
   ResourceStatus,
+  Schedule,
+  StorageBackup,
+  StorageBackupEntry,
   StorageConnectionRequest,
   StorageMigrationPreview,
+  StorageRestoreResult,
   StorageStatus,
+  StorageTestResult,
+  SyncChangesResponse,
+  SyncEntityPushRequest,
+  SyncPullResult,
+  SyncPushResult,
+  SyncResolveResult,
+  SyncStatus,
+  SystemInfo,
+  TargetWebsite,
   Task,
   TaskAttempt,
+  TaskBulkControlRequest,
   TaskControlRequest,
   TaskEvent,
   User,
   VerificationRun,
+  VerificationScheduleResult,
   WorkerStatus,
 } from "@autobacklinker/shared-types";
 
@@ -283,10 +322,13 @@ export const api = {
   profiles: {
     list: (c: ApiClient) => c.get<BusinessProfile[]>("/api/v1/profiles"),
     get: (c: ApiClient, id: string) => c.get<BusinessProfile>(`/api/v1/profiles/${id}`),
-    create: (c: ApiClient, body: Partial<BusinessProfile>) =>
+    create: (c: ApiClient, body: Partial<BusinessProfile> | BusinessProfileUpsert) =>
       c.post<BusinessProfile>("/api/v1/profiles", body),
-    update: (c: ApiClient, id: string, body: Partial<BusinessProfile>) =>
-      c.put<BusinessProfile>(`/api/v1/profiles/${id}`, body),
+    update: (
+      c: ApiClient,
+      id: string,
+      body: Partial<BusinessProfile> | BusinessProfileUpsert,
+    ) => c.put<BusinessProfile>(`/api/v1/profiles/${id}`, body),
     remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/profiles/${id}`),
   },
 
@@ -303,6 +345,9 @@ export const api = {
       c.get<ProjectSettings>(`/api/v1/projects/${id}/settings`),
     updateSettings: (c: ApiClient, id: string, body: Partial<ProjectSettings>) =>
       c.put<ProjectSettings>(`/api/v1/projects/${id}/settings`, body),
+    /** The landing pages of the project (the targets a backlink may point to). */
+    websites: (c: ApiClient, id: string, q?: PageParams) =>
+      c.get<Paginated<TargetWebsite>>(`/api/v1/projects/${id}/websites`, { ...q }),
   },
 
   opportunities: {
@@ -310,12 +355,17 @@ export const api = {
       c.get<Paginated<Opportunity>>("/api/v1/opportunities", { ...q }),
     get: (c: ApiClient, id: string) =>
       c.get<Opportunity>(`/api/v1/opportunities/${id}`),
+    create: (c: ApiClient, body: OpportunityCreate) =>
+      c.post<Opportunity>("/api/v1/opportunities", body),
     update: (c: ApiClient, id: string, body: OpportunityUpdate) =>
       c.patch<Opportunity>(`/api/v1/opportunities/${id}`, body),
     bulk: (c: ApiClient, body: BulkActionRequest) =>
       c.post<{ affected: number }>("/api/v1/opportunities/bulk", body),
-    excludeDomain: (c: ApiClient, domain: string, body: { until?: string; reason?: string }) =>
-      c.post<void>("/api/v1/registry/exclusions", { domain, ...body }),
+    excludeDomain: (c: ApiClient, domain: string, body: Omit<DomainExclusionRequest, "domain">) =>
+      c.post<DomainExclusionResult>("/api/v1/registry/exclusions", { domain, ...body }),
+    /** Merge duplicate registry entries into one primary record. */
+    mergeDuplicates: (c: ApiClient, body: MergeDuplicatesRequest) =>
+      c.post<MergeDuplicatesResult>("/api/v1/registry/merge", body),
   },
 
   discovery: {
@@ -323,23 +373,21 @@ export const api = {
       c.post<DiscoveryRun>("/api/v1/discovery/runs", body),
     list: (c: ApiClient, q?: Query) =>
       c.get<Paginated<DiscoveryRun>>("/api/v1/discovery/runs", { ...q }),
-    providers: (c: ApiClient) =>
-      c.get<Array<{ key: string; name: string; requires_credentials: boolean; categories: string[] }>>(
-        "/api/v1/discovery/providers",
-      ),
+    get: (c: ApiClient, id: string) => c.get<DiscoveryRun>(`/api/v1/discovery/runs/${id}`),
+    providers: (c: ApiClient) => c.get<DiscoveryProvider[]>("/api/v1/discovery/providers"),
   },
 
   queue: {
     list: (c: ApiClient, q?: Query) => c.get<Paginated<Task>>("/api/v1/queue", { ...q }),
     create: (c: ApiClient, body: QueueCreateRequest) =>
-      c.post<{ created: number; task_ids: string[] }>("/api/v1/queue", body),
+      c.post<QueueCreateResponse>("/api/v1/queue", body),
     reorder: (c: ApiClient, body: { task_ids: string[] }) =>
-      c.post<void>("/api/v1/queue/reorder", body),
+      c.post<ReorderResult>("/api/v1/queue/reorder", body),
     control: (c: ApiClient, id: string, body: TaskControlRequest) =>
       c.post<Task>(`/api/v1/queue/${id}/control`, body),
-    bulkControl: (c: ApiClient, body: TaskControlRequest & { task_ids: string[] }) =>
-      c.post<{ affected: number }>("/api/v1/queue/bulk-control", body),
-    stats: (c: ApiClient) => c.get<Record<string, number>>("/api/v1/queue/stats"),
+    bulkControl: (c: ApiClient, body: TaskBulkControlRequest) =>
+      c.post<BulkActionResult>("/api/v1/queue/bulk-control", body),
+    stats: (c: ApiClient) => c.get<QueueStats>("/api/v1/queue/stats"),
   },
 
   tasks: {
@@ -354,8 +402,10 @@ export const api = {
   verification: {
     list: (c: ApiClient, q?: Query) =>
       c.get<Paginated<BacklinkRecord>>("/api/v1/verification/records", { ...q }),
+    get: (c: ApiClient, id: string) =>
+      c.get<BacklinkRecord>(`/api/v1/verification/records/${id}`),
     run: (c: ApiClient, body: { backlink_ids?: string[]; project_id?: string; force?: boolean }) =>
-      c.post<{ scheduled: number }>("/api/v1/verification/run", body),
+      c.post<VerificationScheduleResult>("/api/v1/verification/run", body),
     history: (c: ApiClient, id: string) =>
       c.get<VerificationRun[]>(`/api/v1/verification/records/${id}/history`),
   },
@@ -369,16 +419,19 @@ export const api = {
       c.post<ImportJob>(`/api/v1/imports/${id}/commit`, body),
     list: (c: ApiClient, q?: Query) => c.get<Paginated<ImportJob>>("/api/v1/imports", { ...q }),
     rows: (c: ApiClient, id: string) => c.get<ImportJob>(`/api/v1/imports/${id}`),
+    /** Every row of the import together with the planned action. */
+    rowPlans: (c: ApiClient, id: string) => c.get<ImportRowDetail[]>(`/api/v1/imports/${id}/rows`),
     errorReport: (c: ApiClient, id: string) =>
       c.download(`/api/v1/imports/${id}/error-report`, `import-errors-${id}.csv`),
   },
 
   reports: {
     list: (c: ApiClient, q?: Query) => c.get<Paginated<ExportJob>>("/api/v1/reports", { ...q }),
-    generate: (c: ApiClient, body: { project_id?: string; format?: "xlsx" | "csv"; scope?: string }) =>
+    generate: (c: ApiClient, body: ReportCreateRequest) =>
       c.post<ExportJob>("/api/v1/reports", body),
     download: (c: ApiClient, id: string) =>
       c.download(`/api/v1/reports/${id}/download`, `report-${id}.xlsx`),
+    remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/reports/${id}`),
   },
 
   activity: {
@@ -387,38 +440,39 @@ export const api = {
 
   adapters: {
     list: (c: ApiClient) => c.get<Adapter[]>("/api/v1/adapters"),
+    get: (c: ApiClient, id: string) => c.get<Adapter>(`/api/v1/adapters/${id}`),
     update: (c: ApiClient, id: string, body: Partial<Adapter>) =>
       c.patch<Adapter>(`/api/v1/adapters/${id}`, body),
+    configuration: (c: ApiClient, id: string) =>
+      c.get<AdapterConfiguration[]>(`/api/v1/adapters/${id}/configuration`),
+    updateConfiguration: (
+      c: ApiClient,
+      id: string,
+      body: AdapterConfigurationUpdate,
+    ) => c.put<AdapterConfiguration>(`/api/v1/adapters/${id}/configuration`, body),
   },
 
   devices: {
     list: (c: ApiClient) => c.get<Device[]>("/api/v1/devices"),
     revoke: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/devices/${id}`),
+    /** Register a local agent (device) - the agent authenticates with the key. */
+    register: (c: ApiClient, body: DeviceRegisterRequest) =>
+      c.post<DeviceRegisterResponse>("/api/v1/devices/register", body),
+    heartbeat: (c: ApiClient, id: string, body: DeviceHeartbeatRequest) =>
+      c.post<{ ok: boolean; device_id: string }>(`/api/v1/devices/${id}/heartbeat`, body),
+    /** Claim the next task of the local environment (204 when there is none). */
+    claimTask: (c: ApiClient) => c.get<Task | null>("/api/v1/devices/tasks/claim"),
+    reportTask: (c: ApiClient, id: string, body: DeviceTaskReport) =>
+      c.post<{ ok: boolean; attempt: number; status: string }>(
+        `/api/v1/devices/tasks/${id}/report`,
+        body,
+      ),
   },
 
   integrations: {
-    providers: (c: ApiClient) =>
-      c.get<
-        Array<{
-          key: string;
-          name: string;
-          purpose: string;
-          docs: string;
-          configured: boolean;
-        }>
-      >("/api/v1/integrations/providers"),
+    providers: (c: ApiClient) => c.get<IntegrationProvider[]>("/api/v1/integrations/providers"),
     credentials: (c: ApiClient) =>
-      c.get<
-        Array<{
-          id: string;
-          provider: string;
-          label: string;
-          status: string;
-          has_value: boolean;
-          masked_hint: string;
-          updated_at: string;
-        }>
-      >("/api/v1/integrations/credentials"),
+      c.get<IntegrationCredentialSummary[]>("/api/v1/integrations/credentials"),
     saveCredential: (c: ApiClient, body: { provider: string; label?: string; secret?: string }) =>
       c.post<{ id: string; provider: string; masked_hint: string }>(
         "/api/v1/integrations/credentials",
@@ -426,6 +480,11 @@ export const api = {
       ),
     deleteCredential: (c: ApiClient, id: string) =>
       c.delete<void>(`/api/v1/integrations/credentials/${id}`),
+    /** Reveal a secret - administrators only. */
+    revealCredential: (c: ApiClient, id: string) =>
+      c.get<{ provider: string; secret: string }>(
+        `/api/v1/integrations/credentials/${id}/reveal`,
+      ),
   },
 
   dashboard: {
@@ -438,55 +497,70 @@ export const api = {
       ),
   },
 
+  /** The live event stream and the recent events of the activity log. */
+  events: {
+    stream: (c: ApiClient, projectId?: string, onMessage?: (e: unknown, t: string) => void) =>
+      c.subscribe(
+        `/api/v1/events/stream${projectId ? `?project_id=${projectId}` : ""}`,
+        onMessage ?? (() => undefined),
+      ),
+    recent: (c: ApiClient, limit?: number) =>
+      c.get<ActivityEvent[]>("/api/v1/events/recent", { limit }),
+  },
+
   storage: {
     status: (c: ApiClient) => c.get<StorageStatus>("/api/v1/storage/status"),
     test: (c: ApiClient, body: StorageConnectionRequest) =>
-      c.post<{ ok: boolean; message: string; dialect: string }>("/api/v1/storage/test", body),
+      c.post<StorageTestResult>("/api/v1/storage/test", body),
     connect: (c: ApiClient, body: StorageConnectionRequest) =>
       c.post<StorageStatus>("/api/v1/storage/connect", body),
     disconnect: (c: ApiClient) => c.post<StorageStatus>("/api/v1/storage/disconnect"),
     previewMigration: (c: ApiClient) =>
       c.get<StorageMigrationPreview>("/api/v1/storage/migration/preview"),
     migrate: (c: ApiClient) => c.post<StorageMigrationPreview>("/api/v1/storage/migration/run"),
-    backup: (c: ApiClient) => c.post<{ path: string; created_at: string }>("/api/v1/storage/backup"),
-    restore: (c: ApiClient, body: { path?: string }) => c.post<{ restored: boolean }>("/api/v1/storage/restore", body),
-    history: (c: ApiClient) => c.get<Array<Record<string, unknown>>>("/api/v1/storage/history"),
+    backup: (c: ApiClient) => c.post<StorageBackup>("/api/v1/storage/backup"),
+    restore: (c: ApiClient, body: { path?: string }) =>
+      c.post<StorageRestoreResult>("/api/v1/storage/restore", body),
+    history: (c: ApiClient) => c.get<StorageBackupEntry[]>("/api/v1/storage/history"),
   },
 
   sync: {
-    status: (c: ApiClient) =>
-      c.get<{ pending: number; conflicts: number; last_sync_at: string | null; online: boolean }>(
-        "/api/v1/sync/status",
-      ),
-    push: (c: ApiClient) =>
-      c.post<{ ok: boolean; pushed: number; conflicts: number }>("/api/v1/sync/push"),
-    pull: (c: ApiClient) =>
-      c.post<{ ok: boolean; applied: number; skipped: number }>("/api/v1/sync/pull"),
+    status: (c: ApiClient) => c.get<SyncStatus>("/api/v1/sync/status"),
+    push: (c: ApiClient) => c.post<SyncPushResult>("/api/v1/sync/push"),
+    pull: (c: ApiClient) => c.post<SyncPullResult>("/api/v1/sync/pull"),
     resolve: (c: ApiClient, changeId: string, strategy: "local" | "remote") =>
-      c.post<{ ok: boolean }>(`/api/v1/sync/conflicts/${changeId}/resolve`, { strategy }),
+      c.post<SyncResolveResult>(`/api/v1/sync/conflicts/${changeId}/resolve`, { strategy }),
+    /** The changes a local workspace has to pull. */
+    changes: (c: ApiClient, q?: { since?: string; limit?: number }) =>
+      c.get<SyncChangesResponse>("/api/v1/sync/changes", { ...q }),
+    /** Push a single entity to the cloud workspace. */
+    pushEntity: (c: ApiClient, entityType: string, body: SyncEntityPushRequest) =>
+      c.post<{ ok: boolean; entity_type: string; entity_id: string; version: number }>(
+        `/api/v1/sync/${entityType}`,
+        body,
+      ),
   },
 
   campaigns: {
     list: (c: ApiClient, projectId: string) =>
-      c.get<Array<Record<string, unknown>>>(`/api/v1/projects/${projectId}/campaigns`),
-    create: (c: ApiClient, projectId: string, body: Record<string, unknown>) =>
-      c.post<Record<string, unknown>>(`/api/v1/projects/${projectId}/campaigns`, body),
+      c.get<Campaign[]>(`/api/v1/projects/${projectId}/campaigns`),
+    create: (c: ApiClient, projectId: string, body: Partial<Campaign>) =>
+      c.post<Campaign>(`/api/v1/projects/${projectId}/campaigns`, body),
+    remove: (c: ApiClient, campaignId: string) =>
+      c.delete<void>(`/api/v1/campaigns/${campaignId}`),
   },
 
   schedules: {
-    list: (c: ApiClient) => c.get<Array<Record<string, unknown>>>("/api/v1/schedules"),
-    create: (c: ApiClient, body: Record<string, unknown>) =>
-      c.post<Record<string, unknown>>("/api/v1/schedules", body),
-    update: (c: ApiClient, id: string, body: Record<string, unknown>) =>
-      c.patch<Record<string, unknown>>(`/api/v1/schedules/${id}`, body),
+    list: (c: ApiClient) => c.get<Schedule[]>("/api/v1/schedules"),
+    create: (c: ApiClient, body: Partial<Schedule>) =>
+      c.post<Schedule>("/api/v1/schedules", body),
+    update: (c: ApiClient, id: string, body: Partial<Schedule>) =>
+      c.patch<Schedule>(`/api/v1/schedules/${id}`, body),
     remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/schedules/${id}`),
   },
 
   ai: {
-    status: (c: ApiClient) =>
-      c.get<{ configured: boolean; provider: string | null; model: string | null }>(
-        "/api/v1/ai/status",
-      ),
+    status: (c: ApiClient) => c.get<AiStatus>("/api/v1/ai/status"),
     run: (c: ApiClient, action: string, payload: Record<string, unknown>) =>
       c.post<Record<string, unknown>>(`/api/v1/ai/${action}`, payload),
   },
@@ -505,6 +579,12 @@ export const api = {
     stop: (c: ApiClient) =>
       c.post<{ execution: ExecutionSettings; cancelled: number }>("/api/v1/worker/stop"),
     resources: (c: ApiClient) => c.get<ResourceStatus>("/api/v1/resources"),
+  },
+
+  /** Information about the backend the client talks to. */
+  system: {
+    info: (c: ApiClient) => c.get<SystemInfo>("/api/v1/system/info"),
+    health: (c: ApiClient) => c.get<HealthStatus>("/health"),
   },
 };
 

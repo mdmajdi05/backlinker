@@ -8,7 +8,12 @@ from sqlalchemy import func, select
 from app.api.deps import CurrentUser, DbSession, Pagination
 from app.db.models import BusinessProfile, DiscoveryRun, DiscoverySource, Project
 from app.db.repositories import paginate
-from app.schemas import DiscoveryRequest, DiscoveryRunOut, PaginatedResponse
+from app.schemas import (
+    DiscoveryProviderOut,
+    DiscoveryRequest,
+    DiscoveryRunOut,
+    PaginatedResponse,
+)
 from app.services import queue as queue_service
 from app.services.discovery.base import all_providers, get_provider
 from app.services.events import record_event
@@ -16,7 +21,7 @@ from app.services.events import record_event
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 
-@router.get("/providers")
+@router.get("/providers", response_model=list[DiscoveryProviderOut])
 def list_providers(db: DbSession, user: CurrentUser) -> list[dict]:
     """Available discovery providers and their credential requirements."""
     from app.services.discovery import load_providers
@@ -124,12 +129,21 @@ def list_runs(
     user: CurrentUser,
     page: Pagination,
     project_id: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    provider: str | None = Query(default=None),
 ) -> PaginatedResponse:
     stmt = select(DiscoveryRun)
     count_stmt = select(func.count()).select_from(DiscoveryRun)
+    conditions = []
     if project_id:
-        stmt = stmt.where(DiscoveryRun.project_id == project_id)
-        count_stmt = count_stmt.where(DiscoveryRun.project_id == project_id)
+        conditions.append(DiscoveryRun.project_id == project_id)
+    if status_filter:
+        conditions.append(DiscoveryRun.status == status_filter)
+    if provider:
+        conditions.append(DiscoveryRun.provider == provider)
+    if conditions:
+        stmt = stmt.where(*conditions)
+        count_stmt = count_stmt.where(*conditions)
     stmt = stmt.order_by(DiscoveryRun.created_at.desc())
     result = paginate(db, stmt, DiscoveryRun, page.page, page.page_size, count_stmt)
     return PaginatedResponse(

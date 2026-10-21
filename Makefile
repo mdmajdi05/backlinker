@@ -29,6 +29,7 @@ help:
 	@echo "  make desktop-build    Build the universal macOS app + disk image"
 	@echo "  make agent-smoke      Prove the local agent claims and executes a task"
 	@echo "  make verify           Run every check (scripts/verify_all.sh)"
+	@echo "  make master           Run the master gate (checks + packaging)"
 
 install: install-api install-web install-desktop
 
@@ -106,6 +107,9 @@ agent-smoke:
 
 verify:
 	./scripts/verify_all.sh
+
+master:
+	./scripts/master.sh
 
 clean:
 	rm -rf apps/web/.next apps/desktop/dist apps/api/.pytest_cache apps/api/.ruff_cache

@@ -185,6 +185,20 @@ class LandingPageIn(BaseModel):
     kind: str = "LANDING"
 
 
+class TargetWebsiteOut(ORMModel):
+    """A landing page of a project (the targets a backlink may point to)."""
+
+    id: str
+    project_id: str
+    name: str
+    url: str
+    domain: str
+    kind: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 class ProjectPatch(BaseModel):
     """Partial update - every field is optional."""
 
@@ -540,6 +554,16 @@ class ImportJobOut(ORMModel):
     committed_at: datetime | None
 
 
+class ImportRowOut(BaseModel):
+    """One row of an import job together with the planned action."""
+
+    row_number: int
+    action: str
+    reason: str | None = None
+    errors: str | None = None
+    raw: dict[str, Any] = {}
+
+
 class ExportJobOut(ORMModel):
     id: str
     project_id: str | None
@@ -584,6 +608,28 @@ class AdapterOut(ORMModel):
     success_signals: list[str]
     domains: list[str]
     enabled: bool
+
+
+class AdapterConfigurationOut(ORMModel):
+    """Per project configuration of an adapter."""
+
+    id: str
+    adapter_id: str
+    project_id: str | None = None
+    config: dict[str, Any] = {}
+
+
+class DiscoveryProviderOut(BaseModel):
+    """A discovery provider and whether it can be used right now."""
+
+    key: str
+    name: str
+    description: str = ""
+    requires_credentials: bool = False
+    categories: list[str] = []
+    enabled: bool = True
+    available: bool = False
+    reason: str | None = None
 
 
 class ActivityEventOut(BaseModel):
@@ -692,3 +738,31 @@ class HealthOut(BaseModel):
     database: dict[str, Any]
     worker: dict[str, Any]
     storage_mode: str
+
+
+class SystemInfoOut(BaseModel):
+    """Static information about the running backend."""
+
+    name: str
+    version: str
+    environment: str
+    storage_mode: str
+    database_type: str
+    data_dir: str
+    ai_enabled: bool
+    celery_enabled: bool
+
+
+class SyncChangeOut(BaseModel):
+    """A single change of the hybrid synchronisation protocol."""
+
+    entity_type: str
+    entity_id: str
+    operation: str
+    version: int
+    payload: dict[str, Any] = {}
+    created_at: str | None = None
+
+
+class SyncChangesOut(BaseModel):
+    changes: list[SyncChangeOut] = []

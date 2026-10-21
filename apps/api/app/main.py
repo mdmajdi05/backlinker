@@ -31,6 +31,7 @@ from app.api.routes import (
 from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.db.session import health_check, init_db
+from app.schemas import SystemInfoOut
 
 log = get_logger(__name__)
 
@@ -213,18 +214,18 @@ def create_app() -> FastAPI:
             "storage_mode": settings.storage_mode_effective,
         }
 
-    @app.get("/api/v1/system/info", tags=["system"])
-    def system_info() -> dict:
-        return {
-            "name": settings.app_name,
-            "version": API_VERSION,
-            "environment": settings.environment,
-            "storage_mode": settings.storage_mode_effective,
-            "database_type": "postgresql" if not settings.is_sqlite else "sqlite",
-            "data_dir": str(settings.data_dir),
-            "ai_enabled": bool(settings.ai_api_key and settings.ai_provider),
-            "celery_enabled": settings.use_celery,
-        }
+    @app.get("/api/v1/system/info", response_model=SystemInfoOut, tags=["system"])
+    def system_info() -> SystemInfoOut:
+        return SystemInfoOut(
+            name=settings.app_name,
+            version=API_VERSION,
+            environment=settings.environment,
+            storage_mode=settings.storage_mode_effective,
+            database_type="postgresql" if not settings.is_sqlite else "sqlite",
+            data_dir=str(settings.data_dir),
+            ai_enabled=bool(settings.ai_api_key and settings.ai_provider),
+            celery_enabled=settings.use_celery,
+        )
 
     return app
 

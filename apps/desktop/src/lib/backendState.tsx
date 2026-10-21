@@ -10,7 +10,12 @@ import {
   type AgentStatus,
   type BackendStatus,
 } from "./backend";
-import { setApiBaseUrl, ensureLocalAccount, setTokenProvider } from "./api";
+import {
+  setApiBaseUrl,
+  ensureLocalAccount,
+  getSessionMode,
+  setTokenProvider,
+} from "./api";
 import { useAuth } from "./auth";
 
 export interface BackendContextValue {
@@ -49,6 +54,10 @@ const POLL_INTERVAL_MS = 4000;
  * Supervises the local backend sidecar. The Rust side owns the process, this
  * provider only mirrors its state into React and keeps the API client pointed
  * at the right base URL.
+ *
+ * The client stays on the local sidecar: the base URL of the supervisor is
+ * followed (the port can be changed), but a hosted backend is never selected
+ * behind the back of the operator.
  */
 export function BackendProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = React.useState<BackendStatus | null>(null);
@@ -56,15 +65,17 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = React.useState(false);
   const [logs, setLogs] = React.useState<string[]>([]);
   const [agent, setAgent] = React.useState<AgentStatus | null>(null);
-  const { useLocalSession, mode } = useAuth();
+  const { useLocalSession } = useAuth();
   const native = isTauri();
-  const bootstrapped = React.useRef(false);
 
   const refresh = React.useCallback(async () => {
     if (!isTauri()) {
       setError(
-        "The local backend is only available in the desktop build (run `npm run tauri:dev`).",
+        "The local backend is only managed by the desktop build (run `npm run tauri:dev`).",
       );
+      // The browser preview still reaches the bundled backend over the
+      // loopback interface - it only misses the supervisor.
+      if (getSessionMode() === "local") void ensureLocalAccount();
       return;
     }
     try {
@@ -73,13 +84,13 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       if (next.localToken) {
         useLocalSession(next.localToken);
-        if (mode === "local") setApiBaseUrl(next.baseUrl);
-        if (!bootstrapped.current) {
-          bootstrapped.current = true;
-          // A fresh local database has no user - create the local account so
-          // that the machine token can be resolved.
-          void ensureLocalAccount();
-        }
+      }
+      if (getSessionMode() === "local") {
+        // The sidecar may run on another port - follow it.
+        setApiBaseUrl(next.baseUrl);
+        // The event stream of the backend authenticates with a JWT: make sure
+        // the local account exists (and sign in with it).
+        void ensureLocalAccount();
       }
     } catch (err) {
       setError(
@@ -88,7 +99,7 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
           : "Cannot read the backend status",
       );
     }
-  }, [mode, useLocalSession]);
+  }, [useLocalSession]);
 
   // A request that was rejected with 401 refreshes the token once, so a
   // backend that was restarted in the meantime does not lock the user out.
@@ -99,7 +110,7 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
         setStatus(next);
         if (next.localToken) {
           useLocalSession(next.localToken);
-          if (mode === "local") setApiBaseUrl(next.baseUrl);
+          if (getSessionMode() === "local") setApiBaseUrl(next.baseUrl);
         }
         return next.localToken ?? null;
       } catch {
@@ -107,7 +118,7 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
       }
     });
     return () => setTokenProvider(null);
-  }, [mode, useLocalSession]);
+  }, [useLocalSession]);
 
   const refreshLogs = React.useCallback(async () => {
     if (!isTauri()) return;
@@ -145,6 +156,18 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearInterval(timer);
   }, [native, refresh, refreshAgent]);
 
+  // The browser preview has no supervisor, but it still talks to the local
+  // backend - make sure the local account exists there as well.
+  React.useEffect(() => {
+    if (native) return;
+    const ensure = () => {
+      if (getSessionMode() === "local") void ensureLocalAccount();
+    };
+    ensure();
+    const timer = window.setInterval(ensure, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [native]);
+
   const start = React.useCallback(
     async (port?: number) => {
       setLoading(true);
@@ -154,7 +177,7 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
         setError(null);
         if (next.localToken) {
           useLocalSession(next.localToken);
-          setApiBaseUrl(next.baseUrl);
+          if (getSessionMode() === "local") setApiBaseUrl(next.baseUrl);
         }
       } catch (err) {
         setError(
@@ -193,7 +216,7 @@ export function BackendProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       if (next.localToken) {
         useLocalSession(next.localToken);
-        setApiBaseUrl(next.baseUrl);
+        if (getSessionMode() === "local") setApiBaseUrl(next.baseUrl);
       }
     } catch (err) {
       setError(

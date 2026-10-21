@@ -18,6 +18,143 @@ protocol and no mock data anywhere in this app.
 
 ---
 
+## Runs completely on your machine
+
+The desktop application is a **local application**.  Everything it needs is
+inside the application bundle, it stores its data on this computer and it
+works without an internet connection.  A hosted ("cloud") backend is an
+*optional* extra - it is never required and it is never used unless you
+select it yourself.
+
+### What is bundled
+
+| Component | Where | Notes |
+|-----------|-------|-------|
+| The application | `Auto Backlinker.app/Contents/MacOS/autobacklinker-desktop` | Tauri 2 shell + the React frontend |
+| The backend | `Auto Backlinker.app/Contents/Resources/backend/<arch>/` | a standalone CPython 3.12 (`runtime/`), the dependencies (`site-packages/`) and the API application (`app/`) |
+| The launcher | `.../backend/<arch>/sidecar_launcher.py` | starts uvicorn **on `127.0.0.1` only** and refuses every other address |
+
+The Rust side (`src-tauri/src/backend.rs`) starts that backend when the
+window opens, supervises it, restarts it after a crash and stops it when the
+application exits.  The backend is the very same FastAPI application the web
+client uses - the desktop client is a thin, native view on it.
+
+### No cloud is required
+
+* **Every start begins on the local backend.**  The client is hard-wired to
+  `http://127.0.0.1:8765` (or to the port the supervisor reports) and it
+  *never* reads a base URL from the browser storage to decide where to go.
+* **The machine token stays on this machine.**  The token of the sidecar is
+  sent in the `X-Local-Token` header and the transport attaches it **only**
+  to loopback addresses - a hosted backend never sees it.
+* **The session mode follows the target.**  A loopback base URL is the
+  "local" mode, every other URL is the "cloud" mode.  The two can no longer
+  get out of sync (the old implementation could point the client at a cloud
+  URL while still claiming to be local).
+* **The client waits instead of switching.**  If the local backend is not
+  reachable yet (it is still booting), the request waits and retries for
+  about 20 seconds.  It never falls back to another host.* **The application itself never opens a connection to the internet.**  The
+  shipped Content Security Policy allows `connect-src` for the loopback
+  interface only (`apps/desktop/index.html` and
+  `src-tauri/tauri.conf.json`).
+
+### Where the data lives
+
+| Platform | Location |
+|----------|----------|
+| macOS | `~/Library/Application Support/AutoBacklinker` |
+| Windows | `%APPDATA%\AutoBacklinker` |
+| Linux | `$XDG_DATA_HOME/auto-backlinker` (`~/.local/share/auto-backlinker`) |
+
+```
+autobacklinker.db     SQLite database (local storage mode)
+local-token           the machine token of the local backend (mode 0600)
+logs/backend.log      stdout/stderr of the sidecar
+backups/              storage backups
+files/                managed uploads (imports, exports)
+browsers/             the optional browser runtime
+browser-profile/      the profile of the isolated browser automation
+```
+
+Nothing is uploaded anywhere.  The desktop client owns one local account
+(`local-<id>@auto-backlinker.app`) inside that database - it is created on the
+first start, it is used for the live event stream and its generated password
+lives in the local storage of the web view.
+
+### Without an internet connection
+
+Everything that belongs to the product works offline: projects, the queue,
+the registry, the activity log, imports, reports, the local backend itself
+and the whole user interface.
+
+Three optional things reach out to the internet - **from the backend, not
+from the user interface** - and they are the only ones:
+
+| Feature | What it needs | Without an internet connection |
+|---------|---------------|-------------------------------|
+| Verifying a published backlink | the published page has to be reachable | the verification is reported as *unknown*, never as a success |
+| Provider driven discovery (`directory_index`, `brave_search`, `serpapi`) | the public pages of the platforms, plus an API key for Brave/SerpAPI | the provider reports that it cannot reach the catalogue; `manual_seed` works with the URLs you enter |
+| The browser runtime (Playwright + Chromium, ~150 MB, once) | the download in **Settings → Browser runtime** | the browser adapter asks for manual completion, every other feature is unaffected |
+
+### The optional cloud connection
+
+The cloud connection is a **feature, not a requirement**.  It is used only
+when you switch to it explicitly:
+
+1. open **Settings → Cloud synchronisation**,
+2. enter the base URL of the deployment (for example
+   `https://backlinks.example.com`) - it replaces the local address that is
+   shown in the field,
+3. press **Use this backend** - the client switches to that backend, the
+   badge in the card changes from *Local* to *Cloud* and the sign in screen
+   appears,
+4. sign in with the account of that deployment (the JWT is sent as
+   `Authorization: Bearer ...`),
+5. press **Back to local backend** to return - the badge changes back to
+   *Local* and the client talks to the sidecar again.
+
+What the switch does **not** do:
+
+* it is never selected automatically - a stored cloud URL is only a
+  suggestion, the application always starts on the local backend,
+* it does not change the data on this machine - the local database, the
+  imports and the backups stay where they are,
+* it never leaks the machine token: the `X-Local-Token` header is only sent
+  to the loopback interface.
+
+> **Note for the packaged application:** the shipped Content Security Policy
+> restricts `connect-src` to the loopback interface, so the *packaged* app
+> cannot open a connection to a hosted backend at all.  The switch is
+> complete and works in the browser preview (`npm run dev`); to use it in the
+> packaged app the policy has to allow the origin of the deployment
+> explicitly - it is defined twice and both places have to be changed:
+>
+> * `apps/desktop/index.html` (the `<meta http-equiv="Content-Security-Policy">`
+>   that every build of the frontend carries),
+> * `apps/desktop/src-tauri/tauri.conf.json` (`app.security.csp`).
+>
+> For example, add the origin of the deployment to `connect-src`:
+> `connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* https://backlinks.example.com`.
+> Until that is done, the browser itself refuses the connection - the request
+> never leaves the machine.
+
+### The proof
+
+```bash
+cd apps/desktop
+../../.venv/bin/python scripts/check-offline.py
+```
+
+The script proves the claims above: it starts the packaged application (when
+it is built), starts the bundled backend, serves the production frontend
+bundle and drives it through a headless browser **while every request that
+is not addressed to this machine is blocked**.  It walks through all screens,
+checks that the data comes from the local backend (a project that is created
+through the local API has to show up in the user interface) and prints a
+PASS/FAIL line per check.
+
+---
+
 ## 1. Prerequisites
 
 | Tool | Version | Notes |
@@ -58,6 +195,22 @@ npm run tauri:dev      # requires Rust + Xcode CLT
 `npm run tauri:dev` starts Vite on port 1420 and the Tauri window that loads
 `http://localhost:1420`.
 
+> **The browser preview talks to the local backend.**  It is served from
+> `http://localhost:1420`, and the backend accepts `http://localhost:3000`
+> and `tauri://localhost` as origins by default - so a backend that is
+> started for the preview needs one more origin:
+>
+> ```bash
+> AUTOBL_CORS_ORIGINS='["http://localhost:3000","tauri://localhost","http://localhost:1420"]' \
+>   <start the backend on 127.0.0.1:8765>
+> ```
+>
+> Without it the browser blocks the requests and the screens show an error
+> instead of data.  The packaged application is not affected: it is served
+> from `tauri://localhost`.  `scripts/check-ui.py` reports the connection
+> errors of a backend that is not running - start it first, or use
+> `scripts/check-offline.py`, which starts its own backend.
+
 Useful scripts:
 
 | Script | Description |
@@ -70,6 +223,9 @@ Useful scripts:
 | `npm run tauri:build` | desktop bundle (`.dmg`, `.app`, `.msi`, `.nsis`) |
 | `npm run sidecar` | builds the backend sidecar (`scripts/build-sidecar.sh`) |
 | `npm run icons` | regenerates the placeholder icons |
+| `../../.venv/bin/python scripts/check-offline.py` | proves that the client runs on this machine: the packaged app, the bundled backend and a headless walk through all screens without a single request leaving the computer |
+| `../../.venv/bin/python scripts/check-ui.py` | renders the frontend in a headless browser and reports console errors |
+| `../../.venv/bin/python scripts/check-desktop.py` | end-to-end check of the packaged application (restart, port conflict, session) |
 
 ### The backend sidecar
 
@@ -134,7 +290,10 @@ The Rust side (`src-tauri/src/backend.rs`) owns the process:
 * the UI can start, stop and restart it from **Settings → Local backend**.
 
 The machine token is sent to the frontend as `localToken` and used in the
-`X-Local-Token` header (see `apps/api/app/api/deps.py`).
+`X-Local-Token` header (see `apps/api/app/api/deps.py`).  The transport adds
+that header to every request to the loopback interface - and to nothing else.
+While the sidecar is still booting, the client waits for it (and retries)
+instead of failing or looking somewhere else.
 
 ### Where the data is stored
 
@@ -167,8 +326,11 @@ The desktop app can talk to a hosted backend instead of the local sidecar:
 4. sign in with your cloud account (the JWT is sent as
    `Authorization: Bearer ...`).
 
-**Back to local backend** restores the loopback sidecar. The choice is stored
-in `localStorage` (`autobacklinker.desktop.mode`).
+**Back to local backend** restores the loopback sidecar.  The cloud URL is
+remembered (`autobacklinker.desktop.cloudUrl`), the *connection* is not: the
+application always starts on the local backend, so a stale cloud setting can
+never take over a start.  The full rules - and the limits of the packaged
+build - are described in [Runs completely on your machine](#runs-completely-on-your-machine).
 
 ## 4. Production builds
 
@@ -259,6 +421,7 @@ expected for an internal build.
 | `npm run tauri build` | `Auto Backlinker.app` (75 MB) + `Auto Backlinker_1.0.0_x64.dmg` (80 MB), **unsigned** |
 | `apps/desktop/src-tauri/target/release/bundle/macos/Auto Backlinker.app/Contents/MacOS/autobacklinker-desktop` | starts, spawns the sidecar, `GET http://127.0.0.1:8765/health` answers, SQLite database is created in `~/Library/Application Support/AutoBacklinker` |
 | `scripts/check-ui.py` (headless Chromium) | the UI renders, no console errors |
+| `scripts/check-offline.py` (headless Chromium) | the packaged app starts its bundled backend, the client starts on the local sidecar, all 14 screens render, a project created in the local backend shows up in the UI, **no request leaves the machine**, no console error |
 
 The bundles are **not signed and not notarised** - see the macOS section
 above for what a release build needs.
@@ -267,6 +430,8 @@ above for what a release build needs.
 
 * the sidecar binds to `127.0.0.1` only and uses a random per-launch token,
 * the token is only handed to the local web view,
+* the transport attaches the `X-Local-Token` header to loopback addresses
+  only - it is never sent to a hosted backend,
 * the Tauri capabilities (`src-tauri/capabilities/default.json`) grant exactly
   the permissions the app uses (dialog, notification, shell open, process
   restart/exit, scoped file access),

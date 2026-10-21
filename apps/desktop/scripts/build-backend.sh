@@ -111,6 +111,8 @@ for arch in ${ARCHES//,/ }; do
   for platform in ${!platforms_var}; do
     platform_args+=(--platform "${platform}")
   done
+  # uv uses a simplified platform name.
+  uv_platform_args=(--python-platform "${arch}-apple-darwin")
   rm -rf "${dest}/site-packages"
   mkdir -p "${dest}/site-packages"
   # The wheels of a foreign architecture are installed with the *host*
@@ -120,15 +122,26 @@ for arch in ${ARCHES//,/ }; do
   else
     pip_python="${HOST_PYTHON}"
   fi
-  "${pip_python}" -m pip install \
-    --quiet --no-compile \
-    --target "${dest}/site-packages" \
-    "${platform_args[@]}" \
-    --python-version "${PYTHON_VERSION}" \
-    --implementation cp \
-    --abi "${PYTHON_ABI}" \
-    --only-binary=:all: \
-    "${RUNTIME_REQUIREMENTS[@]}" >/dev/null
+  # uv resolves and unpacks the wheels of a foreign architecture in seconds;
+  # pip needs minutes for the same job.
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install \
+      --quiet --no-cache \
+      --target "${dest}/site-packages" \
+      "${uv_platform_args[@]}" \
+      --python-version "${PYTHON_VERSION}" \
+      "${RUNTIME_REQUIREMENTS[@]}" >/dev/null
+  else
+    "${pip_python}" -m pip install \
+      --quiet --no-compile \
+      --target "${dest}/site-packages" \
+      "${platform_args[@]}" \
+      --python-version "${PYTHON_VERSION}" \
+      --implementation cp \
+      --abi "${PYTHON_ABI}" \
+      --only-binary=:all: \
+      "${RUNTIME_REQUIREMENTS[@]}" >/dev/null
+  fi
 
   # ----------------------------------------------------------- the backend
   rm -rf "${dest}/app"

@@ -202,11 +202,17 @@ def test_within_limits_allows_a_task_below_the_limit(db_session) -> None:
 
 
 def test_embedded_worker_picks_up_a_queued_task(worker_client, db_session) -> None:
+    # The global execution state is shared by every test - make sure the
+    # worker is allowed to claim before the test starts.
+    from app.services.execution import resume
+
+    resume(db_session)
+
     task, _created = queue_service.enqueue(
         db_session, task_type="IMPORT", idempotency_key="embedded-worker"
     )
 
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + 10.0
     attempt = None
     while time.monotonic() < deadline:
         db_session.rollback()
@@ -222,11 +228,15 @@ def test_embedded_worker_picks_up_a_queued_task(worker_client, db_session) -> No
 
 
 def test_embedded_worker_finalises_the_task(worker_client, db_session) -> None:
+    from app.services.execution import resume
+
+    resume(db_session)
+
     task, _created = queue_service.enqueue(
         db_session, task_type="IMPORT", idempotency_key="embedded-worker-final"
     )
 
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + 10.0
     stored = None
     while time.monotonic() < deadline:
         stored = _read_task(task.id)

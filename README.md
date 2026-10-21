@@ -130,6 +130,28 @@ instead of being killed.
 
 ---
 
+## Two independent products
+
+| | **Web product** (`apps/web`) | **Desktop product** (`apps/desktop`) |
+| - | ------------------------ | ------------------------- |
+| Start | `make dev-api` + `make dev-web` | one double click |
+| Backend | `apps/api` started separately | **bundled into the app** (`src-tauri/Resources/backend/<arch>/`) |
+| Backend instance | its own | **its own** - never the web one |
+| Database | SQLite (default) or PostgreSQL | SQLite in the application data directory |
+| Internet | needed for discovery, verification and submissions | not needed - everything except the live checks works offline |
+| Cloud | optional | optional, clearly labelled, the local token never leaves the machine |
+
+Both talk to **the same API implementation** but run **their own instance** of
+it. The desktop never calls the web backend and the web backend never calls
+the desktop. A cloud backend is an optional extra that either side may point
+at.
+
+The proof: `apps/desktop/scripts/check-offline.py` drives the packaged
+application with a headless browser while every non-loopback request is
+blocked - 41 checks, 0 external requests.
+
+---
+
 ## Architecture
 
 ```
@@ -741,6 +763,7 @@ nodejs.org).  Everything below was actually run:
 | **Real browser automation** | `scripts/check_browser_automation.py` | pass - a real Chromium fills the form with the profile facts, submits it, the success signal is detected and the backlink record is created (never simulated) |
 | **Packaged desktop app** | `apps/desktop/scripts/check-desktop.py` | pass - first launch, second launch while the backend runs (no port conflict, no restart loop, one backend) and a full restart keep the local session valid (no 401) |
 | **Disk image** | mount `release/macos/*.dmg` and start the app from it | pass - the bundled backend starts from the mounted image, `/health` answers, the API accepts the local token and rejects a missing one |
+| **Desktop runs offline** | `apps/desktop/scripts/check-offline.py` | pass - 41 checks: every request is served by the local backend, **0 requests leave the machine**, no console error, the local token never travels to a remote host, and the cloud is only used after the operator selects it |
 | Full product loop | `scripts/acceptance.py` | pass (profile → project → discovery → approve → queue → worker → activity → metrics → 9-sheet report → re-import preview → commit) |
 | Migrations | `alembic upgrade head → downgrade base → upgrade head` | pass (29 tables, both dialects) |
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |

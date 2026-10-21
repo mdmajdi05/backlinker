@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.api.deps import CurrentUser, DbSession, Pagination
@@ -26,6 +26,7 @@ from app.schemas import (
     ProjectPatch,
     ProjectSettingsIn,
     ProjectSettingsOut,
+    TargetWebsiteOut,
 )
 from app.services.audit import record_audit
 
@@ -208,6 +209,35 @@ def get_settings(project_id: str, db: DbSession, user: CurrentUser) -> ProjectSe
         db.commit()
         db.refresh(project)
     return project.settings
+
+
+@router.get("/{project_id}/websites", response_model=PaginatedResponse[TargetWebsiteOut])
+def list_target_websites(
+    project_id: str,
+    db: DbSession,
+    user: CurrentUser,
+    page: Pagination,
+    kind: str | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
+) -> PaginatedResponse:
+    """The landing pages of a project (the targets a backlink may point to)."""
+    _get_project(db, project_id, user)
+    conditions = [TargetWebsite.project_id == project_id]
+    if kind:
+        conditions.append(TargetWebsite.kind == kind)
+    if is_active is not None:
+        conditions.append(TargetWebsite.is_active.is_(is_active))
+    stmt = select(TargetWebsite).where(*conditions)
+    count_stmt = select(func.count()).select_from(TargetWebsite).where(*conditions)
+    stmt = stmt.order_by(TargetWebsite.created_at.desc())
+    result = paginate(db, stmt, TargetWebsite, page.page, page.page_size, count_stmt)
+    return PaginatedResponse(
+        items=[TargetWebsiteOut.model_validate(item) for item in result.items],
+        total=result.total,
+        page=result.page,
+        page_size=result.page_size,
+        pages=result.pages,
+    )
 
 
 @router.put("/{project_id}/settings", response_model=ProjectSettingsOut)

@@ -356,6 +356,7 @@ export interface TargetWebsite {
   kind: "MAIN" | "LANDING" | "BLOG" | "OTHER";
   is_active: boolean;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface ScoreBreakdown {
@@ -762,6 +763,238 @@ export interface IntegrationCredential {
   updated_at: string;
 }
 
+/** A provider the platform knows about and whether a secret is stored for it. */
+export interface IntegrationProvider {
+  key: string;
+  name: string;
+  purpose: string;
+  docs: string;
+  configured: boolean;
+}
+
+/** A stored credential - the secret itself is never returned. */
+export interface IntegrationCredentialSummary {
+  id: string;
+  provider: string;
+  label: string;
+  status: string;
+  has_value: boolean;
+  masked_hint: string;
+  updated_at: string;
+}
+
+/** Per project configuration of an adapter. */
+export interface AdapterConfiguration {
+  id: string;
+  adapter_id: string;
+  project_id: string | null;
+  config: Record<string, unknown>;
+}
+
+/** A discovery provider and whether it can be used right now. */
+export interface DiscoveryProvider {
+  key: string;
+  name: string;
+  description?: string;
+  requires_credentials: boolean;
+  categories: string[];
+  enabled?: boolean;
+  available?: boolean;
+  reason?: string | null;
+}
+
+/** A campaign groups the tasks of a project towards one goal. */
+export interface Campaign {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  goal_type: string | null;
+  target_value: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A recurring job (discovery or verification) of the scheduler. */
+export interface Schedule {
+  id: string;
+  name: string;
+  kind: "discovery" | "verification";
+  target_id: string | null;
+  interval_seconds: number | null;
+  cron: string | null;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  enabled: boolean;
+  config: Record<string, unknown>;
+}
+
+/** Static information about the backend a client talks to. */
+export interface SystemInfo {
+  name: string;
+  version: string;
+  environment: string;
+  storage_mode: StorageMode | string;
+  database_type: "sqlite" | "postgresql";
+  data_dir: string;
+  ai_enabled: boolean;
+  celery_enabled: boolean;
+}
+
+/** The health payload of `GET /health`. */
+export interface HealthStatus {
+  status: string;
+  version: string;
+  database: Record<string, unknown>;
+  worker: Record<string, unknown>;
+  storage_mode: string;
+}
+
+/** State of the hybrid synchronisation between a local and a cloud workspace. */
+export interface SyncStatus {
+  pending: number;
+  conflicts: number;
+  last_sync_at: string | null;
+  online: boolean;
+}
+
+export interface SyncPushResult {
+  ok: boolean;
+  message?: string;
+  pushed: number;
+  conflicts: number;
+}
+
+export interface SyncPullResult {
+  ok: boolean;
+  message?: string;
+  applied: number;
+  skipped: number;
+}
+
+export interface SyncResolveResult {
+  ok: boolean;
+  message?: string;
+  strategy?: string;
+}
+
+/** One change of the hybrid synchronisation protocol. */
+export interface SyncChange {
+  entity_type: string;
+  entity_id: string;
+  operation: string;
+  version: number;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface SyncChangesResponse {
+  changes: SyncChange[];
+}
+
+/** Result of `POST /api/v1/storage/test`. */
+export interface StorageTestResult {
+  ok: boolean;
+  message: string;
+  dialect: string;
+}
+
+/** A backup file of the local database. */
+export interface StorageBackup {
+  path: string;
+  created_at: string;
+  label?: string;
+}
+
+export interface StorageRestoreResult {
+  restored: boolean;
+  source?: string;
+}
+
+/** One entry of the backup history. */
+export interface StorageBackupEntry {
+  path: string;
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  /** Keeps the entry assignable to `Record<string, unknown>`. */
+  [key: string]: unknown;
+}
+
+/** The status of the configured AI stack. */
+export interface AiStatus {
+  configured: boolean;
+  provider: string | null;
+  model: string | null;
+}
+
+/** Registration of a local agent (device). */
+export interface DeviceRegisterRequest {
+  name: string;
+  platform?: string;
+  version?: string | null;
+  capabilities?: string[];
+}
+
+export interface DeviceRegisterResponse {
+  device_id: string;
+  api_key: string;
+  poll_interval_seconds: number;
+}
+
+/** Heartbeat of a local agent. */
+export interface DeviceHeartbeatRequest {
+  status?: string;
+  capabilities?: string[];
+}
+
+/** The result a local agent reports for a finished task. */
+export interface DeviceTaskReport {
+  status: string;
+  result?: Record<string, unknown>;
+  error?: string | null;
+}
+
+/** The queue counters per task status. */
+export type QueueStats = Record<string, number>;
+
+/** The response of `POST /api/v1/queue`. */
+export interface QueueCreateResponse {
+  created: number;
+  task_ids: string[];
+  skipped?: number;
+}
+
+/** The response of `POST /api/v1/queue/reorder`. */
+export interface ReorderResult {
+  updated: number;
+}
+
+/** The response of the bulk endpoints (`/opportunities/bulk`, `/queue/bulk-control`). */
+export interface BulkActionResult {
+  affected: number;
+}
+
+/** The response of `POST /api/v1/verification/run`. */
+export interface VerificationScheduleResult {
+  scheduled: number;
+  task_ids?: string[];
+}
+
+/** The response of `POST /api/v1/registry/exclusions`. */
+export interface DomainExclusionResult {
+  domain: string;
+  affected: number;
+  until: string | null;
+}
+
+/** The response of `POST /api/v1/registry/merge`. */
+export interface MergeDuplicatesResult {
+  primary_id: string;
+  merged: number;
+}
+
 /* ------------------------------------------------------------------ */
 /* Request payload contracts                                           */
 /* ------------------------------------------------------------------ */
@@ -845,6 +1078,38 @@ export interface OpportunityUpdate {
   submission_method?: SubmissionMethod;
 }
 
+/** Manual addition of a website to the registry. */
+export interface OpportunityCreate {
+  opportunity_url: string;
+  name?: string;
+  category?: OpportunityCategory | string;
+  domain?: string;
+  discovery_source?: string;
+  submission_method?: SubmissionMethod | string;
+  adapter_id?: string | null;
+  anchor_text?: string | null;
+  description?: string | null;
+  notes?: string | null;
+  contact_email?: string | null;
+  target_landing_page?: string | null;
+  registration_required?: boolean | null;
+  requires_approval?: boolean | null;
+  project_id?: string | null;
+}
+
+/** Exclusion of every website of one domain. */
+export interface DomainExclusionRequest {
+  domain: string;
+  until?: string;
+  reason?: string;
+}
+
+/** Merge of duplicate registry entries into one primary record. */
+export interface MergeDuplicatesRequest {
+  primary_id: string;
+  duplicate_ids: string[];
+}
+
 export interface BulkActionRequest {
   opportunity_ids: string[];
   action: "approve" | "reject" | "exclude" | "delete" | "queue" | "add_to_project";
@@ -867,6 +1132,11 @@ export interface QueueCreateRequest {
 export interface TaskControlRequest {
   action: "pause" | "resume" | "cancel" | "retry" | "requeue";
   reason?: string;
+}
+
+/** The bulk variant of {@link TaskControlRequest}. */
+export interface TaskBulkControlRequest extends TaskControlRequest {
+  task_ids: string[];
 }
 
 export interface VerifyRequest {
@@ -895,4 +1165,34 @@ export interface StorageMigrationPreview {
   conflicts: number;
   compatible: boolean;
   notes: string[];
+}
+
+/** The request of `POST /api/v1/reports`. */
+export interface ReportCreateRequest {
+  project_id?: string;
+  format?: "xlsx" | "csv";
+  scope?: string;
+}
+
+/** The configuration of one adapter for one project. */
+export interface AdapterConfigurationUpdate {
+  project_id?: string | null;
+  config?: Record<string, unknown>;
+}
+
+/** A change pushed to a cloud workspace. */
+export interface SyncEntityPushRequest {
+  entity_id: string;
+  operation?: string;
+  version?: number;
+  payload: Record<string, unknown>;
+}
+
+/** One row of an import job together with the planned action. */
+export interface ImportRowDetail {
+  row_number: number;
+  action: ImportAction | string;
+  reason: string | null;
+  errors: string | null;
+  raw: Record<string, unknown>;
 }

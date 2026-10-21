@@ -4,6 +4,7 @@ import {
   api,
   apiClient,
   getSessionMode,
+  onSessionModeChange,
   setApiBaseUrl,
   setApiToken,
   setLocalToken,
@@ -58,9 +59,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [busy, setBusy] = React.useState(false);
 
   const refreshUser = React.useCallback(async () => {
-    // The local session is a machine session without a user account.
-    if (mode !== "cloud" || !apiClient.token) {
+    if (getSessionMode() !== "cloud") {
+      // The local session is a machine session without a user account.
       setUser(null);
+      setStatus("authenticated");
+      return;
+    }
+    if (!apiClient.token) {
+      setUser(null);
+      setStatus("anonymous");
       return;
     }
     try {
@@ -73,12 +80,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setStatus("anonymous");
       setError(messageOf(err));
     }
-  }, [mode]);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (getSessionMode() !== "cloud" || !apiClient.token) {
+      // The desktop app is a local application: the local session needs no
+      // account and no sign in - the sign in screen belongs to the optional
+      // cloud connection.
+      if (getSessionMode() !== "cloud") {
+        if (!cancelled) {
+          setUser(null);
+          setStatus("authenticated");
+        }
+        return;
+      }
+      if (!apiClient.token) {
         if (!cancelled) setStatus("anonymous");
         return;
       }
@@ -98,6 +115,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // The transport decides where the client talks to - the UI follows.
+  React.useEffect(() => {
+    const handler = () => {
+      const next = getSessionMode();
+      setMode(next);
+      setToken(apiClient.token);
+      if (next === "local") {
+        // The local session is a machine session, it is always available.
+        setUser(null);
+        setStatus("authenticated");
+        setError(null);
+        return;
+      }
+      // A hosted backend needs an account of its own.
+      setUser(null);
+      setStatus("anonymous");
+      void refreshUser();
+    };
+    return onSessionModeChange(handler);
+  }, [refreshUser]);
 
   React.useEffect(() => {
     const handler = () => {
@@ -125,8 +163,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(result.access_token);
       setLocalToken(null);
       setUser(result.user);
-      setMode("cloud");
-      setSessionMode("cloud");
+      // The mode follows the target: signing in against the local sidecar
+      // keeps the local session, a hosted backend is the cloud mode.
+      const next = getSessionMode();
+      setMode(next);
+      setSessionMode(next);
       setStatus("authenticated");
     } catch (err) {
       setError(messageOf(err));
@@ -150,8 +191,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(result.access_token);
         setLocalToken(null);
         setUser(result.user);
-        setMode("cloud");
-        setSessionMode("cloud");
+        const next = getSessionMode();
+        setMode(next);
+        setSessionMode(next);
         setStatus("authenticated");
       } catch (err) {
         setError(messageOf(err));
@@ -164,33 +206,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = React.useCallback(() => {
+    // Signing out belongs to the cloud session: the local session is a
+    // machine session of this computer and has no account to sign out of.
+    if (getSessionMode() !== "cloud") return;
+    // The credentials are cleared, the target stays: the sign in screen of a
+    // hosted backend still talks to that backend.
     setApiToken(null);
     setLocalToken(null);
     setToken(null);
     setUser(null);
-    setMode("local");
-    setSessionMode("local");
     setStatus("anonymous");
+    setError(null);
   }, []);
 
-  const useLocalSession = React.useCallback(
-    (localToken: string | null) => {
-      if (!localToken) return;
-      // A local session never overrides an explicit cloud login.
-      if (mode === "cloud") return;
-      // The bundled backend expects the machine token in the
-      // `X-Local-Token` header - not as a bearer token.
-      setLocalToken(localToken);
-      setApiToken(null);
-      setToken(localToken);
-      setMode("local");
-      setSessionMode("local");
-      setUser(null);
-      setStatus("authenticated");
-      setError(null);
-    },
-    [mode],
-  );
+  const useLocalSession = React.useCallback((localToken: string | null) => {
+    if (!localToken) return;
+    // A local session never overrides an explicit cloud login.
+    if (getSessionMode() === "cloud") return;
+    // The bundled backend expects the machine token in the
+    // `X-Local-Token` header - not as a bearer token.
+    setLocalToken(localToken);
+    setMode("local");
+    setUser(null);
+    setStatus("authenticated");
+    setError(null);
+  }, []);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({
