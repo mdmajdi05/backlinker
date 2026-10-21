@@ -241,16 +241,43 @@ export function Field({
   children: React.ReactNode;
   className?: string;
 }) {
+  // The label is associated with the control, so screen readers announce it
+  // and the browser focuses the field when the label is clicked.
+  const generatedId = React.useId();
+  const childProps = React.isValidElement(children)
+    ? (children.props as { id?: string })
+    : undefined;
+  const controlId = childProps?.id ?? generatedId;
+  const describedBy = error ? `${controlId}-error` : hint ? `${controlId}-hint` : undefined;
+
+  const control = React.isValidElement(children)
+    ? React.cloneElement(
+        children as React.ReactElement<Record<string, unknown>>,
+        {
+          id: controlId,
+          "aria-describedby": describedBy,
+          "aria-invalid": error ? true : undefined,
+          required: required ?? undefined,
+        },
+      )
+    : children;
+
   return (
     <div className={cn("w-full", className)}>
       {label ? (
-        <Label required={required}>{label}</Label>
+        <Label htmlFor={controlId} required={required}>
+          {label}
+        </Label>
       ) : null}
-      {children}
+      {control}
       {error ? (
-        <p className="mt-1 text-xs text-danger">{error}</p>
+        <p id={`${controlId}-error`} className="mt-1 text-xs text-danger">
+          {error}
+        </p>
       ) : hint ? (
-        <p className="mt-1 text-xs text-content-subtle">{hint}</p>
+        <p id={`${controlId}-hint`} className="mt-1 text-xs text-content-subtle">
+          {hint}
+        </p>
       ) : null}
     </div>
   );

@@ -24,6 +24,8 @@ help:
 	@echo "  make acceptance       Run the end-to-end acceptance test (full product loop)"
 	@echo "  make browser-check    Prove that a real browser submits a form"
 	@echo "  make desktop-check    Prove the packaged desktop app starts and keeps its session"
+	@echo "  make ui-check         Prove the web client can add a website by hand"
+	@echo "  make seed-demo        Fill a running backend with a small demo workspace"
 	@echo "  make desktop-build    Build the universal macOS app + disk image"
 	@echo "  make agent-smoke      Prove the local agent claims and executes a task"
 	@echo "  make verify           Run every check (scripts/verify_all.sh)"
@@ -83,6 +85,12 @@ browser-check:
 
 desktop-check:
 	cd apps/desktop && ../../$(PY) scripts/check-desktop.py
+
+ui-check:
+	./scripts/check_add_website_ui.py
+
+seed-demo:
+	./scripts/seed_demo.py
 
 desktop-build:
 	cd apps/desktop && npm run backend && npm run tauri:build -- --target universal-apple-darwin

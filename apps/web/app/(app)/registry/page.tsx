@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   CardBody,
+  Dialog,
   Field,
   Input,
   Pagination,
@@ -16,6 +17,7 @@ import {
   Table,
   Td,
   Th,
+  Textarea,
   Toolbar,
   Tooltip,
   useToast,
@@ -60,6 +62,63 @@ export default function RegistryPage() {
   const [detail, setDetail] = React.useState<Opportunity | null>(null);
   const [confirmAction, setConfirmAction] = React.useState<BulkAction | null>(null);
   const [bulkProjectId, setBulkProjectId] = React.useState("");
+
+  // Manual entry: the website on which the backlink should be placed.
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [addForm, setAddForm] = React.useState({
+    opportunity_url: "",
+    name: "",
+    category: "BUSINESS_DIRECTORY",
+    project_id: "",
+    anchor_text: "",
+    description: "",
+    target_landing_page: "",
+  });
+  const [addError, setAddError] = React.useState<string | null>(null);
+  const [adding, setAdding] = React.useState(false);
+
+  const resetAddForm = () =>
+    setAddForm({
+      opportunity_url: "",
+      name: "",
+      category: "BUSINESS_DIRECTORY",
+      project_id: projectId || (projects.data?.items?.[0]?.id ?? ""),
+      anchor_text: "",
+      description: "",
+      target_landing_page: "",
+    });
+
+  const submitManualWebsite = async () => {
+    setAddError(null);
+    if (!addForm.opportunity_url.trim()) {
+      setAddError("The URL of the website is required.");
+      return;
+    }
+    if (!addForm.project_id) {
+      setAddError("Choose the project this opportunity belongs to.");
+      return;
+    }
+    setAdding(true);
+    try {
+      await apiClient.post("/api/v1/opportunities", {
+        opportunity_url: addForm.opportunity_url.trim(),
+        name: addForm.name.trim() || undefined,
+        category: addForm.category,
+        project_id: addForm.project_id,
+        anchor_text: addForm.anchor_text.trim() || undefined,
+        description: addForm.description.trim() || undefined,
+        target_landing_page: addForm.target_landing_page.trim() || undefined,
+      });
+      toast.push("Website added to the registry", "success");
+      setAddOpen(false);
+      resetAddForm();
+      opportunities.reload();
+    } catch (err) {
+      setAddError(errorMessage(err));
+    } finally {
+      setAdding(false);
+    }
+  };
 
   const debouncedSearch = useDebounced(search, 400);
   const debouncedDomain = useDebounced(domain, 400);
@@ -148,9 +207,22 @@ export default function RegistryPage() {
         title="Website Registry"
         description="Every discovered opportunity with its score, state and submission readiness."
         actions={
-          <Button variant="outline" size="sm" onClick={opportunities.reload} loading={opportunities.refreshing}>
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                resetAddForm();
+                setAddError(null);
+                setAddOpen(true);
+              }}
+            >
+              Add website
+            </Button>
+            <Button variant="outline" size="sm" onClick={opportunities.reload} loading={opportunities.refreshing}>
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -429,6 +501,114 @@ export default function RegistryPage() {
         onClose={() => setDetail(null)}
         onChanged={opportunities.reload}
       />
+
+      <Dialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add a website"
+        description="The page on which the backlink should be placed."
+        width="lg"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>
+              Cancel
+            </Button>
+            <Button loading={adding} onClick={() => void submitManualWebsite()}>
+              Add to registry
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {addError ? (
+            <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+              {addError}
+            </p>
+          ) : null}
+
+          <Field
+            label="Opportunity URL"
+            required
+            hint="The exact page that accepts the listing - for example https://example.com/add-your-business"
+          >
+            <Input
+              value={addForm.opportunity_url}
+              onChange={(event) =>
+                setAddForm((prev) => ({ ...prev, opportunity_url: event.target.value }))
+              }
+              placeholder="https://example.com/add-your-business"
+            />
+          </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Name" hint="Shown in the registry">
+              <Input
+                value={addForm.name}
+                onChange={(event) => setAddForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="Example directory"
+              />
+            </Field>
+            <Field label="Category" required>
+              <Select
+                value={addForm.category}
+                onChange={(event) => setAddForm((prev) => ({ ...prev, category: event.target.value }))}
+              >
+                {ALL_OPPORTUNITY_CATEGORIES.map((value) => (
+                  <option key={value} value={value}>
+                    {CATEGORY_LABELS[value] ?? value}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <Field label="Project" required hint="The campaign this opportunity belongs to">
+            <Select
+              value={addForm.project_id}
+              onChange={(event) => setAddForm((prev) => ({ ...prev, project_id: event.target.value }))}
+            >
+              <option value="">Choose a project</option>
+              {(projects.data?.items ?? []).map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Anchor text" hint="The clickable text of the link">
+              <Input
+                value={addForm.anchor_text}
+                onChange={(event) =>
+                  setAddForm((prev) => ({ ...prev, anchor_text: event.target.value }))
+                }
+                placeholder="Acme Analytics"
+              />
+            </Field>
+            <Field label="Target landing page" hint="Your page that should receive the link">
+              <Input
+                value={addForm.target_landing_page}
+                onChange={(event) =>
+                  setAddForm((prev) => ({ ...prev, target_landing_page: event.target.value }))
+                }
+                placeholder="https://your-site.com/product"
+              />
+            </Field>
+          </div>
+
+          <Field label="Description" hint="Used for the submission form and the outreach draft">
+            <Textarea
+              rows={3}
+              value={addForm.description}
+              onChange={(event) =>
+                setAddForm((prev) => ({ ...prev, description: event.target.value }))
+              }
+              placeholder="One or two sentences about your business."
+            />
+          </Field>
+        </div>
+      </Dialog>
 
       <ConfirmDialog
         open={confirmAction !== null}
