@@ -43,8 +43,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/autobacklinker-api"],
-    "resources": [],
+    "resources": {
+      "Resources/backend": "backend"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

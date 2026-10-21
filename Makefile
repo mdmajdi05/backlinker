@@ -24,6 +24,7 @@ help:
 	@echo "  make acceptance       Run the end-to-end acceptance test (full product loop)"
 	@echo "  make browser-check    Prove that a real browser submits a form"
 	@echo "  make desktop-check    Prove the packaged desktop app starts and keeps its session"
+	@echo "  make desktop-build    Build the universal macOS app + disk image"
 	@echo "  make agent-smoke      Prove the local agent claims and executes a task"
 	@echo "  make verify           Run every check (scripts/verify_all.sh)"
 
@@ -82,6 +83,12 @@ browser-check:
 
 desktop-check:
 	cd apps/desktop && ../../$(PY) scripts/check-desktop.py
+
+desktop-build:
+	cd apps/desktop && npm run backend && npm run tauri:build -- --target universal-apple-darwin
+	cd apps/desktop && bash scripts/build-dmg.sh \
+		--app src-tauri/target/universal-apple-darwin/release/bundle/macos/"Auto Backlinker.app" \
+		--output src-tauri/target/universal-apple-darwin/release/bundle/dmg/"Auto Backlinker_1.0.0_universal.dmg"
 
 agent-smoke:
 	./scripts/smoke_local_agent.py

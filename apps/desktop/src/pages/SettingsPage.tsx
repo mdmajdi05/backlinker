@@ -18,6 +18,11 @@ import { useNotifications } from "../lib/notifications";
 import { useAuth } from "../lib/auth";
 import { api, apiClient, setApiBaseUrl, setSessionMode } from "../lib/api";
 import { openPath } from "../lib/backend";
+import {
+  getBrowserRuntimeStatus,
+  installBrowserRuntime,
+  type BrowserRuntimeStatus,
+} from "../lib/backend";
 import { ErrorBlock, LoadingBlock, PageHeader } from "../components/common";
 import { useAsync } from "../lib/useAsync";
 import { formatDate } from "../lib/format";
@@ -38,6 +43,40 @@ export function SettingsPage() {
   );
 
   const storage = useAsync(() => api.storage.status(apiClient), []);
+
+  // The browser runtime is only needed by the browser adapter.
+  const [browserRuntime, setBrowserRuntime] = React.useState<BrowserRuntimeStatus | null>(null);
+  const [installingBrowser, setInstallingBrowser] = React.useState(false);
+  const [installBrowserMessage, setInstallBrowserMessage] = React.useState<string | null>(null);
+
+  const refreshBrowserRuntime = React.useCallback(async () => {
+    try {
+      setBrowserRuntime(await getBrowserRuntimeStatus());
+    } catch {
+      setBrowserRuntime(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void refreshBrowserRuntime();
+  }, [refreshBrowserRuntime]);
+
+  const installBrowser = React.useCallback(async () => {
+    setInstallingBrowser(true);
+    setInstallBrowserMessage(null);
+    try {
+      const message = await installBrowserRuntime();
+      setInstallBrowserMessage(message);
+      toast.push("The browser runtime was installed", "success");
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      setInstallBrowserMessage(text);
+      toast.push("The browser runtime could not be installed", "error");
+    } finally {
+      setInstallingBrowser(false);
+      void refreshBrowserRuntime();
+    }
+  }, [refreshBrowserRuntime, toast]);
 
   const status = backend.status;
   const native = backend.native;
@@ -189,6 +228,45 @@ export function SettingsPage() {
               Open data directory
             </Button>
           </div>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Browser runtime"
+          description="Needed by the browser adapter (Playwright + Chromium)."
+          action={
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!backend.native}
+                onClick={() => void refreshBrowserRuntime()}
+              >
+                Check
+              </Button>
+              <Button
+                size="sm"
+                disabled={!backend.native || installingBrowser || browserRuntime?.installed}
+                loading={installingBrowser}
+                onClick={() => void installBrowser()}
+              >
+                {browserRuntime?.installed ? "Installed" : "Install"}
+              </Button>
+            </div>
+          }
+        />
+        <CardBody>
+          <p className="text-xs text-content-muted">
+            {browserRuntime?.installed
+              ? `The browser runtime is available at ${browserRuntime.path}. The browser adapter can run form submissions.`
+              : "The browser runtime is not installed yet. Without it the browser adapter pauses its tasks and asks for manual completion - everything else works. The download is about 150 MB and needs an internet connection once."}
+          </p>
+          {installBrowserMessage ? (
+            <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-surface-sunken p-2 text-[11px] text-content-muted">
+              {installBrowserMessage}
+            </pre>
+          ) : null}
         </CardBody>
       </Card>
 

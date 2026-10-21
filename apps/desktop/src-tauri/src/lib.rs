@@ -36,6 +36,8 @@ pub fn run() {
             commands::read_file,
             commands::write_file,
             commands::agent_status,
+            commands::browser_runtime_status,
+            commands::install_browser_runtime,
         ])
         .setup(move |app| {
             // The desktop app owns its backend: start the sidecar as soon as

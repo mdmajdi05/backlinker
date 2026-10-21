@@ -680,21 +680,21 @@ nodejs.org).  Everything below was actually run:
 | Hybrid local-agent path | `scripts/smoke_local_agent.py` | pass (register → claim → execute → report → attempt + events) |
 | **Real browser automation** | `scripts/check_browser_automation.py` | pass - a real Chromium fills the form with the profile facts, submits it, the success signal is detected and the backlink record is created (never simulated) |
 | **Packaged desktop app** | `apps/desktop/scripts/check-desktop.py` | pass - first launch, second launch while the backend runs (no port conflict, no restart loop, one backend) and a full restart keep the local session valid (no 401) |
+| **Disk image** | mount `release/macos/*.dmg` and start the app from it | pass - the bundled backend starts from the mounted image, `/health` answers, the API accepts the local token and rejects a missing one |
 | Full product loop | `scripts/acceptance.py` | pass (profile → project → discovery → approve → queue → worker → activity → metrics → 9-sheet report → re-import preview → commit) |
 | Migrations | `alembic upgrade head → downgrade base → upgrade head` | pass (29 tables, both dialects) |
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |
 | Web client | `npm run build` (Next.js) | pass (17 routes) |
 | Desktop client | `npm run build` (Vite + `tsc --noEmit`) | pass |
 | Desktop sidecar | `scripts/build-sidecar.sh` (PyInstaller) | pass - 69 MB executable (Playwright package included), starts, creates the SQLite database, answers `/health` |
-| Native macOS bundle | `npm run tauri:build` + `scripts/build-dmg.sh` | pass - `Auto Backlinker.app` and `Auto Backlinker_1.0.0_x64.dmg` (71 MB); the DMG mounts and contains the app plus the bundled backend (artifacts in `release/macos/`) |
+| Native macOS bundle | `npm run tauri:build -- --target universal-apple-darwin` + `scripts/build-dmg.sh` | pass - **universal** app (x86_64 + arm64) with the backend bundled for both architectures; `Auto Backlinker_1.0.0_universal.dmg` (160 MB) mounts, runs and answers `/health` |
 
 Not executed here, and therefore **not claimed as working**:
 
 * **The Windows installer.**  The Tauri configuration declares the `msi` and
   `nsis` targets and the PowerShell sidecar script exists, but the build
   machine is macOS - the Windows artifact has to be produced on Windows (or
-  with the `windows-*-msvc` cross toolchain and the NSIS tooling).
-* **Code signing.**  The `.app` / `.dmg` are unsigned; a distributable build
+  with the `windows-*-msvc` cross toolchain and the NSIS tooling).* **Code signing.**  The `.app` / `.dmg` are unsigned; a distributable build
   needs an Apple Developer ID certificate plus notarization (and an
   Authenticode certificate for Windows).
 * **The Docker image and the compose stack**: Docker is not installed here;

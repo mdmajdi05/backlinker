@@ -110,6 +110,35 @@ export async function openPath(path: string): Promise<void> {
   await invoke<void>("open_path", { path });
 }
 
+export interface BrowserRuntimeStatus {
+  installed: boolean;
+  path: string | null;
+  detail: string;
+}
+
+/** Is the browser runtime (Playwright + Chromium) available? */
+export async function getBrowserRuntimeStatus(): Promise<BrowserRuntimeStatus> {
+  if (!isTauri()) {
+    return {
+      installed: false,
+      path: null,
+      detail: "The browser runtime is only available in the desktop build.",
+    };
+  }
+  return invoke<BrowserRuntimeStatus>("browser_runtime_status");
+}
+
+/**
+ * Download the browser runtime that the browser adapter needs.
+ *
+ * The download is roughly 150 MB and happens once.  Everything else of the
+ * application works without it.
+ */
+export async function installBrowserRuntime(): Promise<string> {
+  requireTauri("Installing the browser runtime");
+  return invoke<string>("install_browser_runtime");
+}
+
 export async function readFileBytes(path: string): Promise<Uint8Array> {
   requireTauri("Reading local files");
   return invoke<number[]>("read_file", { path }).then((bytes) =>

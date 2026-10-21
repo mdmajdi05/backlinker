@@ -1,0 +1,104 @@
+# Auto Backlinker — dost ke liye guide
+
+Sab kuch app ke andar hai. Na Python, na Node.js, na PostgreSQL, na Redis,
+na terminal — bas app kholo aur kaam shuru.
+
+---
+
+## 1. Install karna
+
+1. `Auto Backlinker_1.0.0_universal.dmg` par double-click
+2. **Auto Backlinker** ko **Applications** folder mein drag karo
+3. Applications se kholo
+
+> **Pehli baar macOS roke to:** app par **right-click → Open** karo, phir
+> “Open” confirm karo. Ye sirf isliye hai kyunki app unsigned hai (developer
+> certificate nahi hai). Doosri baar se normally khul jayega.
+>
+> Terminal wala option (sirf zaroori ho to):
+> `xattr -dr com.apple.quarantine "/Applications/Auto Backlinker.app"`
+
+**Dono Mac types support hote hain** — Intel (x86_64) aur Apple Silicon (M1/M2/M3/M4).
+Ek hi file dono pe chalti hai.
+
+---
+
+## 2. Pehli baar kya hota hai
+
+- App apne aap apna **backend start** karta hai (screen ke andar, koi window nahi khulta)
+- Database aapke machine pe banta hai:
+  `~/Library/Application Support/AutoBacklinker/autobacklinker.db`
+- Aapko **koi login nahi karna** — local session khud ban jata hai
+- Browser khula hua ho to Overview pe live dashboard dikhega
+
+---
+
+## 3. Kya offline chalta hai, kya internet chahta hai
+
+| Feature | Internet? | Note |
+| ------- | --------- | ---- |
+| Projects, business profiles, settings | ❌ nahi | sab local DB me |
+| Website registry, approve/reject, notes | ❌ nahi | |
+| Excel/CSV import + column mapping | ❌ nahi | |
+| Excel reports (9 sheets) | ❌ nahi | |
+| Queue, worker, task history, retries | ❌ nahi | |
+| Verification results storage | ❌ nahi | |
+| Local agent (device registration) | ❌ nahi | |
+| **Directory discovery** (`directory_index`) | ✅ haan | websites ki reachability check hoti hai |
+| **Link verification** | ✅ haan | published page fetch karna padta hai |
+| **Form submission** (http/playwright adapter) | ✅ haan | target site tak jaana padta hai |
+| **AI suggestions** | ✅ haan | ya local Ollama use karo (offline) |
+
+**Browser automation (Playwright) ke liye** pehli baar ek runtime download hota hai
+(~150 MB). Settings → *Browser runtime* → **Install**. Uske baad sab local chalta hai.
+
+---
+
+## 4. Important: submission ka rule
+
+App **khud se kisi website pe data submit nahi karta** jab tak us site ke liye
+adapter configure na ho. Ye deliberate hai:
+
+- Adapter nahi hai → task `WAITING_FOR_USER` ho jata hai aur ek **submission pack**
+  (URL + anchor + description) milta hai — aap manually kar lete ho
+- Adapter hai lekin **CAPTCHA / login / review** aa gaya → task ruk jata hai,
+  app batata hai, aap manually complete karke resume karte ho
+- App kabhi **jhootha "success"** nahi dikhata: link verify nahi hua to
+  `PUBLISHED_UNVERIFIED` hi rehta hai
+
+Har site ki ToS, rate limits aur submission policy pehle khud check kar lena.
+
+---
+
+## 5. Data kahan hai / backup
+
+| Kya | Kahan |
+| --- | ----- |
+| Database | `~/Library/Application Support/AutoBacklinker/autobacklinker.db` |
+| Imports, reports, screenshots | `~/Library/Application Support/AutoBacklinker/files/` |
+| Backups | `~/Library/Application Support/AutoBacklinker/backups/` |
+| Logs | `~/Library/Application Support/AutoBacklinker/logs/backend.log` |
+
+- Settings → *Database & Storage* → **Create backup**
+- Backup file `.bak` hai — app hi restore kar leta hai
+- Doosre machine pe le jaane ke liye: puri `AutoBacklinker` folder copy karo
+
+---
+
+## 6. Uninstall
+
+Applications se `Auto Backlinker` ko delete kar do. Upar wala data folder
+bach jayega (aapka data safe rahega) — use hatana ho to wo folder bhi delete kar do.
+
+---
+
+## 7. Problem ho to
+
+| Problem | Solution |
+| ------- | -------- |
+| App khul hi nahi hota | Right-click → Open |
+| "Backend stopped" dikh raha hai | Settings → *Restart backend*; logs `logs/backend.log` me hain |
+| Data dikh nahi raha | Settings me storage mode check karo (Local hona chahiye) |
+| Browser wale tasks ruk rahe hain | Settings → *Install browser runtime* |
+| Kisi site pe submit nahi ho raha | Us site ka adapter configure karo ya manual pack use karo |
+| Port 8765 busy hai | Settings → Stop backend → Start backend |

@@ -21,6 +21,9 @@ apps/desktop/src-tauri/gen/
 apps/desktop/.sidecar-venv/
 apps/desktop/.sidecar-build/
 apps/desktop/.playwright-browsers/
+apps/desktop/.backend-cache/
+# The bundled backend is a build artifact (rebuild with `npm run backend`).
+apps/desktop/src-tauri/Resources/backend/
 
 # Runtime data (never commit local databases or secrets)
 data/

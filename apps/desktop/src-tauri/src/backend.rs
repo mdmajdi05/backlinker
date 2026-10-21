@@ -168,18 +168,21 @@ impl BackendState {
             let _ = fs::create_dir_all(parent);
         }
 
-        let sidecar = match locate_sidecar(app) {
-            Some(path) => path,
+        let sidecar = match locate_bundled_backend(app) {
+            Some(launcher) => launcher,
             None => {
-                let message = "The backend sidecar binary is missing. Build it with \
-                              `npm run sidecar` (scripts/build-sidecar.sh) before starting \
+                let message = "The bundled backend is missing. Build it with \
+                              `npm run backend` (scripts/build-backend.sh) before starting \
                               the local backend."
                     .to_string();
                 inner.last_error = Some(message.clone());
                 return Err(message);
             }
         };
-        inner.sidecar_path = Some(sidecar.clone());
+        inner.sidecar_path = Some(match &sidecar {
+            BackendLauncher::Python { program, .. } => program.clone(),
+            BackendLauncher::Binary { program } => program.clone(),
+        });
 
         // A backend of a previous launch may still be running on the port.
         // Reusing a healthy one is the best case; a stale process that no
@@ -194,7 +197,20 @@ impl BackendState {
             inner.healthy = false;
         }
 
-        let mut command = Command::new(&sidecar);
+        let mut command = match &sidecar {
+            BackendLauncher::Python {
+                program,
+                script,
+                python_path,
+            } => {
+                let mut command = Command::new(program);
+                command.arg(script);
+                command.env("PYTHONPATH", python_path);
+                command.env("PYTHONDONTWRITEBYTECODE", "1");
+                command
+            }
+            BackendLauncher::Binary { program } => Command::new(program),
+        };
         command
             .arg("--host")
             .arg("127.0.0.1")
@@ -631,6 +647,118 @@ fn port_is_open(port: u16) -> bool {
     match address.parse() {
         Ok(parsed) => TcpStream::connect_timeout(&parsed, Duration::from_millis(400)).is_ok(),
         Err(_) => false,
+    }
+}
+
+/// How the bundled backend is started.
+#[derive(Debug)]
+enum BackendLauncher {
+    /// The multi architecture backend: a standalone CPython plus the
+    /// dependencies.  This is the preferred way because one build works on
+    /// Intel and Apple Silicon.
+    Python {
+        program: PathBuf,
+        script: PathBuf,
+        python_path: String,
+    },
+    /// The single file executable built with PyInstaller (fallback).
+    Binary { program: PathBuf },
+}
+
+/// Locate the backend that is bundled into the application.
+///
+/// The application ships the backend for both macOS architectures and picks
+/// the one that matches the machine it runs on.
+fn locate_bundled_backend(app: &AppHandle) -> Option<BackendLauncher> {    if let Ok(resources) = app.path().resource_dir() {
+        let arch = match std::env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x86_64",
+            other => other,
+        };
+        let dir = resources.join("backend").join(arch);
+        let program = dir.join("runtime").join("bin").join("python3.12");
+        let script = dir.join("sidecar_launcher.py");
+        if program.is_file() && script.is_file() {
+            let python_path = format!(
+                "{}:{}",
+                dir.join("site-packages").display(),
+                dir.display()
+            );
+            return Some(BackendLauncher::Python {
+                program,
+                script,
+                python_path,
+            });
+        }
+    }
+    locate_sidecar(app).map(|program| BackendLauncher::Binary { program })
+}
+
+/// Path of the browser runtime of the bundled backend (if it is installed).
+pub fn browser_runtime(app: &AppHandle) -> Option<String> {
+    let launcher = locate_bundled_backend(app)?;
+    let (program, script, python_path) = match launcher {
+        BackendLauncher::Python {
+            program,
+            script,
+            python_path,
+        } => (program, Some(script), Some(python_path)),
+        BackendLauncher::Binary { program } => (program, None, None),
+    };
+    let mut command = Command::new(&program);
+    if let Some(script) = script {
+        command.arg(script);
+    }
+    if let Some(python_path) = python_path {
+        command.env("PYTHONPATH", python_path);
+    }
+    let output = command
+        .args(["-c", "import playwright, pathlib; print(pathlib.Path(playwright.__file__).parent)"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Download the browser runtime that the Playwright adapter needs.
+pub fn install_browser_runtime(app: &AppHandle) -> Result<String, String> {
+    let launcher = locate_bundled_backend(app)
+        .ok_or_else(|| "The bundled backend is missing.".to_string())?;
+    let (program, script, python_path) = match launcher {
+        BackendLauncher::Python {
+            program,
+            script,
+            python_path,
+        } => (program, Some(script), Some(python_path)),
+        BackendLauncher::Binary { program } => (program, None, None),
+    };
+    let mut command = Command::new(&program);
+    if let Some(script) = script {
+        command.arg(script);
+    }
+    if let Some(python_path) = python_path {
+        command.env("PYTHONPATH", python_path);
+    }
+    let output = command
+        .args(["-m", "playwright", "install", "chromium"])
+        .output()
+        .map_err(|err| format!("Cannot start the download: {err}"))?;
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    if output.status.success() {
+        Ok(format!("The browser runtime was installed.\n{text}"))
+    } else {
+        let errors = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(format!(
+            "The browser runtime could not be installed (exit code {}).\n{errors}\n{text}",
+            output.status.code().unwrap_or(-1)
+        ))
     }
 }
 

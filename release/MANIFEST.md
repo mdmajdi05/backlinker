@@ -1,21 +1,28 @@
 # Release artifacts
 
-Built on macOS 26.6 (x86_64) from this repository.
+Built on macOS from this repository.
 
 | Artifact | Size | What it is |
 | -------- | ---- | ---------- |
-| `macos/Auto Backlinker_1.0.0_x64.dmg` | 71 MB | Installable disk image (drag & drop into /Applications) |
-| `macos/Auto Backlinker.app` | 75 MB | The native macOS application bundle |
-| `macos/autobacklinker-api-x86_64-apple-darwin` | 69 MB | The backend sidecar (also embedded in the .app, Playwright package included) |
+| `macos/Auto Backlinker_1.0.0_universal.dmg` | 160 MB | The disk image to share - **runs on Intel and Apple Silicon** |
+| `macos/Auto Backlinker.app` | 317 MB | The application bundle (same content as the DMG) |
+| `HOW-TO-USE.md` | - | The guide for the people you share it with |
+
+The application contains **everything**: the user interface, the FastAPI
+backend, the SQLite database handling, the background worker and the browser
+automation engine - for both macOS architectures.  The user never installs
+Python, Node.js, PostgreSQL or Redis and never starts a server manually.
 
 Rebuild with:
 
 ```bash
 cd apps/desktop
-npm run sidecar            # backend sidecar (PyInstaller)
-npm run tauri:build        # native bundle -> target/release/bundle/macos
-bash scripts/build-dmg.sh  # disk image (headless friendly)
+npm run backend                                  # bundle the backend for both architectures
+npm run tauri:build -- --target universal-apple-darwin
+bash scripts/build-dmg.sh --app \
+  src-tauri/target/universal-apple-darwin/release/bundle/macos/"Auto Backlinker.app" \
+  --output src-tauri/target/universal-apple-darwin/release/bundle/dmg/Auto\ Backlinker_1.0.0_universal.dmg
 ```
 
-The artifacts are **unsigned**. A distributable build needs an Apple
+The artifacts are **unsigned**.  A distributable build needs an Apple
 Developer ID certificate and notarization; see `apps/desktop/README.md`.

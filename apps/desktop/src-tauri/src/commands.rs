@@ -34,6 +34,44 @@ pub struct AgentStatus {
     pub last_seen: Option<String>,
 }
 
+/// Status of the browser runtime that the Playwright adapter needs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserRuntimeStatus {
+    pub installed: bool,
+    pub path: Option<String>,
+    pub detail: String,
+}
+
+/// Check whether the browser runtime is available.
+#[tauri::command]
+pub fn browser_runtime_status(app: AppHandle) -> BrowserRuntimeStatus {
+    match backend::browser_runtime(&app) {
+        Some(path) => BrowserRuntimeStatus {
+            installed: true,
+            path: Some(path),
+            detail: "The browser runtime is installed.".to_string(),
+        },
+        None => BrowserRuntimeStatus {
+            installed: false,
+            path: None,
+            detail:
+                "The browser runtime is not installed yet - the browser adapter pauses its tasks \
+                 until it is available."
+                    .to_string(),
+        },
+    }
+}
+
+/// Download the browser runtime that the Playwright adapter needs.
+///
+/// The download happens once (~150 MB) and needs an internet connection.
+/// Everything else of the application works without it.
+#[tauri::command]
+pub async fn install_browser_runtime(app: AppHandle) -> Result<String, String> {
+    backend::install_browser_runtime(&app)
+}
+
 /* ------------------------------------------------------------------ */
 /* Backend lifecycle                                                   */
 /* ------------------------------------------------------------------ */

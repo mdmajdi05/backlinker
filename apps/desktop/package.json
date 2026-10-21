@@ -13,6 +13,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "icons": "python3 scripts/generate-icons.py",
+    "backend": "bash scripts/build-backend.sh",
     "sidecar": "bash scripts/build-sidecar.sh"
   },
   "dependencies": {
