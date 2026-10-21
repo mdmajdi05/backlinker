@@ -227,10 +227,24 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def generated_map(details: SiteDetails | None) -> dict[str, Any]:
+    """The generated fields as a map.
+
+    Older rows stored a plain list of field names - both shapes are accepted so
+    that an upgraded database keeps working.
+    """
+    raw = getattr(details, "generated", None)
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, (list, tuple, set)):
+        return {str(item): "generated" for item in raw}
+    return {}
+
+
 def _forget_generated(details: SiteDetails, field: str) -> None:
     """A field that was edited by hand is no longer machine generated."""
     details.generated = {
-        key: value for key, value in (details.generated or {}).items() if key != field
+        key: value for key, value in generated_map(details).items() if key != field
     }
 
 
@@ -375,7 +389,7 @@ def details_payload(
                 "founded_year": details.founded_year,
                 "employee_count": details.employee_count,
                 "extra": dict(details.extra or {}),
-                "generated": dict(details.generated or {}),
+                "generated": generated_map(details),
                 "updated_at": details.updated_at,
             }
         )
@@ -557,7 +571,7 @@ def generate_details(
             source = "ai"
     details.extra = extra
 
-    details.generated = {**(details.generated or {}), **sources}
+    details.generated = {**generated_map(details), **sources}
     details.updated_at = utcnow()
     db.commit()
     db.refresh(details)

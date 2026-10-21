@@ -178,10 +178,18 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
         log.exception("unhandled error", extra={"extra_fields": {"path": request.url.path}})
-        return JSONResponse(
+        response = JSONResponse(
             status_code=500,
             content={"error": {"code": "internal_error", "message": "An unexpected error occurred"}},
         )
+        # The error is raised outside of the CORS middleware, so the browser
+        # would refuse to read the answer - the header is added here.
+        origin = request.headers.get("origin")
+        if origin and origin in settings.cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
 
     prefix = settings.api_prefix
     app.include_router(auth.router, prefix=prefix)
