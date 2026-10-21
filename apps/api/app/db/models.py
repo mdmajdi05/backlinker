@@ -130,6 +130,10 @@ class ProjectSettings(IdMixin, TimestampMixin, Base):
     require_approval: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     execution_environment: Mapped[str] = mapped_column(String(16), default="CLOUD", nullable=False)
     auto_queue_approved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Auto pilot: queue every approved opportunity for submission.
+    auto_submit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Categories the auto pilot is limited to (empty = every category).
+    auto_submit_categories: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="settings")
@@ -244,6 +248,46 @@ class Opportunity(IdMixin, TimestampMixin, Base):
 
     project: Mapped[Project] = relationship()
     website: Mapped[Website] = relationship(back_populates="opportunities")
+
+
+class SiteDetails(IdMixin, TimestampMixin, Base):
+    """The values a directory asks for, stored **per opportunity**.
+
+    The record is attached to the opportunity (and not to the website) so the
+    very same website can be listed with different details in two projects.
+    ``extra`` holds everything a specific form needs that has no fixed field.
+    """
+
+    __tablename__ = "site_details"
+    __table_args__ = (UniqueConstraint("opportunity_id", name="uq_site_details_opportunity_id"),)
+
+    opportunity_id: Mapped[str] = mapped_column(
+        ForeignKey("opportunities.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    website_id: Mapped[str] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    company_name: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    logo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    categories: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    founded_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    employee_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Everything a specific form needs that has no fixed field.
+    extra: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    #: The fields the assistant filled: field name -> how it was produced.
+    generated: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class DiscoverySource(IdMixin, TimestampMixin, Base):

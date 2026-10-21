@@ -180,6 +180,15 @@ class Worker:
                     tick_schedules(db)
                 except Exception:  # pragma: no cover - scheduling must not break the worker
                     log.exception("scheduler tick failed")
+            if self._schedule_tick % 5 == 0:
+                try:
+                    from app.services.autopilot import sweep
+
+                    # Projects with the automatic submission enabled get their
+                    # approved opportunities queued without a manual step.
+                    sweep(db)
+                except Exception:  # pragma: no cover - the sweep must not break the worker
+                    log.exception("auto pilot sweep failed")
 
             execution = get_execution_settings(db)
             if execution.state != "RUNNING":

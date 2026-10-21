@@ -156,6 +156,10 @@ export function ProjectSettingsForm({
             />
             Auto-queue approved
           </Label>
+          <p className="text-xs text-content-subtle">
+            Puts every approved opportunity into the queue. The automatic submission - queueing
+            and submitting in the background - is configured in the Auto pilot card above.
+          </p>
           <Label className="flex items-center gap-2 text-content">
             <Checkbox
               checked={form.allow_browser_automation}

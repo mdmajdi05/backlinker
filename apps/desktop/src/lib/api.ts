@@ -18,7 +18,7 @@
  * base URL differs.
  */
 
-import { ApiClient, api } from "@autobacklinker/api-client";
+import { ApiClient, ApiError, api as sharedApi } from "@autobacklinker/api-client";
 import { DEFAULT_BACKEND_PORT } from "./backend";
 
 export type SessionMode = "local" | "cloud";
@@ -670,5 +670,385 @@ function generateLocalPassword(): string {
   return `local-${random}`;
 }
 
-export { api };
-export { ApiClient };
+/* ------------------------------------------------------------------ */
+/* Submission details and the auto pilot                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One field the form of a target site asks for.
+ *
+ * The backend answers either with the plain field name (`"email"`) or with an
+ * object that carries a ready made label
+ * (`{"field": "email", "label": "E-mail address"}`).  Both are normalised
+ * into this shape.
+ */
+export interface RequiredDetailField {
+  field: string;
+  label: string;
+}
+
+/** The values of the submission form that may be edited. */
+export interface SubmissionDetailsUpdate {
+  company_name?: string | null;
+  description?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  postal_code?: string | null;
+  logo_path?: string | null;
+  categories?: string[] | null;
+  founded_year?: number | null;
+  employee_count?: number | null;
+  extra?: Record<string, unknown> | null;
+}
+
+/** The details of a target site (normalised, safe to render). */
+export interface SubmissionDetails {
+  opportunity_id: string;
+  company_name: string | null;
+  description: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postal_code: string | null;
+  logo_path: string | null;
+  categories: string[];
+  founded_year: number | null;
+  employee_count: number | null;
+  extra: Record<string, unknown>;
+  /** The names of the fields that were filled by the generator. */
+  generated: string[];
+  updated_at: string | null;
+  /** The fields the target site asks for. */
+  required: RequiredDetailField[];
+  /** The fields the target site asks for and that are still empty. */
+  missing: RequiredDetailField[];
+  /** True when nothing is missing anymore. */
+  complete: boolean;
+}
+
+/** The result of a generation run. */
+export interface SubmissionGeneration {
+  details: SubmissionDetails;
+  /** The fields that were filled by this run. */
+  generated: string[];
+  /** `ai` when the assistant wrote the text, `profile` otherwise. */
+  source: "ai" | "profile";
+}
+
+/** The state of the auto pilot of a project. */
+export interface AutoPilotState {
+  enabled: boolean;
+  /** The categories the auto pilot is limited to (empty = every category). */
+  categories: string[];
+  /** The opportunities that wait for the operator. */
+  waiting: number;
+  /** The opportunities that were submitted. */
+  submitted: number;
+}
+
+/** The raw answer of the backend - every part of it is optional. */
+interface RawDetails {
+  opportunity_id?: string;
+  company_name?: unknown;
+  description?: unknown;
+  email?: unknown;
+  phone?: unknown;
+  website?: unknown;
+  address?: unknown;
+  city?: unknown;
+  state?: unknown;
+  country?: unknown;
+  postal_code?: unknown;
+  logo_path?: unknown;
+  categories?: unknown;
+  founded_year?: unknown;
+  employee_count?: unknown;
+  extra?: unknown;
+  generated?: unknown;
+  updated_at?: unknown;
+  required?: unknown;
+  missing?: unknown;
+  complete?: unknown;
+  /** The human readable label of every field. */
+  labels?: unknown;
+}
+
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  return String(value);
+}
+
+function asOptionalText(value: unknown): string | null {
+  const text = asText(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => asText(item).trim()).filter((item) => item.length > 0);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** `email_address` -> `Email address` - the fallback label of a field. */
+function fallbackLabel(field: string): string {
+  const text = field.replace(/[_-]+/g, " ").trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : field;
+}
+
+function normalizeFields(
+  value: unknown,
+  labels: Record<string, unknown> = {},
+): RequiredDetailField[] {
+  if (!Array.isArray(value)) return [];
+  const fields: RequiredDetailField[] = [];
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      const field = entry.trim();
+      if (field) fields.push({ field, label: labelOf(field, labels) });
+      continue;
+    }
+    if (entry && typeof entry === "object") {
+      const record = entry as Record<string, unknown>;
+      const field = asText(record.field ?? record.name ?? record.key).trim();
+      if (!field) continue;
+      const label = asText(record.label ?? record.title).trim();
+      fields.push({ field, label: label || labelOf(field, labels) });
+    }
+  }
+  return fields;
+}
+
+/** The label of a field - the backend knows most of them. */
+function labelOf(field: string, labels: Record<string, unknown>): string {
+  const label = asText(labels[field]).trim();
+  return label || fallbackLabel(field);
+}
+
+/** The generated fields may be a list of names or a map of names. */
+function normalizeGenerated(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => asText(item).trim()).filter(Boolean);
+  }
+  if (value && typeof value === "object") {
+    return Object.keys(value as Record<string, unknown>);
+  }
+  return [];
+}
+
+function normalizeDetails(
+  raw: RawDetails | null | undefined,
+  options: { requiredKnown?: boolean } = {},
+): SubmissionDetails {
+  const data = raw ?? {};
+  const labels = asObject(data.labels);
+  const missing = normalizeFields(data.missing, labels);
+  // The backend tells the client which fields it asks for.  When it does
+  // not, the client does not know whether the details are complete - it must
+  // not claim that they are.
+  const known =
+    options.requiredKnown ??
+    (data.required !== undefined || data.complete !== undefined);
+  return {
+    opportunity_id: asText(data.opportunity_id),
+    company_name: asOptionalText(data.company_name),
+    description: asOptionalText(data.description),
+    email: asOptionalText(data.email),
+    phone: asOptionalText(data.phone),
+    website: asOptionalText(data.website),
+    address: asOptionalText(data.address),
+    city: asOptionalText(data.city),
+    state: asOptionalText(data.state),
+    country: asOptionalText(data.country),
+    postal_code: asOptionalText(data.postal_code),
+    logo_path: asOptionalText(data.logo_path),
+    categories: asStringList(data.categories),
+    founded_year: asNumber(data.founded_year),
+    employee_count: asNumber(data.employee_count),
+    extra: asObject(data.extra),
+    generated: normalizeGenerated(data.generated),
+    updated_at: asOptionalText(data.updated_at),
+    required: normalizeFields(data.required, labels),
+    missing,
+    complete:
+      typeof data.complete === "boolean"
+        ? data.complete
+        : known
+          ? missing.length === 0
+          : false,
+  };
+}
+
+/**
+ * The required fields of an opportunity.
+ *
+ * Some backends answer them together with the details, others keep them in
+ * a separate endpoint - the client asks for them only when it has to.
+ */
+async function fetchRequired(
+  c: ApiClient,
+  id: string,
+): Promise<RawDetails | null> {
+  try {
+    const raw = await c.get<RawDetails>(
+      `/api/v1/opportunities/${id}/details/required`,
+    );
+    return {
+      required: raw.required,
+      missing: raw.missing,
+      complete: raw.complete,
+      labels: raw.labels,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Adds the required fields to a details payload when they are missing. */
+async function withRequired(
+  c: ApiClient,
+  id: string,
+  raw: RawDetails,
+): Promise<SubmissionDetails> {
+  if (raw.required !== undefined || raw.complete !== undefined) {
+    return normalizeDetails(raw);
+  }
+  const required = await fetchRequired(c, id);
+  if (!required) return normalizeDetails(raw, { requiredKnown: false });
+  return normalizeDetails({ ...raw, ...required }, { requiredKnown: true });
+}
+
+function normalizeAutoPilot(
+  raw: Record<string, unknown> | null | undefined,
+): AutoPilotState {
+  const data = raw ?? {};
+  return {
+    enabled: data.enabled === true,
+    categories: asStringList(data.categories),
+    waiting: asNumber(data.waiting ?? data.pending) ?? 0,
+    submitted: asNumber(data.submitted ?? data.approved ?? data.queued) ?? 0,
+  };
+}
+
+/**
+ * The submission details of one opportunity.
+ *
+ * The endpoints are part of the local sidecar - the desktop client never
+ * sends them anywhere else.
+ */
+export const submissionDetails = {
+  get: async (c: ApiClient, id: string): Promise<SubmissionDetails> =>
+    withRequired(
+      c,
+      id,
+      await c.get<RawDetails>(`/api/v1/opportunities/${id}/details`),
+    ),
+  update: async (
+    c: ApiClient,
+    id: string,
+    body: SubmissionDetailsUpdate,
+  ): Promise<SubmissionDetails> =>
+    withRequired(
+      c,
+      id,
+      await c.put<RawDetails>(`/api/v1/opportunities/${id}/details`, body),
+    ),
+  remove: (c: ApiClient, id: string): Promise<void> =>
+    c.delete<void>(`/api/v1/opportunities/${id}/details`),
+  generate: async (
+    c: ApiClient,
+    id: string,
+  ): Promise<SubmissionGeneration> => {
+    const raw = await c.post<{
+      details?: RawDetails;
+      generated?: unknown;
+      source?: string;
+    }>(`/api/v1/opportunities/${id}/details/generate`);
+    const source = raw?.source === "ai" ? "ai" : "profile";
+    return {
+      details: await withRequired(c, id, raw?.details ?? {}),
+      generated: normalizeGenerated(raw?.generated),
+      source,
+    };
+  },
+};
+
+/** The auto pilot of a project - it submits the approved opportunities. */
+export const autoPilot = {
+  get: async (c: ApiClient, projectId: string): Promise<AutoPilotState> =>
+    normalizeAutoPilot(
+      await c.get<Record<string, unknown>>(
+        `/api/v1/projects/${projectId}/autopilot`,
+      ),
+    ),
+  update: async (
+    c: ApiClient,
+    projectId: string,
+    body: { enabled: boolean; categories: string[] },
+  ): Promise<AutoPilotState> =>
+    normalizeAutoPilot(
+      await c.post<Record<string, unknown>>(
+        `/api/v1/projects/${projectId}/autopilot`,
+        body,
+      ),
+    ),
+};
+
+/**
+ * True when the backend does not know the endpoint yet.
+ *
+ * The details and the auto pilot are newer than the desktop client - an
+ * older sidecar answers with 404.  The views use this to show an honest
+ * "not available yet" state instead of pretending that something worked.
+ */
+export function isMissingEndpoint(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.status === 404 || error.status === 405 || error.status === 501;
+  }
+  if (!error) return false;
+  const text = error instanceof Error ? error.message : String(error);
+  return /\b(404|405|501)\b/.test(text) || /not\s+found/i.test(text);
+}
+
+/**
+ * The transport of the desktop client.
+ *
+ * It is the shared API client of the web app plus the endpoints of the
+ * automatic submission (the details of a target site and the auto pilot of a
+ * project).  Everything runs against the local sidecar.
+ */
+export const api = {
+  ...sharedApi,
+  submissionDetails,
+  autoPilot,
+};
+
+export { ApiClient, ApiError };

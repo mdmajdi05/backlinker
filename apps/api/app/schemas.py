@@ -176,7 +176,15 @@ class ProjectSettingsOut(ORMModel):
     require_approval: bool
     execution_environment: str
     auto_queue_approved: bool
+    auto_submit: bool
+    auto_submit_categories: list[str]
     timezone: str
+
+    @field_validator("auto_submit_categories", mode="before")
+    @classmethod
+    def _categories(cls, v: Any) -> list[str]:
+        """The column may be ``NULL`` on databases created before the auto pilot."""
+        return [str(item) for item in (v or [])]
 
 
 class LandingPageIn(BaseModel):
@@ -766,3 +774,119 @@ class SyncChangeOut(BaseModel):
 
 class SyncChangesOut(BaseModel):
     changes: list[SyncChangeOut] = []
+
+
+# --------------------------------------------------------------------------
+# Site details (the values a directory asks for)
+# --------------------------------------------------------------------------
+
+class SiteDetailsIn(BaseModel):
+    """The values a submission form asks for.
+
+    Every field is optional: only the fields that are sent are changed, so
+    the client can edit a single value without loading the whole record.
+    """
+
+    company_name: str | None = None
+    description: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    logo_path: str | None = None
+    categories: list[str] | None = None
+    founded_year: int | None = None
+    employee_count: int | None = None
+    extra: dict[str, Any] | None = None
+
+
+class SiteDetailsOut(ORMModel):
+    """The stored details of an opportunity.
+
+    The record also carries the fields the target site asks for (``required``)
+    and the ones that are still empty (``missing``) so a client does not have
+    to ask for them a second time.
+    """
+
+    id: str | None = None
+    opportunity_id: str
+    project_id: str | None = None
+    website_id: str | None = None
+    company_name: str | None = None
+    description: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    logo_path: str | None = None
+    categories: list[str] = []
+    founded_year: int | None = None
+    employee_count: int | None = None
+    extra: dict[str, Any] = {}
+    #: Field name -> how the value was produced ("ai", "profile", ...).
+    generated: dict[str, Any] = {}
+    updated_at: datetime | None = None
+    #: The fields the target site asks for.
+    required: list[str] = []
+    #: The required fields that are still empty.
+    missing: list[str] = []
+    #: False while ``missing`` is not empty.
+    complete: bool = True
+    #: Human readable label of every required field.
+    labels: dict[str, str] = {}
+
+
+class RequiredDetailsOut(BaseModel):
+    """Which details are required for an opportunity and which are missing."""
+
+    required: list[str] = []
+    missing: list[str] = []
+    complete: bool = True
+    #: Human readable label of every required field.
+    labels: dict[str, str] = {}
+
+
+class SiteDetailsGenerateOut(BaseModel):
+    """The result of a generation run."""
+
+    details: SiteDetailsOut
+    #: The fields that were filled by this run.
+    generated: list[str] = []
+    #: ``ai`` when the assistant produced the text, ``profile`` otherwise.
+    source: str = "profile"
+
+
+# --------------------------------------------------------------------------
+# Auto pilot
+# --------------------------------------------------------------------------
+
+class AutopilotStateIn(BaseModel):
+    """Enable or disable the automatic submission of a project."""
+
+    enabled: bool = False
+    #: The categories the auto pilot is limited to (empty = every category).
+    categories: list[str] = []
+
+
+class AutopilotStateOut(BaseModel):
+    """The state of the auto pilot of a project."""
+
+    project_id: str
+    enabled: bool
+    categories: list[str] = []
+    #: Approved opportunities that the worker did not submit yet.
+    waiting: int = 0
+    #: Opportunities the worker submitted.
+    submitted: int = 0
+    #: The approved opportunities of the project (alias of ``waiting``).
+    pending: int = 0
+    #: The open submission tasks of the project.
+    queued: int = 0

@@ -22,6 +22,7 @@ import {
 import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
+import { AutoPilotPanel } from "../components/AutoPilotPanel";
 import { formatDate, formatNumber, titleCase } from "../lib/format";
 import { navigate } from "../lib/router";
 import { openPath, sendNativeNotification } from "../lib/backend";
@@ -565,6 +566,8 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           )}
         </CardBody>
       </Card>
+
+      <AutoPilotPanel projectId={projectId} />
 
       <Card>
         <CardHeader

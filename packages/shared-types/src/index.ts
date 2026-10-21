@@ -754,6 +754,70 @@ export interface WorkerStatus {
   queue: Record<string, number>;
 }
 
+/** The details one directory asks for, stored per opportunity. */
+export interface SubmissionDetails {
+  opportunity_id: string;
+  company_name: string | null;
+  description: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  postal_code: string | null;
+  logo_path: string | null;
+  categories: string[];
+  founded_year: number | null;
+  employee_count: number | null;
+  extra: Record<string, unknown>;
+  /** Which fields the assistant produced. */
+  generated: Record<string, unknown>;
+  updated_at: string | null;
+  /** The fields the target site asks for. */
+  required: string[];
+  /** The fields that are still missing. */
+  missing: string[];
+  complete: boolean;
+}
+
+export interface SubmissionDetailsUpdate {
+  company_name?: string | null;
+  description?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  postal_code?: string | null;
+  logo_path?: string | null;
+  categories?: string[];
+  founded_year?: number | null;
+  employee_count?: number | null;
+  extra?: Record<string, unknown>;
+}
+
+export interface GenerateDetailsResult {
+  details: SubmissionDetails;
+  /** The names of the fields the assistant filled in. */
+  generated: string[];
+  /** "ai" or "profile" - where the values came from. */
+  source: string;
+}
+
+/** State of the automatic submission of a project. */
+export interface AutoPilotState {
+  enabled: boolean;
+  categories: string[];
+  /** Approved opportunities that are waiting for the worker. */
+  waiting: number;
+  /** Opportunities that were submitted automatically. */
+  submitted: number;
+}
+
 export interface IntegrationCredential {
   id: string;
   provider: string;

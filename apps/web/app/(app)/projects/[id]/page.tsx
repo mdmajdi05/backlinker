@@ -20,6 +20,7 @@ import { formatDateTime, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, CardSkeleton, ErrorPanel } from "@/components/States";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
+import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -142,6 +143,16 @@ export default function ProjectDetailPage() {
                 ) : (
                   <p className="text-xs text-content-subtle">No statistics available.</p>
                 )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Auto pilot"
+                description="Automatic submission for the websites of this project"
+              />
+              <CardBody>
+                <AutoPilotPanel projectId={projectId} projectName={data.name} />
               </CardBody>
             </Card>
 

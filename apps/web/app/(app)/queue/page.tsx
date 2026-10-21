@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { api } from "@autobacklinker/api-client";
-import type { ExecutionEnvironment, Task, TaskType } from "@autobacklinker/shared-types";
+import type { ExecutionEnvironment, Opportunity, Task, TaskType } from "@autobacklinker/shared-types";
 import { TaskStatus } from "@autobacklinker/shared-types";
 import {
   Badge,
@@ -30,6 +30,8 @@ import { ALL_TASK_STATUSES, ALL_TASK_TYPES, TASK_STATUS_LABELS, TASK_TYPE_LABELS
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, TableSkeleton } from "@/components/States";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { OpportunityDrawer } from "@/components/OpportunityDrawer";
+import { useDetailsSummaries } from "@/components/SubmissionDetailsPanel";
 
 const PAGE_SIZE = 25;
 
@@ -63,6 +65,8 @@ export default function QueuePage() {
   const [order, setOrder] = React.useState<string[]>([]);
   const [cancelTarget, setCancelTarget] = React.useState<Task | null>(null);
   const [bulkOpen, setBulkOpen] = React.useState(false);
+  // The task whose submission details are missing - opens the drawer.
+  const [detailsTarget, setDetailsTarget] = React.useState<Task | null>(null);
 
   const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
   const stats = useResource(() => api.queue.stats(apiClient), []);
@@ -81,6 +85,24 @@ export default function QueuePage() {
   );
 
   const rows = tasks.data?.items ?? [];
+
+  // A task whose submission details are incomplete waits for the user - it is
+  // not a failure and must never look like one.
+  const opportunityIds = React.useMemo(
+    () => rows.map((row) => row.opportunity_id).filter((id): id is string => Boolean(id)),
+    [rows],
+  );
+  const { summaries: detailsByOpportunity, reload: reloadDetails } =
+    useDetailsSummaries(opportunityIds);
+
+  const targetOpportunity = useResource(
+    () =>
+      detailsTarget?.opportunity_id
+        ? api.opportunities.get(apiClient, detailsTarget.opportunity_id)
+        : Promise.resolve<Opportunity | null>(null),
+    [detailsTarget?.opportunity_id],
+    { enabled: Boolean(detailsTarget?.opportunity_id) },
+  );
 
   React.useEffect(() => {
     setOrder([]);
@@ -248,7 +270,7 @@ export default function QueuePage() {
                   <Th className="w-20">Order</Th>
                   <Th>Task</Th>
                   <Th className="w-24">Type</Th>
-                  <Th className="w-40">Status</Th>
+                  <Th className="w-48">Status</Th>
                   <Th className="w-24">Env</Th>
                   <Th className="w-28">Priority</Th>
                   <Th className="w-36">Scheduled</Th>
@@ -256,109 +278,144 @@ export default function QueuePage() {
                 </tr>
               </thead>
               <tbody>
-                {orderedRows.map((task, index) => (
-                  <tr key={task.id}>
-                    <Td>
-                      <div className="flex items-center gap-1">
-                        <Tooltip label="Move up">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={index === 0}
-                            onClick={() => move(task.id, -1)}
-                            aria-label="Move task up"
-                          >
-                            ↑
-                          </Button>
-                        </Tooltip>
-                        <Tooltip label="Move down">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={index === orderedRows.length - 1}
-                            onClick={() => move(task.id, 1)}
-                            aria-label="Move task down"
-                          >
-                            ↓
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    </Td>
-                    <Td>
-                      <p className="font-medium text-content">{task.id.slice(0, 8)}</p>
-                      <p className="text-xs text-content-muted">
-                        Attempts {task.attempts}/{task.max_attempts}
-                      </p>
-                      <ProgressBar value={task.progress} className="mt-1 max-w-[160px]" />
-                      {task.last_error ? (
-                        <p className="mt-1 max-w-xs truncate text-xs text-danger" title={task.last_error}>
-                          {task.last_error}
+                {orderedRows.map((task, index) => {
+                  const summary = task.opportunity_id
+                    ? detailsByOpportunity[task.opportunity_id]
+                    : undefined;
+                  const waitingForDetails = Boolean(
+                    summary?.state === "ready" &&
+                      summary.details &&
+                      !summary.details.complete,
+                  );
+                  const missingCount = summary?.details?.missing.length ?? 0;
+                  return (
+                    <tr key={task.id}>
+                      <Td>
+                        <div className="flex items-center gap-1">
+                          <Tooltip label="Move up">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={index === 0}
+                              onClick={() => move(task.id, -1)}
+                              aria-label="Move task up"
+                            >
+                              ↑
+                            </Button>
+                          </Tooltip>
+                          <Tooltip label="Move down">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={index === orderedRows.length - 1}
+                              onClick={() => move(task.id, 1)}
+                              aria-label="Move task down"
+                            >
+                              ↓
+                            </Button>
+                          </Tooltip>
+                        </div>
+                      </Td>
+                      <Td>
+                        <p className="font-medium text-content">{task.id.slice(0, 8)}</p>
+                        <p className="text-xs text-content-muted">
+                          Attempts {task.attempts}/{task.max_attempts}
                         </p>
-                      ) : null}
-                    </Td>
-                    <Td>
-                      <Badge tone="neutral">{TASK_TYPE_LABELS[task.type] ?? task.type}</Badge>
-                    </Td>
-                    <Td>
-                      <StatusBadge status={task.status} />
-                    </Td>
-                    <Td>
-                      <Badge tone={task.execution_environment === "LOCAL" ? "warning" : "info"}>
-                        {task.execution_environment}
-                      </Badge>
-                    </Td>
-                    <Td className="tabular-nums">{task.priority}</Td>
-                    <Td className="text-xs text-content-muted">
-                      {task.scheduled_for ? formatDateTime(task.scheduled_for) : "—"}
-                    </Td>
-                    <Td>
-                      <div className="flex flex-wrap gap-1">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!PAUSABLE.has(task.status)}
-                          onClick={() => control(task, "pause")}
-                          title={
-                            PAUSABLE.has(task.status)
-                              ? "Pause this task"
-                              : `A task in status ${task.status} cannot be paused`
-                          }
-                        >
-                          Pause
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!RESUMABLE.has(task.status)}
-                          onClick={() => control(task, "resume")}
-                          title={
-                            RESUMABLE.has(task.status)
-                              ? "Resume this task"
-                              : `A task in status ${task.status} does not need to be resumed`
-                          }
-                        >
-                          Resume
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={task.status === "CANCELLED"}
-                          onClick={() => control(task, "retry")}
-                        >
-                          Retry
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          disabled={task.status === "CANCELLED"}
-                          onClick={() => setCancelTarget(task)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </Td>
-                  </tr>
-                ))}
+                        <ProgressBar value={task.progress} className="mt-1 max-w-[160px]" />
+                        {task.last_error ? (
+                          <p
+                            className={`mt-1 max-w-xs truncate text-xs ${
+                              waitingForDetails ? "text-warning" : "text-danger"
+                            }`}
+                            title={task.last_error}
+                          >
+                            {waitingForDetails ? "Blocked: " : ""}
+                            {task.last_error}
+                          </p>
+                        ) : null}
+                      </Td>
+                      <Td>
+                        <Badge tone="neutral">{TASK_TYPE_LABELS[task.type] ?? task.type}</Badge>
+                      </Td>
+                      <Td>
+                        {waitingForDetails ? (
+                          <div className="space-y-1">
+                            <Badge tone="warning">Waiting for details</Badge>
+                            <p className="text-[11px] text-content-subtle">
+                              {missingCount} detail{missingCount === 1 ? "" : "s"} missing - task
+                              status:{" "}
+                              {TASK_STATUS_LABELS[task.status] ?? task.status}
+                            </p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setDetailsTarget(task)}
+                            >
+                              Complete details
+                            </Button>
+                          </div>
+                        ) : (
+                          <StatusBadge status={task.status} />
+                        )}
+                      </Td>
+                      <Td>
+                        <Badge tone={task.execution_environment === "LOCAL" ? "warning" : "info"}>
+                          {task.execution_environment}
+                        </Badge>
+                      </Td>
+                      <Td className="tabular-nums">{task.priority}</Td>
+                      <Td className="text-xs text-content-muted">
+                        {task.scheduled_for ? formatDateTime(task.scheduled_for) : "—"}
+                      </Td>
+                      <Td>
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!PAUSABLE.has(task.status)}
+                            onClick={() => control(task, "pause")}
+                            title={
+                              PAUSABLE.has(task.status)
+                                ? "Pause this task"
+                                : `A task in status ${task.status} cannot be paused`
+                            }
+                          >
+                            Pause
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!RESUMABLE.has(task.status)}
+                            onClick={() => control(task, "resume")}
+                            title={
+                              RESUMABLE.has(task.status)
+                                ? "Resume this task"
+                                : `A task in status ${task.status} does not need to be resumed`
+                            }
+                          >
+                            Resume
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={task.status === "CANCELLED"}
+                            onClick={() => control(task, "retry")}
+                          >
+                            Retry
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={task.status === "CANCELLED"}
+                            onClick={() => setCancelTarget(task)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </Td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </Table>
             {tasks.data ? (
@@ -404,6 +461,28 @@ export default function QueuePage() {
         onCreated={() => {
           setBulkOpen(false);
           tasks.reload();
+        }}
+      />
+
+      <Dialog
+        open={Boolean(detailsTarget) && !targetOpportunity.data}
+        onClose={() => setDetailsTarget(null)}
+        title="Loading the opportunity"
+        width="sm"
+      >
+        <p className="text-xs text-content-muted">
+          Fetching the opportunity of the task so you can fill in the missing details.
+        </p>
+      </Dialog>
+
+      <OpportunityDrawer
+        opportunity={targetOpportunity.data ?? null}
+        open={Boolean(detailsTarget)}
+        initialTab="details"
+        onClose={() => setDetailsTarget(null)}
+        onChanged={() => {
+          tasks.reload();
+          reloadDetails();
         }}
       />
     </div>

@@ -231,6 +231,22 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
                 website_id=website.id,
             )
             affected += 1
+            # With the automatic submission enabled, approving is enough - the
+            # worker picks the opportunity up and submits it in the background.
+            if opportunity.project_id:
+                from app.services.autopilot import auto_submit_enabled, queue_approved
+
+                if auto_submit_enabled(db, opportunity.project_id):
+                    for task in queue_approved(db, opportunity.project_id):
+                        record_event(
+                            db,
+                            "task.queued",
+                            f"Queued automatically for {website.domain}",
+                            task_id=task.id,
+                            project_id=opportunity.project_id,
+                            website_id=website.id,
+                            metadata={"auto_submit": True},
+                        )
         elif action == "reject":
             opportunity.status = "REJECTED"
             website.status = "REJECTED"

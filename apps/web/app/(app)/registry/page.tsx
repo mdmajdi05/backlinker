@@ -4,6 +4,7 @@ import * as React from "react";
 import { api } from "@autobacklinker/api-client";
 import type { Opportunity } from "@autobacklinker/shared-types";
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -13,6 +14,7 @@ import {
   Input,
   Pagination,
   Select,
+  Skeleton,
   StatusBadge,
   Table,
   Td,
@@ -34,6 +36,14 @@ import {
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, TableSkeleton } from "@/components/States";
 import { OpportunityDrawer } from "@/components/OpportunityDrawer";
+import {
+  useDetailsSummaries,
+  type DetailsSummary,
+} from "@/components/SubmissionDetailsPanel";
+import {
+  useAutoPilotStates,
+  type AutoPilotSummary,
+} from "@/components/AutoPilotPanel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 25;
@@ -144,6 +154,36 @@ export default function RegistryPage() {
 
   const rows = opportunities.data?.items ?? [];
 
+  // The submission details and the automatic submission state decide whether a
+  // row can be submitted without asking the user for more information.
+  const detailIds = React.useMemo(() => rows.map((row) => row.id), [rows]);
+  const projectIds = React.useMemo(
+    // The selected project is always part of the list - an opportunity can
+    // belong to several projects and the filter may point to a project that is
+    // not the primary one of the visible rows.
+    () => Array.from(new Set([...rows.map((row) => row.project_id), projectId].filter(Boolean))),
+    [rows, projectId],
+  );
+  const { summaries: detailsByOpportunity } = useDetailsSummaries(detailIds);
+  const { states: autoPilotByProject } = useAutoPilotStates(projectIds);
+
+  /** The project whose automatic submission state is relevant for a row. */
+  const rowProjectId = React.useCallback(
+    (row: Opportunity) => {
+      if (projectId && (row.project_id === projectId || row.project_ids?.includes(projectId))) {
+        return projectId;
+      }
+      return row.project_id;
+    },
+    [projectId],
+  );
+
+  const selectedProject = React.useMemo(
+    () => (projects.data?.items ?? []).find((project) => project.id === projectId) ?? null,
+    [projects.data, projectId],
+  );
+  const selectedAutoPilot = projectId ? autoPilotByProject[projectId] : undefined;
+
   React.useEffect(() => {
     setSelected([]);
   }, [page, projectId, status, category, debouncedDomain, minScore, debouncedSearch]);
@@ -225,6 +265,35 @@ export default function RegistryPage() {
           </div>
         }
       />
+
+      {selectedAutoPilot?.state === "ready" && selectedAutoPilot.data?.enabled ? (
+        <Alert tone="accent" title="Automatic submission is on">
+          Approving an opportunity of{" "}
+          <span className="font-semibold text-content">
+            {selectedProject?.name ?? "this project"}
+          </span>{" "}
+          queues it automatically - the worker submits it in the background. You stay in control
+          of what is approved.
+        </Alert>
+      ) : null}
+
+      {selectedAutoPilot?.state === "ready" && !selectedAutoPilot.data?.enabled ? (
+        <Alert tone="neutral" title="Automatic submission is off">
+          Approving an opportunity of{" "}
+          <span className="font-semibold text-content">
+            {selectedProject?.name ?? "this project"}
+          </span>{" "}
+          only queues it - the worker submits it in the background once the details are
+          complete. Switch the auto pilot on in the project to submit without the manual step.
+        </Alert>
+      ) : null}
+
+      {selectedAutoPilot?.state === "unavailable" ? (
+        <Alert tone="neutral" title="The automatic submission state is not available yet">
+          The backend answered 404 for the auto pilot endpoint of this project, therefore the
+          registry can not show whether approving queues the submission.
+        </Alert>
+      ) : null}
 
       <Card>
         <Toolbar>
@@ -408,7 +477,7 @@ export default function RegistryPage() {
             isEmpty={rows.length === 0}
             emptyTitle="No opportunities match these filters"
             emptyDescription="Adjust the filters or run a discovery to populate the registry."
-            skeleton={<TableSkeleton rows={8} columns={7} />}
+            skeleton={<TableSkeleton rows={8} columns={9} />}
           >
             <Table>
               <thead>
@@ -442,6 +511,8 @@ export default function RegistryPage() {
                       Status{sortIndicator("status")}
                     </button>
                   </Th>
+                  <Th className="w-32">Details</Th>
+                  <Th className="w-28">Auto-submit</Th>
                   <Th>
                     <button type="button" onClick={() => toggleSort("updated_at")} className="font-semibold uppercase">
                       Updated{sortIndicator("updated_at")}
@@ -477,6 +548,12 @@ export default function RegistryPage() {
                     <Td className="tabular-nums">{formatDecimal(row.score, 1)}</Td>
                     <Td>
                       <StatusBadge status={row.status} />
+                    </Td>
+                    <Td>
+                      <DetailsCell summary={detailsByOpportunity[row.id]} />
+                    </Td>
+                    <Td>
+                      <AutoSubmitCell summary={autoPilotByProject[rowProjectId(row)]} />
                     </Td>
                     <Td className="text-xs text-content-muted">{formatDateTime(row.updated_at)}</Td>
                   </tr>
@@ -658,5 +735,73 @@ export default function RegistryPage() {
         ) : null}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/** Shows whether the submission details of a row are complete. */
+function DetailsCell({ summary }: { summary?: DetailsSummary }) {
+  if (!summary || summary.state === "loading") {
+    return <Skeleton className="h-4 w-20" />;
+  }
+  if (summary.state === "ready" && summary.details) {
+    const missing = summary.details.missing.length;
+    if (!missing && summary.details.complete) {
+      return <Badge tone="success">Complete</Badge>;
+    }
+    return (
+      <Tooltip label="The site asks for values that are still missing - open the row to fill them in.">
+        <span>
+          <Badge tone="warning">
+            {missing} missing
+          </Badge>
+        </span>
+      </Tooltip>
+    );
+  }
+  if (summary.state === "unavailable") {
+    return (
+      <Tooltip label="The backend does not provide submission details for this opportunity yet.">
+        <span>
+          <Badge tone="neutral">not available</Badge>
+        </span>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip label="The details state could not be loaded.">
+      <span>
+        <Badge tone="neutral">unknown</Badge>
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Shows whether approving an opportunity queues the submission. */
+function AutoSubmitCell({ summary }: { summary?: AutoPilotSummary }) {
+  if (!summary || summary.state === "loading") {
+    return <Skeleton className="h-4 w-16" />;
+  }
+  if (summary.state === "ready" && summary.data) {
+    return summary.data.enabled ? (
+      <Badge tone="success">On</Badge>
+    ) : (
+      <Badge tone="neutral">Off</Badge>
+    );
+  }
+  if (summary.state === "unavailable") {
+    return (
+      <Tooltip label="The backend does not expose the auto pilot endpoint for this project yet.">
+        <span>
+          <Badge tone="neutral">not available</Badge>
+        </span>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip label="The automatic submission state could not be loaded.">
+      <span>
+        <Badge tone="neutral">unknown</Badge>
+      </span>
+    </Tooltip>
   );
 }

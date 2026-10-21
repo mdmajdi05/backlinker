@@ -15,6 +15,7 @@ from app.api.routes import (
     ai,
     auth,
     automation,
+    autopilot,
     campaigns,
     dataflow,
     discovery,
@@ -24,6 +25,7 @@ from app.api.routes import (
     projects,
     queue,
     registry,
+    site_details,
     storage,
     sync,
     verification,
@@ -185,7 +187,9 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=prefix)
     app.include_router(profiles.router, prefix=prefix)
     app.include_router(projects.router, prefix=prefix)
+    app.include_router(autopilot.router, prefix=prefix)
     app.include_router(registry.router, prefix=prefix)
+    app.include_router(site_details.router, prefix=prefix)
     app.include_router(discovery.router, prefix=prefix)
     app.include_router(integrations.router, prefix=prefix)
     app.include_router(queue.router, prefix=prefix)

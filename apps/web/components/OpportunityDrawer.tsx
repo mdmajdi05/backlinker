@@ -14,6 +14,7 @@ import {
   KeyValue,
   Select,
   StatusBadge,
+  Tabs,
   Tooltip,
 } from "@autobacklinker/ui";
 import { apiClient, errorMessage } from "@/lib/api";
@@ -26,23 +27,34 @@ import {
   SUBMISSION_METHOD_LABELS,
   VERIFICATION_STATUS_LABELS,
 } from "@/lib/constants";
+import { DetailsStateBadge, SubmissionDetailsPanel } from "@/components/SubmissionDetailsPanel";
+
+export type OpportunityDrawerTab = "details" | "overview";
 
 export function OpportunityDrawer({
   opportunity,
   open,
   onClose,
   onChanged,
+  initialTab = "details",
 }: {
   opportunity: Opportunity | null;
   open: boolean;
   onClose: () => void;
   onChanged?: () => void;
+  /** The tab that is shown when the drawer opens. */
+  initialTab?: OpportunityDrawerTab;
 }) {
   const toast = useToast();
   const action = useAction();
   const [projectId, setProjectId] = React.useState("");
   const [excludeOpen, setExcludeOpen] = React.useState(false);
   const [excludeReason, setExcludeReason] = React.useState("");
+  const [tab, setTab] = React.useState<OpportunityDrawerTab>(initialTab);
+
+  React.useEffect(() => {
+    if (open) setTab(initialTab);
+  }, [open, initialTab]);
 
   const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
 
@@ -203,128 +215,159 @@ export function OpportunityDrawer({
             </Tooltip>
           </div>
 
-          <CardSection title="Details">
-            <KeyValue
-              items={[
-                ["Domain", opportunity.domain],
-                ["URL", opportunity.opportunity_url],
-                ["Discovery source", opportunity.discovery_source],
-                ["Provider", opportunity.discovery_provider ?? "—"],
-                ["Adapter", opportunity.adapter_id ?? "—"],
-                [
-                  "Submission method",
-                  SUBMISSION_METHOD_LABELS[opportunity.submission_method] ??
-                    humanize(opportunity.submission_method),
-                ],
-                [
-                  "Registration required",
-                  opportunity.registration_required === null
-                    ? "—"
-                    : opportunity.registration_required
-                      ? "Yes"
-                      : "No",
-                ],
-                [
-                  "Requires approval",
-                  opportunity.requires_approval === null
-                    ? "—"
-                    : opportunity.requires_approval
-                      ? "Yes"
-                      : "No",
-                ],
-                ["Anchor text", opportunity.anchor_text ?? "—"],
-                ["Target landing page", opportunity.target_landing_page ?? "—"],
-                ["Contact e-mail", opportunity.contact_email ?? "—"],
-                ["Language / region", `${opportunity.language ?? "—"} / ${opportunity.region ?? "—"}`],
-                ["Linked task", opportunity.task_id ?? "—"],
-                ["Last checked", formatDateTime(opportunity.last_checked_at)],
-                ["Created", formatDateTime(opportunity.created_at)],
-                ["Updated", formatDateTime(opportunity.updated_at)],
-              ]}
-            />
-          </CardSection>
+          <Tabs
+            tabs={[
+              { id: "details", label: "Submission details" },
+              { id: "overview", label: "Overview" },
+            ]}
+            active={tab}
+            onChange={(id) => setTab(id as OpportunityDrawerTab)}
+          />
 
-          <CardSection title="Score breakdown">
-            {breakdown ? (
-              <div className="space-y-3">
-                <div className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
-                  {Object.entries(breakdown)
-                    .filter(([key]) => key !== "reasons" && key !== "unavailable_metrics")
-                    .map(([key, value]) => (
-                      <div key={key} className="flex items-center justify-between gap-2">
-                        <span className="text-content-muted">
-                          {SCORE_COMPONENT_LABELS[key] ?? humanize(key)}
-                        </span>
-                        <span className="tabular-nums text-content">
-                          {typeof value === "number" ? formatDecimal(value, 2) : String(value)}
-                        </span>
-                      </div>
-                    ))}
+          {tab === "details" ? (
+            <SubmissionDetailsPanel opportunityId={opportunity.id} onChanged={onChanged} />
+          ) : (
+            <div className="space-y-4">
+              <CardSection title="Submission details">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <DetailsStateBadge opportunityId={opportunity.id} />
+                  <Button variant="outline" size="sm" onClick={() => setTab("details")}>
+                    Open submission details
+                  </Button>
                 </div>
+                <p className="mt-2 text-xs text-content-muted">
+                  Everything this site asks for before it accepts the listing. A task with
+                  missing details waits for you instead of failing.
+                </p>
+              </CardSection>
 
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-content">Reasons</p>
-                  {breakdown.reasons.length === 0 ? (
-                    <p className="text-xs text-content-subtle">No reasons recorded by the scorer.</p>
-                  ) : (
-                    <ul className="list-inside list-disc space-y-0.5 text-xs text-content-muted">
-                      {breakdown.reasons.map((reason, index) => (
-                        <li key={`${reason}-${index}`}>{reason}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+              <CardSection title="Details">
+                <KeyValue
+                  items={[
+                    ["Domain", opportunity.domain],
+                    ["URL", opportunity.opportunity_url],
+                    ["Discovery source", opportunity.discovery_source],
+                    ["Provider", opportunity.discovery_provider ?? "—"],
+                    ["Adapter", opportunity.adapter_id ?? "—"],
+                    [
+                      "Submission method",
+                      SUBMISSION_METHOD_LABELS[opportunity.submission_method] ??
+                        humanize(opportunity.submission_method),
+                    ],
+                    [
+                      "Registration required",
+                      opportunity.registration_required === null
+                        ? "—"
+                        : opportunity.registration_required
+                          ? "Yes"
+                          : "No",
+                    ],
+                    [
+                      "Requires approval",
+                      opportunity.requires_approval === null
+                        ? "—"
+                        : opportunity.requires_approval
+                          ? "Yes"
+                          : "No",
+                    ],
+                    ["Anchor text", opportunity.anchor_text ?? "—"],
+                    ["Target landing page", opportunity.target_landing_page ?? "—"],
+                    ["Contact e-mail", opportunity.contact_email ?? "—"],
+                    [
+                      "Language / region",
+                      `${opportunity.language ?? "—"} / ${opportunity.region ?? "—"}`,
+                    ],
+                    ["Linked task", opportunity.task_id ?? "—"],
+                    ["Last checked", formatDateTime(opportunity.last_checked_at)],
+                    ["Created", formatDateTime(opportunity.created_at)],
+                    ["Updated", formatDateTime(opportunity.updated_at)],
+                  ]}
+                />
+              </CardSection>
 
-                <div>
-                  <p className="mb-1 text-xs font-semibold text-content">Unavailable metrics</p>
-                  {breakdown.unavailable_metrics.length === 0 ? (
-                    <p className="text-xs text-content-subtle">All score metrics were available.</p>
-                  ) : (
-                    <ul className="list-inside list-disc space-y-0.5 text-xs text-content-muted">
-                      {breakdown.unavailable_metrics.map((metric, index) => (
-                        <li key={`${metric}-${index}`}>{metric}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-content-subtle">
-                The backend did not return a score breakdown for this opportunity.
-              </p>
-            )}
-          </CardSection>
+              <CardSection title="Score breakdown">
+                {breakdown ? (
+                  <div className="space-y-3">
+                    <div className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+                      {Object.entries(breakdown)
+                        .filter(([key]) => key !== "reasons" && key !== "unavailable_metrics")
+                        .map(([key, value]) => (
+                          <div key={key} className="flex items-center justify-between gap-2">
+                            <span className="text-content-muted">
+                              {SCORE_COMPONENT_LABELS[key] ?? humanize(key)}
+                            </span>
+                            <span className="tabular-nums text-content">
+                              {typeof value === "number" ? formatDecimal(value, 2) : String(value)}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
 
-          <CardSection title="Notes & result">
-            <KeyValue
-              items={[
-                ["Description", opportunity.description ?? "—"],
-                ["Notes", opportunity.notes ?? "—"],
-                ["Last result", opportunity.last_result ?? "—"],
-                ["Error detail", opportunity.error_detail ?? "—"],
-                ["Duplicate of", opportunity.duplicate_of ?? "—"],
-                ["Excluded until", opportunity.excluded_until ?? "—"],
-              ]}
-            />
-          </CardSection>
+                    <div>
+                      <p className="mb-1 text-xs font-semibold text-content">Reasons</p>
+                      {breakdown.reasons.length === 0 ? (
+                        <p className="text-xs text-content-subtle">No reasons recorded by the scorer.</p>
+                      ) : (
+                        <ul className="list-inside list-disc space-y-0.5 text-xs text-content-muted">
+                          {breakdown.reasons.map((reason, index) => (
+                            <li key={`${reason}-${index}`}>{reason}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
 
-          <CardSection title="Queue target">
-            <p className="mb-2 text-xs text-content-muted">
-              Queue tasks inherit the project of the opportunity when no project is selected.
-            </p>
-            <Select
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-              aria-label="Project for the new queue task"
-            >
-              <option value="">Use the opportunity&apos;s project</option>
-              {(projects.data?.items ?? []).map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </CardSection>
+                    <div>
+                      <p className="mb-1 text-xs font-semibold text-content">Unavailable metrics</p>
+                      {breakdown.unavailable_metrics.length === 0 ? (
+                        <p className="text-xs text-content-subtle">All score metrics were available.</p>
+                      ) : (
+                        <ul className="list-inside list-disc space-y-0.5 text-xs text-content-muted">
+                          {breakdown.unavailable_metrics.map((metric, index) => (
+                            <li key={`${metric}-${index}`}>{metric}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-content-subtle">
+                    The backend did not return a score breakdown for this opportunity.
+                  </p>
+                )}
+              </CardSection>
+
+              <CardSection title="Notes & result">
+                <KeyValue
+                  items={[
+                    ["Description", opportunity.description ?? "—"],
+                    ["Notes", opportunity.notes ?? "—"],
+                    ["Last result", opportunity.last_result ?? "—"],
+                    ["Error detail", opportunity.error_detail ?? "—"],
+                    ["Duplicate of", opportunity.duplicate_of ?? "—"],
+                    ["Excluded until", opportunity.excluded_until ?? "—"],
+                  ]}
+                />
+              </CardSection>
+
+              <CardSection title="Queue target">
+                <p className="mb-2 text-xs text-content-muted">
+                  Queue tasks inherit the project of the opportunity when no project is selected.
+                </p>
+                <Select
+                  value={projectId}
+                  onChange={(event) => setProjectId(event.target.value)}
+                  aria-label="Project for the new queue task"
+                >
+                  <option value="">Use the opportunity&apos;s project</option>
+                  {(projects.data?.items ?? []).map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </Select>
+              </CardSection>
+            </div>
+          )}
         </div>
       ) : null}
 

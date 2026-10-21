@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -18,8 +19,12 @@ import {
 import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
+import {
+  SubmissionDetailsPanel,
+  useSubmissionDetailsStates,
+} from "../components/SubmissionDetailsPanel";
 import { formatDate, formatNumber, truncate } from "../lib/format";
-import { ExecutionEnvironment, type Task } from "@autobacklinker/shared-types";
+import { ExecutionEnvironment, TaskStatus, type Task } from "@autobacklinker/shared-types";
 
 const PAGE_SIZE = 25;
 
@@ -38,12 +43,29 @@ const STATUS_FILTERS = [
   "CANCELLED",
 ];
 
+/**
+ * The statuses of a task that already reached the target site.  A task in
+ * one of them is never "waiting for details" - the submission happened.
+ */
+const SUBMITTED_STATUSES = new Set<string>([
+  TaskStatus.SUBMITTED,
+  TaskStatus.PUBLISHED_UNVERIFIED,
+  TaskStatus.VERIFIED_LIVE,
+  TaskStatus.SKIPPED,
+  TaskStatus.CANCELLED,
+  TaskStatus.COMPLETED,
+]);
+
 export function QueuePage() {
   const toast = useToast();
   const [page, setPage] = React.useState(1);
   const [status, setStatus] = React.useState("");
   const [environment, setEnvironment] = React.useState("");
   const [busyId, setBusyId] = React.useState<string | null>(null);
+  const [detailsFor, setDetailsFor] = React.useState<{
+    task: Task;
+    name: string | null;
+  } | null>(null);
 
   const stats = useAsync(() => api.queue.stats(apiClient), []);
 
@@ -58,7 +80,40 @@ export function QueuePage() {
     [page, status, environment],
   );
 
-  const items = tasks.data?.items ?? [];
+  const items = React.useMemo(() => tasks.data?.items ?? [], [tasks.data]);
+
+  // The details of the opportunities of the tasks - a task whose details are
+  // incomplete waits for the operator instead of failing.
+  const detailStates = useSubmissionDetailsStates(
+    items
+      .map((task) => task.opportunity_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+
+  function waitsForDetails(task: Task): boolean {
+    if (!task.opportunity_id) return false;
+    if (SUBMITTED_STATUSES.has(task.status)) return false;
+    const details = detailStates.states[task.opportunity_id];
+    return Boolean(details && !details.complete);
+  }
+
+  async function openDetails(task: Task) {
+    if (!task.opportunity_id) return;
+    setDetailsFor({ task, name: null });
+    try {
+      const opportunity = await api.opportunities.get(
+        apiClient,
+        task.opportunity_id,
+      );
+      setDetailsFor((current) =>
+        current && current.task.id === task.id
+          ? { ...current, name: opportunity.name }
+          : current,
+      );
+    } catch {
+      // The name is only a decoration - the panel works without it.
+    }
+  }
 
   async function control(task: Task, action: "pause" | "resume" | "cancel") {
     setBusyId(task.id);
@@ -85,6 +140,8 @@ export function QueuePage() {
   const statEntries = Object.entries(stats.data ?? {}).filter(
     ([key]) => key !== "TOTAL",
   );
+
+  const waitingForDetails = items.filter((task) => waitsForDetails(task)).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -119,6 +176,20 @@ export function QueuePage() {
           tone="danger"
         />
       </div>
+
+      {waitingForDetails > 0 ? (
+        <Alert
+          tone="warning"
+          title={`${waitingForDetails} task${
+            waitingForDetails === 1 ? "" : "s"
+          } in this view wait for the missing details`}
+        >
+          <p>
+            A submission that asks for a value that is still empty waits for
+            you. It is not a failure - fill the details and it continues.
+          </p>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader title="Filters" />
@@ -204,13 +275,28 @@ export function QueuePage() {
                 {items.map((task: Task) => {
                   const isLocal =
                     task.execution_environment === ExecutionEnvironment.LOCAL;
+                  const waiting = waitsForDetails(task);
+                  const missing = task.opportunity_id
+                    ? detailStates.states[task.opportunity_id]?.missing ?? []
+                    : [];
                   return (
                     <tr key={task.id}>
                       <Td className="whitespace-nowrap text-xs font-medium">
                         {task.type}
                       </Td>
                       <Td>
-                        <StatusBadge status={task.status} />
+                        {waiting ? (
+                          <div className="flex flex-col gap-1">
+                            <Badge tone="warning">
+                              Waiting for details
+                            </Badge>
+                            <span className="text-[11px] text-content-subtle">
+                              {task.status.replace(/_/g, " ")}
+                            </span>
+                          </div>
+                        ) : (
+                          <StatusBadge status={task.status} />
+                        )}
                       </Td>
                       <Td>
                         <Badge tone={isLocal ? "accent" : "neutral"}>
@@ -227,47 +313,71 @@ export function QueuePage() {
                       <Td className="whitespace-nowrap text-xs text-content-muted">
                         {formatDate(task.scheduled_for)}
                       </Td>
-                      <Td className="max-w-[220px] truncate text-xs text-danger">
-                        {task.last_error ?? "-"}
+                      <Td
+                        className={
+                          waiting
+                            ? "max-w-[220px] truncate text-xs text-content-muted"
+                            : "max-w-[220px] truncate text-xs text-danger"
+                        }
+                        title={
+                          waiting
+                            ? `Missing: ${missing.join(", ") || "details"}`
+                            : undefined
+                        }
+                      >
+                        {waiting
+                          ? `Missing: ${missing.join(", ") || "details"}`
+                          : (task.last_error ?? "-")}
                       </Td>
                       <Td className="whitespace-nowrap text-right">
-                        {isLocal ? (
-                          <div className="flex justify-end gap-1">
-                            {task.status === "QUEUED" ||
-                            task.status === "RETRY_SCHEDULED" ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busyId === task.id}
-                                onClick={() => control(task, "pause")}
-                              >
-                                Pause
-                              </Button>
-                            ) : null}
-                            {task.status === "DISCOVERED" ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={busyId === task.id}
-                                onClick={() => control(task, "resume")}
-                              >
-                                Resume
-                              </Button>
-                            ) : null}
+                        <div className="flex justify-end gap-1">
+                          {task.opportunity_id ? (
                             <Button
                               size="sm"
-                              variant="danger"
-                              disabled={busyId === task.id}
-                              onClick={() => control(task, "cancel")}
+                              variant="outline"
+                              onClick={() => void openDetails(task)}
                             >
-                              Cancel
+                              Details
                             </Button>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-content-subtle">
-                            {truncate(task.idempotency_key, 12)}
-                          </span>
-                        )}
+                          ) : null}
+                          {isLocal ? (
+                            <>
+                              {task.status === "QUEUED" ||
+                              task.status === "RETRY_SCHEDULED" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={busyId === task.id}
+                                  onClick={() => control(task, "pause")}
+                                >
+                                  Pause
+                                </Button>
+                              ) : null}
+                              {task.status === "DISCOVERED" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={busyId === task.id}
+                                  onClick={() => control(task, "resume")}
+                                >
+                                  Resume
+                                </Button>
+                              ) : null}
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                disabled={busyId === task.id}
+                                onClick={() => control(task, "cancel")}
+                              >
+                                Cancel
+                              </Button>
+                            </>
+                          ) : (
+                            <span className="text-[11px] text-content-subtle">
+                              {truncate(task.idempotency_key, 12)}
+                            </span>
+                          )}
+                        </div>
                       </Td>
                     </tr>
                   );
@@ -282,6 +392,15 @@ export function QueuePage() {
             />
           </CardBody>
         </Card>
+      ) : null}
+
+      {detailsFor?.task.opportunity_id ? (
+        <SubmissionDetailsPanel
+          opportunityId={detailsFor.task.opportunity_id}
+          opportunityName={detailsFor.name ?? undefined}
+          onClose={() => setDetailsFor(null)}
+          onChanged={detailStates.reload}
+        />
       ) : null}
     </div>
   );

@@ -14,6 +14,7 @@ import type {
   AdapterConfigurationUpdate,
   AiStatus,
   AuthTokens,
+  AutoPilotState,
   BacklinkRecord,
   BrowserRuntimeStatus,
   BulkActionRequest,
@@ -34,6 +35,7 @@ import type {
   DomainExclusionResult,
   ExecutionSettings,
   ExportJob,
+  GenerateDetailsResult,
   HealthStatus,
   ImportCommitRequest,
   ImportJob,
@@ -66,6 +68,8 @@ import type {
   StorageMigrationPreview,
   StorageRestoreResult,
   StorageStatus,
+  SubmissionDetails,
+  SubmissionDetailsUpdate,
   StorageTestResult,
   SyncChangesResponse,
   SyncEntityPushRequest,
@@ -581,6 +585,25 @@ export const api = {
     resources: (c: ApiClient) => c.get<ResourceStatus>("/api/v1/resources"),
   },
 
+  /**
+   * The submission details of one opportunity - the values a directory asks
+   * for.  They are stored per opportunity so the same site can be filled
+   * differently in two projects.
+   */
+  submissionDetails: {
+    get: (c: ApiClient, opportunityId: string) => c.get<SubmissionDetails>(`/api/v1/opportunities/${opportunityId}/details`).then((value) => normalizeSubmissionDetails(value)),
+    update: (c: ApiClient, opportunityId: string, body: SubmissionDetailsUpdate) => c.put<SubmissionDetails>(`/api/v1/opportunities/${opportunityId}/details`, body).then((value) => normalizeSubmissionDetails(value)),
+    remove: (c: ApiClient, opportunityId: string) => c.delete<void>(`/api/v1/opportunities/${opportunityId}/details`),
+    required: (c: ApiClient, opportunityId: string) => c.get<{ required: string[]; missing: string[]; complete: boolean }>(`/api/v1/opportunities/${opportunityId}/details/required`),
+    generate: (c: ApiClient, opportunityId: string) => c.post<GenerateDetailsResult>(`/api/v1/opportunities/${opportunityId}/details/generate`).then(normalizeGenerateResult),
+  },
+
+  /** The automatic submission of a project. */
+  autoPilot: {
+    get: (c: ApiClient, projectId: string) => c.get<AutoPilotState>(`/api/v1/projects/${projectId}/autopilot`).then((value) => normalizeAutoPilot(value)),
+    update: (c: ApiClient, projectId: string, body: { enabled: boolean; categories: string[] }) => c.post<AutoPilotState>(`/api/v1/projects/${projectId}/autopilot`, body).then((value) => normalizeAutoPilot(value)),
+  },
+
   /** Information about the backend the client talks to. */
   system: {
     info: (c: ApiClient) => c.get<SystemInfo>("/api/v1/system/info"),
@@ -590,3 +613,88 @@ export const api = {
 
 export type Api = typeof api;
 export type { Query };
+
+/* ------------------------------------------------------------------ */
+/* Normalisation - the interface must never crash on a partial answer   */
+/* ------------------------------------------------------------------ */
+
+function asString(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => asString(item)).filter((item): item is string => item !== null);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export function normalizeSubmissionDetails(value: unknown): SubmissionDetails {
+  const raw = asRecord(value);
+  return {
+    opportunity_id: asString(raw.opportunity_id) ?? "",
+    company_name: asString(raw.company_name),
+    description: asString(raw.description),
+    email: asString(raw.email),
+    phone: asString(raw.phone),
+    website: asString(raw.website),
+    address: asString(raw.address),
+    city: asString(raw.city),
+    state: asString(raw.state),
+    country: asString(raw.country),
+    postal_code: asString(raw.postal_code),
+    logo_path: asString(raw.logo_path),
+    categories: asStringList(raw.categories),
+    founded_year: asNumber(raw.founded_year),
+    employee_count: asNumber(raw.employee_count),
+    extra: asRecord(raw.extra),
+    generated: asRecord(raw.generated),
+    updated_at: asString(raw.updated_at),
+    required: asStringList(raw.required),
+    missing: asStringList(raw.missing),
+    complete: Boolean(raw.complete),
+  };
+}
+
+export function normalizeAutoPilot(value: unknown): AutoPilotState {
+  const raw = asRecord(value);
+  return {
+    enabled: Boolean(raw.enabled),
+    categories: asStringList(raw.categories),
+    waiting: asNumber(raw.waiting) ?? 0,
+    submitted: asNumber(raw.submitted) ?? 0,
+  };
+}
+
+export function normalizeGenerateResult(value: unknown): GenerateDetailsResult {
+  const raw = asRecord(value);
+  return {
+    details: normalizeSubmissionDetails(raw.details),
+    generated: asStringList(raw.generated),
+    source: asString(raw.source) ?? "profile",
+  };
+}
