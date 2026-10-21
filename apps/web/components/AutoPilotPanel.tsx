@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { api } from "@autobacklinker/api-client";
+import type { AutoPilotState } from "@autobacklinker/shared-types";
 import {
   Alert,
   Badge,
@@ -10,12 +12,7 @@ import {
   Skeleton,
   useToast,
 } from "@autobacklinker/ui";
-import {
-  autoPilotApi,
-  errorMessage,
-  isNotFoundError,
-  type AutoPilotState,
-} from "@/lib/api";
+import { apiClient, errorMessage, isNotFoundError } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 import { ALL_OPPORTUNITY_CATEGORIES, CATEGORY_LABELS } from "@/lib/constants";
 import { formatNumber } from "@/lib/format";
@@ -34,7 +31,7 @@ export function AutoPilotPanel({
   const toast = useToast();
   const action = useAction();
 
-  const state = useResource(() => autoPilotApi.get(projectId), [projectId]);
+  const state = useResource(() => api.autoPilot.get(apiClient, projectId), [projectId]);
   const [enabled, setEnabled] = React.useState(false);
   const [categories, setCategories] = React.useState<string[]>([]);
 
@@ -47,7 +44,7 @@ export function AutoPilotPanel({
   const unavailable = Boolean(state.error) && isNotFoundError(state.error);
 
   const save = async (next: { enabled: boolean; categories: string[] }) => {
-    const outcome = await action.run(() => autoPilotApi.update(projectId, next));
+    const outcome = await action.run(() => api.autoPilot.update(apiClient, projectId, next));
     if (outcome.ok && outcome.data) {
       setEnabled(outcome.data.enabled);
       setCategories(outcome.data.categories);
@@ -278,7 +275,7 @@ export function useAutoPilotStates(projectIds: string[]): {
           continue;
         }
         try {
-          const data = await autoPilotApi.get(id);
+          const data = await api.autoPilot.get(apiClient, id);
           cache.current.set(id, data);
           if (cancelled) return;
           setStates((prev) => ({ ...prev, [id]: { state: "ready", data } }));

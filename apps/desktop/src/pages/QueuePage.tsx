@@ -181,8 +181,8 @@ export function QueuePage() {
         <Alert
           tone="warning"
           title={`${waitingForDetails} task${
-            waitingForDetails === 1 ? "" : "s"
-          } in this view wait for the missing details`}
+            waitingForDetails === 1 ? " waits" : "s wait"
+          } in this view for the missing details`}
         >
           <p>
             A submission that asks for a value that is still empty waits for

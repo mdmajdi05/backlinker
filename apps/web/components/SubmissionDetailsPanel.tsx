@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { api } from "@autobacklinker/api-client";
+import type { SubmissionDetails, SubmissionDetailsUpdate } from "@autobacklinker/shared-types";
 import {
   Alert,
   Badge,
@@ -12,13 +14,7 @@ import {
   Tooltip,
   useToast,
 } from "@autobacklinker/ui";
-import {
-  errorMessage,
-  isNotFoundError,
-  submissionDetailsApi,
-  type SubmissionDetails,
-  type SubmissionDetailsUpdate,
-} from "@/lib/api";
+import { apiClient, errorMessage, isNotFoundError } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 import { formatDateTime, humanize } from "@/lib/format";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -153,12 +149,41 @@ const FIELD_META: Record<DetailFieldKey, DetailFieldMeta> = DETAIL_FIELDS.reduce
   {} as Record<DetailFieldKey, DetailFieldMeta>,
 );
 
+/** The fields that are stored as plain text. */
+type TextFieldKey =
+  | "company_name"
+  | "description"
+  | "email"
+  | "phone"
+  | "website"
+  | "address"
+  | "city"
+  | "state"
+  | "country"
+  | "postal_code"
+  | "logo_path";
+
+const TEXT_FIELD_KEYS: TextFieldKey[] = [
+  "company_name",
+  "description",
+  "email",
+  "phone",
+  "website",
+  "address",
+  "city",
+  "state",
+  "country",
+  "postal_code",
+  "logo_path",
+];
+
 /** Maps the field names used by the backend onto the fields of the form. */
 const ALIAS_TO_FIELD: Record<string, DetailFieldKey> = {
   name: "company_name",
   company_name: "company_name",
   company: "company_name",
   business_name: "company_name",
+  title: "company_name",
   organisation: "company_name",
   organization: "company_name",
   website: "website",
@@ -169,10 +194,6 @@ const ALIAS_TO_FIELD: Record<string, DetailFieldKey> = {
   description: "description",
   summary: "description",
   about: "description",
-  pitch: "description",
-  topic: "description",
-  comment: "description",
-  answer: "description",
   email: "email",
   contact_email: "email",
   e_mail: "email",
@@ -213,6 +234,7 @@ const ALIAS_TO_FIELD: Record<string, DetailFieldKey> = {
   employee_count: "employee_count",
   employees: "employee_count",
   employee_number: "employee_count",
+  number_of_employees: "employee_count",
   company_size: "employee_count",
   staff_count: "employee_count",
 };
@@ -291,19 +313,6 @@ function resolveMissing(name: string): MissingEntry {
   return { name, label: humanize(name), field: null, extra: false };
 }
 
-/**
- * Fallback for backends that do not report the missing fields: every required
- * field that has no value yet counts as missing.
- */
-function deriveMissing(details: SubmissionDetails): string[] {
-  return details.required.filter((name) => {
-    const key = ALIAS_TO_FIELD[normalizeName(name)];
-    if (key) return fieldValue(details, key).trim() === "";
-    const raw = details.extra[normalizeName(name)] ?? details.extra[name];
-    return raw === undefined || raw === null || String(raw).trim() === "";
-  });
-}
-
 /* ------------------------------------------------------------------ */
 /* Panel                                                               */
 /* ------------------------------------------------------------------ */
@@ -320,19 +329,30 @@ export function SubmissionDetailsPanel({
   const generateAction = useAction();
   const resetAction = useAction();
 
-  const details = useResource(() => submissionDetailsApi.get(opportunityId), [opportunityId]);
+  const details = useResource(
+    () => api.submissionDetails.get(apiClient, opportunityId),
+    [opportunityId],
+  );
 
   const [form, setForm] = React.useState<DetailsForm>(EMPTY_FORM);
-  const [extraBase, setExtraBase] = React.useState<Record<string, unknown>>({});
+  /** The values the backend knows - the diff against them is what is saved. */
+  const [initialForm, setInitialForm] = React.useState<DetailsForm>(EMPTY_FORM);
+  const [initialExtra, setInitialExtra] = React.useState<Record<string, unknown>>({});
   const [extraValues, setExtraValues] = React.useState<Record<string, string>>({});
   const [generatedFields, setGeneratedFields] = React.useState<string[]>([]);
-  const [dirty, setDirty] = React.useState(false);
+  /** The state the backend reported after a generation run. */
+  const [generatedState, setGeneratedState] = React.useState<{
+    missing: string[];
+    complete: boolean;
+    updatedAt: string | null;
+  } | null>(null);
   const [resetOpen, setResetOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (!details.data) return;
     setForm(toForm(details.data));
-    setExtraBase(details.data.extra);
+    setInitialForm(toForm(details.data));
+    setInitialExtra(details.data.extra);
     setExtraValues(
       Object.fromEntries(
         Object.entries(details.data.extra)
@@ -340,16 +360,16 @@ export function SubmissionDetailsPanel({
           .map(([key, value]) => [key, String(value)]),
       ),
     );
-    setDirty(false);
+    setGeneratedState(null);
   }, [details.data]);
 
   const data = details.data;
 
   const missing = React.useMemo<MissingEntry[]>(() => {
     if (!data) return [];
-    const names = data.missingReported ? data.missing : deriveMissing(data);
+    const names = generatedState ? generatedState.missing : data.missing;
     return names.map(resolveMissing);
-  }, [data]);
+  }, [data, generatedState]);
 
   const missingFields = React.useMemo(
     () => new Set(missing.filter((entry) => entry.field).map((entry) => entry.field as DetailFieldKey)),
@@ -358,12 +378,15 @@ export function SubmissionDetailsPanel({
 
   const generatedKeys = React.useMemo(() => {
     const keys = new Set<DetailFieldKey>();
-    for (const name of generatedFields) {
+    // The fields the backend marked as generated (the map of the payload) and
+    // the ones of the last generation run.
+    const names = [...Object.keys(data?.generated ?? {}), ...generatedFields];
+    for (const name of names) {
       const key = ALIAS_TO_FIELD[normalizeName(name)];
       if (key) keys.add(key);
     }
     return keys;
-  }, [generatedFields]);
+  }, [data, generatedFields]);
 
   const extraFields = React.useMemo(() => {
     const known = new Set(Object.keys(EXTRA_FIELD_LABELS));
@@ -379,42 +402,60 @@ export function SubmissionDetailsPanel({
 
   const update = (key: DetailFieldKey, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
-    setDirty(true);
   };
 
-  const save = async () => {
-    const extra: Record<string, unknown> = { ...extraBase };
+  /**
+   * Only the changed values are sent: the backend applies the fields of the
+   * request and forgets the "generated" marker of a value that is edited by
+   * hand - a value the assistant produced must keep its marker.
+   */
+  const changes = React.useMemo<SubmissionDetailsUpdate>(() => {
+    const body: SubmissionDetailsUpdate = {};
+    for (const key of TEXT_FIELD_KEYS) {
+      const value = form[key].trim();
+      if (value === (initialForm[key] ?? "").trim()) continue;
+      body[key] = value || null;
+    }
+    if (form.categories.trim() !== initialForm.categories.trim()) {
+      body.categories = splitList(form.categories);
+    }
+    if (form.founded_year.trim() !== initialForm.founded_year.trim()) {
+      body.founded_year = toNumber(form.founded_year);
+    }
+    if (form.employee_count.trim() !== initialForm.employee_count.trim()) {
+      body.employee_count = toNumber(form.employee_count);
+    }
+    const extra: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(extraValues)) {
+      const before = initialExtra[key];
+      if (String(before ?? "") === value) continue;
       extra[key] = value;
     }
-    const body: SubmissionDetailsUpdate = {
-      company_name: form.company_name.trim() || null,
-      description: form.description.trim() || null,
-      email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
-      website: form.website.trim() || null,
-      address: form.address.trim() || null,
-      city: form.city.trim() || null,
-      state: form.state.trim() || null,
-      country: form.country.trim() || null,
-      postal_code: form.postal_code.trim() || null,
-      logo_path: form.logo_path.trim() || null,
-      categories: splitList(form.categories),
-      founded_year: toNumber(form.founded_year),
-      employee_count: toNumber(form.employee_count),
-      extra,
-    };
-    const outcome = await saveAction.run(() => submissionDetailsApi.update(opportunityId, body));
+    if (Object.keys(extra).length > 0) {
+      body.extra = extra;
+    }
+    return body;
+  }, [form, initialForm, extraValues, initialExtra]);
+
+  const hasChanges = Object.keys(changes).length > 0;
+
+  const save = async () => {
+    if (!hasChanges) {
+      toast.push("Nothing changed", "info");
+      return;
+    }
+    const outcome = await saveAction.run(() =>
+      api.submissionDetails.update(apiClient, opportunityId, changes),
+    );
     if (outcome.ok && outcome.data) {
       toast.push("Submission details saved", "success");
-      setDirty(false);
-      details.reload();
+      details.setData(outcome.data);
       onChanged?.();
     }
   };
 
   const generate = async () => {
-    const outcome = await generateAction.run(() => submissionDetailsApi.generate(opportunityId));
+    const outcome = await generateAction.run(() => api.submissionDetails.generate(apiClient, opportunityId));
     if (!outcome.ok || !outcome.data) return;
     const result = outcome.data;
     const generated = result.details;
@@ -436,11 +477,21 @@ export function SubmissionDetailsPanel({
       }
       return next;
     });
+    // The backend stored the generated values - the snapshot follows them so
+    // that a later save only sends the values that were edited by hand.
+    setInitialForm(toForm(generated));
+    setInitialExtra(generated.extra);
     setGeneratedFields(result.generated);
-    setDirty(true);
+    setGeneratedState({
+      missing: generated.missing,
+      complete: generated.complete,
+      updatedAt: generated.updated_at,
+    });
     if (result.generated.length > 0) {
       toast.push(
-        `Generated ${result.generated.length} field(s) from your ${result.source === "profile" ? "business profile" : "business profile (AI)"} - save to keep them`,
+        `Generated ${result.generated.length} field(s) from your ${
+          result.source === "profile" ? "business profile" : "business profile (AI)"
+        } - the backend stored them`,
         "success",
       );
     } else {
@@ -449,7 +500,7 @@ export function SubmissionDetailsPanel({
   };
 
   const reset = async () => {
-    const outcome = await resetAction.run(() => submissionDetailsApi.remove(opportunityId));
+    const outcome = await resetAction.run(() => api.submissionDetails.remove(apiClient, opportunityId));
     if (outcome.ok) {
       toast.push("Submission details cleared", "success");
       setResetOpen(false);
@@ -510,7 +561,7 @@ export function SubmissionDetailsPanel({
     );
   }
 
-  const complete = data.complete && missing.length === 0;
+  const complete = generatedState ? generatedState.complete : data.complete && missing.length === 0;
 
   return (
     <div className="space-y-4">
@@ -530,7 +581,7 @@ export function SubmissionDetailsPanel({
             </Badge>
           )}
           <span className="text-[11px] text-content-subtle">
-            Updated {formatDateTime(data.updated_at)}
+            Updated {formatDateTime(generatedState ? generatedState.updatedAt : data.updated_at)}
           </span>
         </div>
       </div>
@@ -635,7 +686,6 @@ export function SubmissionDetailsPanel({
                   onChange={(event) => {
                     const value = event.target.value;
                     setExtraValues((prev) => ({ ...prev, [key]: value }));
-                    setDirty(true);
                   }}
                 />
               </Field>
@@ -674,7 +724,7 @@ export function SubmissionDetailsPanel({
         >
           Clear details
         </Button>
-        <Button size="sm" onClick={save} loading={saveAction.pending} disabled={!dirty}>
+        <Button size="sm" onClick={save} loading={saveAction.pending} disabled={!hasChanges}>
           Save details
         </Button>
       </div>
@@ -748,7 +798,7 @@ export function useDetailsSummaries(ids: string[]): {
     /** Loads one opportunity - returns false when the endpoint is missing. */
     const load = async (id: string): Promise<boolean> => {
       try {
-        const details = await submissionDetailsApi.get(id);
+        const details = await api.submissionDetails.get(apiClient, id);
         cache.current.set(id, details);
         if (cancelled) return true;
         setSummaries((prev) => ({ ...prev, [id]: { state: "ready", details } }));

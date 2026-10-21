@@ -959,18 +959,41 @@ function normalizeAutoPilot(
 }
 
 /**
+ * True when the backend answered "there are no details yet".
+ *
+ * An opportunity without details is not an error - the record is simply
+ * empty.  Older backends answer with a 404, the newer ones answer with an
+ * empty record.
+ */
+function isNoDetailsYet(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 404) return false;
+  if (error.code !== "not_found") return false;
+  return /detail/i.test(error.message);
+}
+
+/**
  * The submission details of one opportunity.
  *
  * The endpoints are part of the local sidecar - the desktop client never
  * sends them anywhere else.
  */
 export const submissionDetails = {
-  get: async (c: ApiClient, id: string): Promise<SubmissionDetails> =>
-    withRequired(
-      c,
-      id,
-      await c.get<RawDetails>(`/api/v1/opportunities/${id}/details`),
-    ),
+  get: async (c: ApiClient, id: string): Promise<SubmissionDetails> => {
+    let raw: RawDetails;
+    try {
+      raw = await c.get<RawDetails>(`/api/v1/opportunities/${id}/details`);
+    } catch (err) {
+      if (!isNoDetailsYet(err)) throw err;
+      // Nothing stored yet - the required fields tell the operator what the
+      // site asks for.
+      const required = await fetchRequired(c, id);
+      return normalizeDetails(
+        { opportunity_id: id, ...(required ?? {}) },
+        { requiredKnown: Boolean(required) },
+      );
+    }
+    return withRequired(c, id, raw);
+  },
   update: async (
     c: ApiClient,
     id: string,

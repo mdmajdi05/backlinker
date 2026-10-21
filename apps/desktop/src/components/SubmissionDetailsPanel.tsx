@@ -118,8 +118,6 @@ const EDITABLE_FIELDS = [
   "categories",
 ] as const;
 
-type EditableField = (typeof EDITABLE_FIELDS)[number];
-
 /** True when the field may be edited in this panel. */
 export function isEditableField(field: string): boolean {
   return (EDITABLE_FIELDS as readonly string[]).includes(
@@ -509,21 +507,6 @@ export function SubmissionDetailsPanel({
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button
-            variant="outline"
-            loading={generating}
-            disabled={busy || unsupported}
-            onClick={() => void generate()}
-          >
-            Generate from my details
-          </Button>
-          <Button
-            loading={saving}
-            disabled={busy || unsupported || !dirty}
-            onClick={() => void save()}
-          >
-            Save details
-          </Button>
         </div>
       }
     >
@@ -549,7 +532,11 @@ export function SubmissionDetailsPanel({
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={data.complete ? "success" : "warning"}>
-              {data.complete ? "Complete" : `${missing.length} missing`}
+              {data.complete
+                ? "Complete"
+                : missing.length > 0
+                  ? `${missing.length} missing`
+                  : "Unknown"}
             </Badge>
             <Badge tone="neutral">{required.length} required</Badge>
             {data.generated.length > 0 ? (
@@ -764,7 +751,7 @@ export function SubmissionDetailsPanel({
               </p>
               <KeyValue
                 items={Object.entries(data.extra).map(([key, value]) => [
-                  detailFieldLabel(key),
+                  titleCase(key),
                   typeof value === "string" || typeof value === "number"
                     ? String(value)
                     : JSON.stringify(value),
@@ -779,8 +766,8 @@ export function SubmissionDetailsPanel({
             </Alert>
           ) : null}
 
-          <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
-            <p className="text-[11px] text-content-subtle">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
+            <p className="mr-auto text-[11px] text-content-subtle">
               {dirty
                 ? "There are unsaved changes."
                 : "Everything is saved."}
@@ -813,6 +800,21 @@ export function SubmissionDetailsPanel({
                 Clear the details
               </Button>
             )}
+            <Button
+              variant="outline"
+              loading={generating}
+              disabled={busy || unsupported}
+              onClick={() => void generate()}
+            >
+              Generate from my details
+            </Button>
+            <Button
+              loading={saving}
+              disabled={busy || unsupported || !dirty}
+              onClick={() => void save()}
+            >
+              Save details
+            </Button>
           </div>
         </div>
       ) : null}
