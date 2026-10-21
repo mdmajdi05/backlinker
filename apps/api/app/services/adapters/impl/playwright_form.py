@@ -34,6 +34,7 @@ from app.services.adapters.impl import (
     robots_allowed,
     submission_values,
 )
+from app.services.browser import ISOLATION_ARGS
 
 _DEFAULT_TIMEOUT_MS = 30_000
 _MISSING_RUNTIME = "Playwright browser runtime is not installed"
@@ -83,6 +84,9 @@ class PlaywrightFormAdapter(BaseAdapter):
             return self._skipped("robots.txt does not allow automated submissions for this URL.")
 
         try:
+            from app.services.browser import ensure_playwright_path
+
+            ensure_playwright_path()
             from playwright.sync_api import Error as PlaywrightError
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
             from playwright.sync_api import sync_playwright
@@ -96,14 +100,23 @@ class PlaywrightFormAdapter(BaseAdapter):
 
         timeout_ms = int(config.get("timeout_ms") or _DEFAULT_TIMEOUT_MS)
         rate_limit()
+        headless = ctx.headless
         try:
             with sync_playwright() as playwright:
                 try:
-                    browser = playwright.chromium.launch(headless=settings.playwright_headless)
+                    browser = playwright.chromium.launch(
+                        headless=headless,
+                        args=list(ISOLATION_ARGS),
+                    )
                 except PlaywrightError as exc:
                     return self._waiting(f"{_MISSING_RUNTIME}: {exc}")
                 try:
-                    context = browser.new_context(user_agent=settings.user_agent)
+                    # A fresh, throw away context: no cookie, no storage and
+                    # no profile of the personal browser of the user is used.
+                    context = browser.new_context(
+                        user_agent=settings.user_agent,
+                        storage_state=None,
+                    )
                     page = context.new_page()
                     page.set_default_timeout(timeout_ms)
                     return self._run_form(
@@ -138,6 +151,8 @@ class PlaywrightFormAdapter(BaseAdapter):
         playwright_timeout: type[Exception],
     ) -> SubmissionResult:
         """Open the form, fill it, submit it and look for the success signal."""
+        if ctx.cancelled():
+            return self._cancelled()
         page.goto(form_url, wait_until="domcontentloaded", timeout=timeout_ms)
         content = page.content()
         challenge = challenge_kind(content)
@@ -150,6 +165,8 @@ class PlaywrightFormAdapter(BaseAdapter):
             )
 
         for selector, template in fields.items():
+            if ctx.cancelled():
+                return self._cancelled()
             value = render_template(str(template), values)
             try:
                 _fill(page, str(selector), value, timeout_ms)
@@ -158,6 +175,8 @@ class PlaywrightFormAdapter(BaseAdapter):
                     f"The configured form field '{selector}' could not be filled: {exc}"
                 )
 
+        if ctx.cancelled():
+            return self._cancelled()
         submit_selector = str(config.get("submit_selector") or "").strip()
         try:
             if submit_selector:
@@ -205,6 +224,18 @@ class PlaywrightFormAdapter(BaseAdapter):
                 "screenshot": screenshot,
                 "headless": bool(settings.playwright_headless),
             },
+        )
+
+    def _cancelled(self) -> SubmissionResult:
+        """The task was cancelled (or the whole execution was stopped)."""
+        return SubmissionResult(
+            status=RESULT_WAITING_USER,
+            message=(
+                "The task was cancelled before the browser finished - nothing was submitted."
+            ),
+            error="Cancelled",
+            requires_human=True,
+            evidence={"cancelled": True},
         )
 
     def _screenshot(self, ctx: SubmissionContext, page: Any) -> str | None:

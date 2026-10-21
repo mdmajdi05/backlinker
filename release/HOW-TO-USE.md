@@ -50,7 +50,10 @@ Ek hi file dono pe chalti hai.
 | **AI suggestions** | ✅ haan | ya local Ollama use karo (offline) |
 
 **Browser automation (Playwright) ke liye** pehli baar ek runtime download hota hai
-(~150 MB). Settings → *Browser runtime* → **Install**. Uske baad sab local chalta hai.
+(~150 MB Chromium + ~135 MB Playwright package). Settings → *Browser runtime* →
+**Install** (ya *Automation & browser* tab). Uske baad sab local chalta hai.
+Install na ho to bhi app poori tarah chalti hai — sirf browser wale tasks
+`WAITING_FOR_USER` me ruk jaate hain (manual kar lo).
 
 ---
 

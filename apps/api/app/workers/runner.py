@@ -36,6 +36,8 @@ from app.db.repositories import TaskClaimRepository
 from app.db.session import session_scope
 from app.services import queue as queue_service
 from app.services.events import record_event
+from app.services.execution import get_settings as get_execution_settings
+from app.services.resources import governor
 
 log = get_logger(__name__)
 
@@ -178,6 +180,13 @@ class Worker:
                     tick_schedules(db)
                 except Exception:  # pragma: no cover - scheduling must not break the worker
                     log.exception("scheduler tick failed")
+
+            execution = get_execution_settings(db)
+            if execution.state != "RUNNING":
+                # Paused or stopped: nothing is claimed, running jobs finish
+                # (or are cancelled by the adapter).
+                return 0
+
             for task_type in ("SUBMIT", "VERIFY", "DISCOVER", "IMPORT", "EXPORT"):
                 if self._stop.is_set():
                     break
@@ -185,7 +194,7 @@ class Worker:
                 for candidate in candidates:
                     if self._stop.is_set():
                         break
-                    if not self.within_limits(db, candidate):
+                    if not self.within_limits(db, candidate, execution):
                         continue
                     task = repo.try_claim(candidate.id, self.worker_id)
                     if task is None:
@@ -196,7 +205,16 @@ class Worker:
         return executed
 
     # -- limits ---------------------------------------------------------
-    def within_limits(self, db, task: Task) -> bool:
+    def within_limits(self, db, task: Task, execution=None) -> bool:
+        """May this task be started right now?
+
+        The limits are the configured ones *and* what the machine can
+        actually deliver: the resource governor lowers the number of parallel
+        browser jobs while the machine is busy.
+        """
+        if execution is None:
+            execution = get_execution_settings(db)
+
         running_total = int(
             db.execute(select(func.count()).select_from(Task).where(Task.status == "RUNNING")).scalar_one() or 0
         )
@@ -235,7 +253,54 @@ class Worker:
             )
             if domain_running >= domain_limit:
                 return False
+
+        # Browser jobs have their own, resource aware limit.
+        if self.is_browser_task(db, task):
+            browser_running = self._running_browser_jobs(db)
+            allowed, _reason = governor.effective_limit(
+                execution.max_browser_jobs, execution.resource_preference
+            )
+            if browser_running >= allowed:
+                return False
         return True
+
+    def is_browser_task(self, db, task: Task) -> bool:
+        """Does this task drive a browser?"""
+        adapter = None
+        if task.adapter_id:
+            from app.db.models import AutomationAdapter
+
+            row = db.get(AutomationAdapter, task.adapter_id)
+            if row is not None:
+                adapter = row.key
+        if adapter is None and task.website_id:
+            website = db.get(Website, task.website_id)
+            if website is not None and website.adapter_id:
+                from app.db.models import AutomationAdapter
+
+                row = db.get(AutomationAdapter, website.adapter_id)
+                if row is not None:
+                    adapter = row.key
+        return adapter == "playwright_form"
+
+    def _running_browser_jobs(self, db) -> int:
+        """How many browser jobs run right now."""
+        rows = db.execute(
+            select(Task.website_id).where(Task.status == "RUNNING", Task.type == "SUBMIT")
+        ).scalars().all()
+        count = 0
+        for website_id in rows:
+            if website_id is None:
+                continue
+            website = db.get(Website, website_id)
+            if website is None or not website.adapter_id:
+                continue
+            from app.db.models import AutomationAdapter
+
+            row = db.get(AutomationAdapter, website.adapter_id)
+            if row is not None and row.key == "playwright_form":
+                count += 1
+        return count
 
     # -- execution ------------------------------------------------------
     def execute(self, db, task: Task) -> None:

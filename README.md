@@ -83,6 +83,53 @@ The product is built around three rules:
 
 ---
 
+## Isolated browser automation
+
+The platform never touches the browser a person uses during the day.
+
+| Guarantee | How it is implemented | Where it is verified |
+| --------- | --------------------- | -------------------- |
+| **Own browser only** | Playwright launches its own Chromium with a throw away profile in `<app data>/browser-profile`. The personal Chrome / Edge / Safari profile is never opened, read or controlled. | `tests/test_browser_isolation.py` + `app/services/browser.py` |
+| **Headless by default** | `headless=True` is the default; the headed mode (for workflows that need a human) uses the same isolated profile. | Settings → *Automation & browser* |
+| **No extensions, no sync** | The browser is started with `--disable-extensions`, `--disable-sync`, `--no-first-run`, `--password-store=basic`, `--use-mock-keychain` and 17 further arguments. | `tests/test_browser_isolation.py` |
+| **Environment cleaned** | Variables that could point the browser at the personal profile (`CHROME_*`, `BROWSER_*`) are removed before the browser starts. | `tests/test_browser_isolation.py` |
+| **Own browser build** | Chromium is downloaded into `<app data>/browsers` of this installation - it is never shared with the browser of the operating system. The Playwright package itself is not bundled (it weighs 135 MB per architecture because it contains its own Node runtime) - it is installed on demand into `<app data>/py`. | Settings → *Install browser runtime* |
+| **Runs in the background** | The browser is driven by the worker thread, never by an HTTP request, so the user interface never blocks. | `app/workers/runner.py` |
+| **Persistent queue** | The job history lives in the database - closing the application loses nothing and finished work is never repeated. | `app/services/queue.py` |
+| **Challenges pause the job** | A CAPTCHA, a login or a consent screen stops the job and asks the operator - nothing is bypassed. | `app/services/adapters/impl/playwright_form.py` |
+| **Cloud or local** | Every job shows where it runs (`CLOUD` / `LOCAL`); eligible jobs can be moved to a cloud worker. | Live Automation page |
+
+### Resource aware scheduling
+
+The worker measures the machine (CPU, free memory, load) **before** it claims
+a browser job and lowers the number of parallel jobs when the machine is busy:
+
+* `max_speed` – use the configured limit
+* `balanced` – use about 60 % of it
+* `save_resources` – use about 30 % of it
+* under heavy load (CPU ≥ 85 % or less than 512 MB free memory) only **one**
+  job runs at a time
+
+The limit is really enforced - the worker claims fewer jobs while the machine
+is busy. It cannot stop a single browser process from using CPU, so the
+interface describes it as a target and not as a guarantee.
+
+### Controls
+
+Settings → *Automation & browser* (and the Live Automation page):
+
+* Pause all / Resume / Stop - `POST /api/v1/worker/pause|resume|stop`
+* Maximum parallel browser jobs, jobs per domain, requests per domain per minute
+* Job and page timeouts
+* Headless or headed (isolated) browser
+* Install / reinstall the browser runtime
+* A live view of the CPU, the free memory and the effective limit
+
+A running job can be cancelled: the browser is closed at the next checkpoint
+instead of being killed.
+
+---
+
 ## Architecture
 
 ```
@@ -150,6 +197,11 @@ discovery provider ──► website (registry)
 
 ## Monorepo layout
 
+Two **independent products** live side by side under this root. They share
+the code and the design system, but each one runs its **own** backend
+instance and its **own** database - the desktop never calls the web backend
+and the web backend never calls the desktop.
+
 ```
 auto-backlinker/
 ├── apps/
@@ -168,8 +220,16 @@ auto-backlinker/
 │   │   ├── tests/            pytest suite
 │   │   ├── pyproject.toml    ruff + pytest configuration
 │   │   └── requirements.txt
-│   ├── web/                  Next.js 15 client (App Router)
-│   ├── desktop/              Tauri 2 client (React + Vite) with the API as sidecar
+│   ├── web/                  PRODUCT 1 - the browser client (Next.js 15)
+│   │   └── app/(app)/        Overview, Projects, Discovery, Registry, Queue,
+│   │                         Automation, Verification, Reports, Imports,
+│   │                         Integrations, Devices, Activity, Settings
+│   ├── desktop/              PRODUCT 2 - the desktop software (Tauri 2)
+│   │   ├── src/              the same screens, desktop conventions
+│   │   ├── src-tauri/        Rust shell, sidecar supervisor, bundler config
+│   │   ├── scripts/          build-backend.sh (both architectures),
+│   │   │                     build-sidecar.sh, build-dmg.sh, check-*.py
+│   │   └── Resources/backend/<arch>/   its OWN backend, bundled into the app
 │   └── local-agent/          Standalone agent for the LOCAL execution environment
 ├── packages/
 │   ├── shared-types/         TypeScript DTO contracts (single source of truth)

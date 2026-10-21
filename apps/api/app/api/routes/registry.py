@@ -73,7 +73,7 @@ def list_opportunities(
     )
     conditions = []
     scope = access.scope_opportunities(db, user)
-    if scope is not True:
+    if scope is not None:
         conditions.append(scope)
     if project_id:
         conditions.append(Opportunity.project_id == project_id)
@@ -205,7 +205,7 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
     action = payload.action.lower()
     scope = access.scope_opportunities(db, user)
     stmt = select(Opportunity).where(Opportunity.id.in_(payload.opportunity_ids))
-    if scope is not True:
+    if scope is not None:
         stmt = stmt.where(scope)
     opportunities = db.execute(stmt).scalars().all()
     if not opportunities:

@@ -376,6 +376,7 @@ class Task(IdMixin, TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     skip_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     requires_human: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

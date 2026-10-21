@@ -8,6 +8,7 @@ unverified until the verification engine confirms the link).
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from sqlalchemy import select
@@ -97,6 +98,34 @@ def resolve_adapter(db: Session, identifier: str | None):
     return None
 
 
+def _cancel_requested(db: Session, task_id: str) -> bool:
+    """Is the task cancelled (or the whole execution stopped)?
+
+    The check is throttled because it runs between the steps of a workflow.
+    """
+    from app.db.models import Task as TaskModel
+
+    now = time.monotonic()
+    last = _CANCEL_CHECKS.get(task_id)
+    if last is not None and now - last < 2.0:
+        return False
+    _CANCEL_CHECKS[task_id] = now
+
+    row = db.execute(
+        select(TaskModel.cancel_requested).where(TaskModel.id == task_id)
+    ).scalar_one_or_none()
+    if row:
+        return True
+
+    from app.services.execution import get_settings as get_execution_settings
+
+    return get_execution_settings(db).state == "STOPPED"
+
+
+#: The last time a task was checked for cancellation.
+_CANCEL_CHECKS: dict[str, float] = {}
+
+
 def execute_submission(db: Session, task: Task) -> TaskOutcome:
     website = db.get(Website, task.website_id) if task.website_id else None
     opportunity = db.get(Opportunity, task.opportunity_id) if task.opportunity_id else None
@@ -148,6 +177,10 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     evidence_dir = settings.managed_files_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
+    from app.services.execution import get_settings as get_execution_settings
+
+    execution_settings = get_execution_settings(db)
+
     def emit(message: str, level: str = "INFO", metadata: dict[str, Any] | None = None) -> None:
         record_event(
             db,
@@ -172,6 +205,9 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
         project_settings=project_settings,
         evidence_dir=evidence_dir,
         emit=emit,
+        should_cancel=lambda: _cancel_requested(db, task.id),
+        timeout_seconds=execution_settings.task_timeout_seconds,
+        headless=execution_settings.headless,
     )
 
     try:

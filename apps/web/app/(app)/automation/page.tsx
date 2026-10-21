@@ -9,6 +9,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  KeyValue,
   Pagination,
   ProgressBar,
   StatusBadge,
@@ -38,6 +39,31 @@ export default function AutomationPage() {
     "connecting",
   );
   const [tick, setTick] = React.useState(0);
+  const [controlBusy, setControlBusy] = React.useState<string | null>(null);
+
+  const worker = useResource(() => api.automation.workerStatus(apiClient), [tick]);
+
+  const control = async (mode: "pause" | "resume" | "stop") => {
+    setControlBusy(mode);
+    try {
+      if (mode === "pause") await api.automation.pause(apiClient);
+      else if (mode === "resume") await api.automation.resume(apiClient);
+      else await api.automation.stop(apiClient);
+      toast.push(
+        mode === "pause"
+          ? "All jobs are paused"
+          : mode === "resume"
+            ? "Jobs are running again"
+            : "All jobs stopped",
+        "success",
+      );
+      setTick((value) => value + 1);
+    } catch (err) {
+      toast.push(errorMessage(err), "error");
+    } finally {
+      setControlBusy(null);
+    }
+  };
 
   const running = useResource(
     () =>
@@ -123,6 +149,90 @@ export default function AutomationPage() {
           </>
         }
       />
+
+      <Card>
+        <CardHeader
+          title="Execution control"
+          description="Pause, resume or stop every job - the browser runs isolated and headless by default."
+          action={
+            <div className="flex items-center gap-2">
+              <Badge
+                tone={
+                  worker.data?.execution.state === "RUNNING"
+                    ? "success"
+                    : worker.data?.execution.state === "PAUSED"
+                      ? "warning"
+                      : "danger"
+                }
+              >
+                {worker.data?.execution.state ?? "…"}
+              </Badge>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  controlBusy !== null || worker.data?.execution.state === "PAUSED"
+                }
+                onClick={() => void control("pause")}
+              >
+                Pause all
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  controlBusy !== null || worker.data?.execution.state === "RUNNING"
+                }
+                onClick={() => void control("resume")}
+              >
+                Resume
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={controlBusy !== null}
+                onClick={() => void control("stop")}
+              >
+                Stop
+              </Button>
+            </div>
+          }
+        />
+        <CardBody>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KeyValue
+              items={[
+                ["Running jobs", String(worker.data?.running_jobs ?? 0)],
+                ["Browser jobs", String(worker.data?.running_browser_jobs ?? 0)],
+                ["Parallel limit", String(worker.data?.resources.effective_limit ?? 0)],
+                ["CPU", `${worker.data?.resources.resources.cpu_percent ?? 0}%`],
+                [
+                  "Memory free",
+                  `${Math.round(worker.data?.resources.resources.memory_available_mb ?? 0)} MB`,
+                ],
+                [
+                  "Browser",
+                  worker.data?.browser.available
+                    ? worker.data.browser.headless
+                      ? "headless"
+                      : "headed (isolated)"
+                    : "not installed",
+                ],
+              ]}
+            />
+            <div className="space-y-2">
+              <p className="text-xs text-content-muted">
+                {worker.data?.resources.reason ??
+                  "The worker lowers the number of parallel jobs when the machine is busy."}
+              </p>
+              <p className="text-[11px] text-content-subtle">
+                {worker.data?.browser.isolation.note ??
+                  "The personal browser of the operator is never opened or controlled."}
+              </p>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
 
       <Card>
         <CardHeader

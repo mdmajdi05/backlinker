@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.routes import (
     ai,
     auth,
+    automation,
     campaigns,
     dataflow,
     discovery,
@@ -113,7 +114,26 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # The web client runs on the loopback interface and talks to the
+        # backend on the loopback interface as well - Chrome asks for this
+        # permission in that case.
+        allow_private_network=True,
     )
+
+    @app.middleware("http")
+    async def private_network_access(request: Request, call_next):
+        """Allow the browser to reach the loopback backend from the web client.
+
+        Chrome asks for the private network access permission when a page
+        that runs on `localhost` talks to `127.0.0.1`.  The answer has to be
+        given explicitly, otherwise the browser blocks the request.
+        """
+        response = await call_next(request)
+        if "access-control-request-private-network" in {
+            key.lower() for key in request.headers
+        }:
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -176,6 +196,7 @@ def create_app() -> FastAPI:
     app.include_router(misc.devices_router, prefix=prefix)
     app.include_router(misc.dashboard_router, prefix=prefix)
     app.include_router(misc.events_router, prefix=prefix)
+    app.include_router(automation.router, prefix=prefix)
     app.include_router(campaigns.router, prefix=prefix)
     app.include_router(storage.router, prefix=prefix)
     app.include_router(sync.router, prefix=prefix)

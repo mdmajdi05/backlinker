@@ -46,6 +46,21 @@ class SubmissionContext:
     project_settings: dict[str, Any] = field(default_factory=dict)
     evidence_dir: Path | None = None
     emit: Callable[[str, str, dict[str, Any] | None], None] | None = None
+    #: Called between the steps of a workflow - returns True when the task
+    #: was cancelled (or the whole execution was stopped) and has to abort.
+    should_cancel: Callable[[], bool] | None = None
+    #: Maximum time a single workflow may take.
+    timeout_seconds: int = 240
+    #: Headless is the default; a headed browser uses an isolated profile too.
+    headless: bool = True
+
+    def cancelled(self) -> bool:
+        if self.should_cancel is None:
+            return False
+        try:
+            return bool(self.should_cancel())
+        except Exception:  # pragma: no cover - defensive
+            return False
 
     def log(self, message: str, level: str = "INFO", metadata: dict[str, Any] | None = None) -> None:
         if self.emit:

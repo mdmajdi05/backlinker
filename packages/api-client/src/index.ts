@@ -12,12 +12,14 @@ import type {
   Adapter,
   AuthTokens,
   BacklinkRecord,
+  BrowserRuntimeStatus,
   BusinessProfile,
   BulkActionRequest,
   DashboardMetrics,
   Device,
   DiscoveryRequest,
   DiscoveryRun,
+  ExecutionSettings,
   ExportJob,
   ImportCommitRequest,
   ImportJob,
@@ -32,6 +34,7 @@ import type {
   ProjectSettings,
   QueueCreateRequest,
   RegisterRequest,
+  ResourceStatus,
   StorageConnectionRequest,
   StorageMigrationPreview,
   StorageStatus,
@@ -41,6 +44,7 @@ import type {
   TaskEvent,
   User,
   VerificationRun,
+  WorkerStatus,
 } from "@autobacklinker/shared-types";
 
 export class ApiError extends Error {
@@ -485,6 +489,22 @@ export const api = {
       ),
     run: (c: ApiClient, action: string, payload: Record<string, unknown>) =>
       c.post<Record<string, unknown>>(`/api/v1/ai/${action}`, payload),
+  },
+
+  automation: {
+    browserStatus: (c: ApiClient) => c.get<BrowserRuntimeStatus>("/api/v1/browser/status"),
+    installBrowser: (c: ApiClient) =>
+      c.post<{ ok: boolean; message: string; status: BrowserRuntimeStatus }>(
+        "/api/v1/browser/install",
+      ),
+    workerStatus: (c: ApiClient) => c.get<WorkerStatus>("/api/v1/worker/status"),
+    updateSettings: (c: ApiClient, body: Partial<ExecutionSettings>) =>
+      c.put<{ execution: ExecutionSettings }>("/api/v1/worker/settings", body),
+    pause: (c: ApiClient) => c.post<{ execution: ExecutionSettings }>("/api/v1/worker/pause"),
+    resume: (c: ApiClient) => c.post<{ execution: ExecutionSettings }>("/api/v1/worker/resume"),
+    stop: (c: ApiClient) =>
+      c.post<{ execution: ExecutionSettings; cancelled: number }>("/api/v1/worker/stop"),
+    resources: (c: ApiClient) => c.get<ResourceStatus>("/api/v1/resources"),
   },
 };
 

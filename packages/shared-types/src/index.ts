@@ -692,6 +692,67 @@ export interface StorageStatus {
   schema_version: string | null;
 }
 
+/** Browser runtime - always an isolated browser owned by this application. */
+export interface BrowserRuntimeStatus {
+  available: boolean;
+  headless: boolean;
+  browser_path: string | null;
+  browsers_dir: string | null;
+  profile_dir: string | null;
+  version: string | null;
+  detail: string;
+  isolation: {
+    personal_profile_used: boolean;
+    own_profile_directory: boolean;
+    headless_by_default: boolean;
+    extensions_disabled: boolean;
+    synchronisation_disabled: boolean;
+    arguments: string[];
+    note: string;
+  };
+}
+
+/** Measurement of the machine the browser jobs run on. */
+export interface ResourceStatus {
+  resources: {
+    cpu_percent: number;
+    load_average: number;
+    memory_total_mb: number;
+    memory_available_mb: number;
+    memory_used_percent: number;
+    disk_free_mb: number;
+    cpu_count: number;
+    overloaded: boolean;
+    busy: boolean;
+  };
+  configured_limit: number;
+  preference: string;
+  effective_limit: number;
+  reason: string;
+  measured_at: number;
+}
+
+export interface ExecutionSettings {
+  state: "RUNNING" | "PAUSED" | "STOPPED";
+  max_browser_jobs: number;
+  resource_preference: "max_speed" | "balanced" | "save_resources";
+  headless: boolean;
+  per_domain_limit: number;
+  per_domain_requests_per_minute: number;
+  task_timeout_seconds: number;
+  page_timeout_seconds: number;
+  states?: Record<string, string>;
+}
+
+export interface WorkerStatus {
+  execution: ExecutionSettings;
+  running_jobs: number;
+  running_browser_jobs: number;
+  resources: ResourceStatus;
+  browser: BrowserRuntimeStatus;
+  queue: Record<string, number>;
+}
+
 export interface IntegrationCredential {
   id: string;
   provider: string;

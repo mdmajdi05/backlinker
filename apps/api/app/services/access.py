@@ -7,7 +7,7 @@ shared projects that have no owner).
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -52,10 +52,15 @@ def owns_project(db: Session, user: User | None, project_id: str | None) -> bool
 
 
 def _scope_for(column, db: Session, user: User | None):
-    """Build a filter for a project id column."""
+    """Build a filter for a project id column.
+
+    The result is always a usable SQL expression - administrators get an
+    unconditional filter instead of ``None`` so that a caller cannot
+    accidentally append ``None`` to a where clause.
+    """
     project_ids = accessible_project_ids(db, user)
     if project_ids is None:
-        return None
+        return true()
     if not project_ids:
         # The user owns nothing - only workspace level rows (no project) remain.
         return column.is_(None)

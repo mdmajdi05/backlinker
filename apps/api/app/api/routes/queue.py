@@ -50,7 +50,7 @@ def list_queue(
     count_stmt = select(func.count()).select_from(Task)
     conditions = []
     scope = access.scope_tasks(db, user)
-    if scope is not True:
+    if scope is not None:
         conditions.append(scope)
     if project_id:
         conditions.append(Task.project_id == project_id)
@@ -190,6 +190,10 @@ def _apply_control(db, task: Task, payload: TaskControlRequest) -> None:
         queue_service.resume_task(db, task)
         record_event(db, "task.resumed", "Task resumed", task_id=task.id, project_id=task.project_id)
     elif action == "cancel":
+        # A running job is asked to stop at the next checkpoint instead of
+        # being killed, so the browser is closed cleanly.
+        task.cancel_requested = True
+        db.commit()
         queue_service.cancel_task(db, task, payload.reason or "Cancelled by operator")
         record_event(
             db,
@@ -249,6 +253,9 @@ def task_events(task_id: str, db: DbSession, user: CurrentUser) -> list:
 @router.post("/tasks/{task_id}/cancel", response_model=TaskOut)
 def cancel_task(task_id: str, db: DbSession, user: CurrentUser) -> Task:
     task = _get_task(db, task_id, user)
+    # A running browser job is asked to stop at its next checkpoint.
+    task.cancel_requested = True
+    db.commit()
     queue_service.cancel_task(db, task)
     record_event(db, "task.cancelled", "Task cancelled", task_id=task.id, project_id=task.project_id)
     db.refresh(task)

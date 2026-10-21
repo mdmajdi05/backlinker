@@ -61,6 +61,9 @@ RUNTIME_REQUIREMENTS=(
   "tenacity>=9.0"
   "structlog>=24.4"
 )
+# The Playwright package is *not* bundled - it weighs 135 MB per architecture
+# (it contains its own Node runtime).  It is installed on demand into the
+# application data directory, together with the browser build.
 
 # The wheels of the compiled packages are published for different macOS
 # versions - pip is told about all of them so it can pick the best match.

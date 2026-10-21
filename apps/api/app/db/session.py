@@ -96,13 +96,74 @@ def session_context() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create tables when running in auto-create mode (local desktop / dev)."""
+    """Create tables when running in auto-create mode (local desktop / dev).
+
+    Existing installations are updated as well: columns that were added in a
+    later version are added to the existing tables, so an update never leaves
+    the database in a broken state.
+    """
     import app.db.models  # noqa: F401  (registers every table on the metadata)
 
     engine = get_engine()
     if settings.auto_create_schema:
         Base.metadata.create_all(bind=engine)
+        added = _sync_missing_columns(engine)
+        if added:
+            log.info("schema updated", extra={"extra_fields": {"columns": added}})
         log.info("schema ensured", extra={"extra_fields": {"dialect": engine.dialect.name}})
+
+
+def _sync_missing_columns(engine) -> list[str]:
+    """Add columns that the models know but the database does not have yet."""
+    from sqlalchemy import inspect, text
+
+    added: list[str] = []
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {column["name"] for column in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in present:
+                continue
+            ddl = _add_column_ddl(engine.dialect.name, table.name, column)
+            if ddl is None:
+                continue
+            try:
+                with engine.begin() as connection:
+                    connection.execute(text(ddl))
+                added.append(f"{table.name}.{column.name}")
+            except Exception:  # pragma: no cover - defensive
+                log.warning(
+                    "could not add a column",
+                    extra={"extra_fields": {"table": table.name, "column": column.name}},
+                )
+    return added
+
+
+def _add_column_ddl(dialect: str, table: str, column) -> str | None:
+    """The statement that adds a column (SQLite and PostgreSQL)."""
+    type_name = column.type.compile(dialect=engine_dialect(dialect))
+    default = ""
+    if column.default is not None and getattr(column.default, "is_scalar", False):
+        value = column.default.arg
+        if isinstance(value, bool):
+            default = " DEFAULT 1" if value else " DEFAULT 0"
+        elif isinstance(value, (int, float)):
+            default = f" DEFAULT {value}"
+        elif isinstance(value, str):
+            default = f" DEFAULT '{value}'"
+    if dialect.startswith("postgres"):
+        return f'ALTER TABLE "{table}" ADD COLUMN "{column.name}" {type_name}{default}'
+    return f'ALTER TABLE "{table}" ADD COLUMN "{column.name}" {type_name}{default}'
+
+
+def engine_dialect(name: str):
+    """A dialect object that can compile a type for the given dialect name."""
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    return postgresql.dialect() if name.startswith("postgres") else sqlite.dialect()
 
 
 def health_check() -> dict:

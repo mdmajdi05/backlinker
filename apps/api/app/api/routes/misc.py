@@ -64,7 +64,7 @@ def list_activity(
     count_stmt = select(func.count()).select_from(TaskEvent)
     conditions = []
     scope = access.scope_events(db, user)
-    if scope is not True:
+    if scope is not None:
         conditions.append(scope)
     if project_id:
         conditions.append(TaskEvent.project_id == project_id)
@@ -419,7 +419,7 @@ def dashboard_metrics(
 
     event_scope = access.scope_events(db, user)
     event_conditions: list = []
-    if event_scope is not True:
+    if event_scope is not None:
         event_conditions.append(event_scope)
     if project_id:
         event_conditions.append(TaskEvent.project_id == project_id)

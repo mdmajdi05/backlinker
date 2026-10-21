@@ -89,6 +89,9 @@ desktop-check:
 ui-check:
 	./scripts/check_add_website_ui.py
 
+automation-ui-check:
+	./scripts/check_automation_ui.py
+
 seed-demo:
 	./scripts/seed_demo.py
 

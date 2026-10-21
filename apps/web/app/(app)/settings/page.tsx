@@ -17,10 +17,12 @@ import { AsyncSection, TableSkeleton } from "@/components/States";
 import { ProfileSettingsForm } from "@/components/ProfileSettingsForm";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { StoragePanel } from "@/components/StoragePanel";
+import { AutomationPanel } from "@/components/AutomationPanel";
 
 const TABS = [
   { id: "global", label: "Global settings" },
   { id: "projects", label: "Project settings" },
+  { id: "automation", label: "Automation & browser" },
   { id: "storage", label: "Database & storage" },
 ];
 
@@ -122,6 +124,8 @@ export default function SettingsPage() {
           </CardBody>
         </Card>
       ) : null}
+
+      {tab === "automation" ? <AutomationPanel /> : null}
 
       {tab === "storage" ? <StoragePanel /> : null}
     </div>

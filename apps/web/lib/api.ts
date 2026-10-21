@@ -8,9 +8,13 @@ export const TOKEN_STORAGE_KEY = "abk.token";
 /**
  * Base URL of the FastAPI backend. Override with NEXT_PUBLIC_API_BASE_URL
  * (e.g. http://127.0.0.1:8000) when the backend does not run on :8000.
+ *
+ * The loopback address is used on purpose: `localhost` resolves to IPv6 on
+ * some systems while the development server listens on IPv4 only, which would
+ * end in a confusing CORS error.
  */
 export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
 ).replace(/\/$/, "");
 
 function readStoredToken(): string | null {

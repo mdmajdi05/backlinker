@@ -746,6 +746,11 @@ pub fn install_browser_runtime(app: &AppHandle) -> Result<String, String> {
     if let Some(python_path) = python_path {
         command.env("PYTHONPATH", python_path);
     }
+    // The browser build belongs to this installation - it is never taken from
+    // the personal browser of the user.
+    let browsers = app_data_dir().join("browsers");
+    let _ = fs::create_dir_all(&browsers);
+    command.env("PLAYWRIGHT_BROWSERS_PATH", &browsers);
     let output = command
         .args(["-m", "playwright", "install", "chromium"])
         .output()
