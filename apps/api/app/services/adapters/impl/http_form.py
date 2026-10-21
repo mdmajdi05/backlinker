@@ -72,7 +72,12 @@ class HttpFormAdapter(BaseAdapter):
         config = ctx.adapter_config or {}
         form_url = str(config.get("form_url") or "").strip()
         if not form_url:
-            return self._failed("No 'form_url' is configured for the http_form adapter.")
+            # No adapter configuration for this site - the task needs a
+            # human, it is not a technical failure.
+            return self._needs_human(
+                "This site has no http_form configuration yet (form_url is missing). "
+                "Configure the adapter or complete the listing by hand."
+            )
 
         try:
             assert_public_url(form_url)
@@ -240,6 +245,16 @@ class HttpFormAdapter(BaseAdapter):
             error=message,
             retryable=False,
             evidence={"skipped_reason": "robots"},
+        )
+
+    def _needs_human(self, message: str) -> SubmissionResult:
+        """The workflow needs a human - it is not a technical failure."""
+        return SubmissionResult(
+            status=RESULT_WAITING_USER,
+            message=message,
+            error=message,
+            requires_human=True,
+            evidence={"needs_human": True},
         )
 
     def _waiting(self, challenge: str, url: str) -> SubmissionResult:

@@ -21,6 +21,7 @@ from app.core.net import UnsafeUrlError, assert_public_url, safe_get
 from app.services.adapters.base import (
     RESULT_SKIPPED,
     RESULT_SUBMITTED,
+    RESULT_WAITING_USER,
     BaseAdapter,
     SubmissionContext,
     SubmissionResult,
@@ -63,7 +64,12 @@ class JsonApiAdapter(BaseAdapter):
         config = ctx.adapter_config or {}
         endpoint = str(config.get("endpoint") or "").strip()
         if not endpoint:
-            return self._failed("No 'endpoint' is configured for the json_api adapter.")
+            # No adapter configuration for this site - the task needs a
+            # human, it is not a technical failure.
+            return self._needs_human(
+                "This site has no json_api configuration yet (endpoint is missing). "
+                "Configure the adapter or complete the listing by hand."
+            )
 
         try:
             assert_public_url(endpoint)
@@ -175,6 +181,16 @@ class JsonApiAdapter(BaseAdapter):
             error=message,
             retryable=False,
             evidence=evidence or {},
+        )
+
+    def _needs_human(self, message: str) -> SubmissionResult:
+        """The workflow needs a human - it is not a technical failure."""
+        return SubmissionResult(
+            status=RESULT_WAITING_USER,
+            message=message,
+            error=message,
+            requires_human=True,
+            evidence={"needs_human": True},
         )
 
     def _skipped(self, message: str) -> SubmissionResult:

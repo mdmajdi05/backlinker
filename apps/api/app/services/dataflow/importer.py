@@ -938,6 +938,11 @@ def preview_import(
         mapping = detect_mapping(headers)
         if _mapping_score(mapping) > _mapping_score(best_mapping):
             best_mapping = mapping
+        # A sheet whose header does not look like a data sheet (for example a
+        # "Column guide" sheet next to the data) is skipped instead of being
+        # reported as hundreds of invalid rows.
+        if _mapping_score(mapping) < 2:
+            continue
         for offset, cells in enumerate(sheet.rows[header_index + 1 :]):
             if _is_blank_row(cells):
                 continue

@@ -235,6 +235,17 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     outcome = _outcome_from_result(result)
     if result.succeeded:
         _persist_backlink_record(db, task, website, opportunity, project, result)
+    elif result.status in (RESULT_WAITING_USER, RESULT_WAITING_APPROVAL):
+        # A task that waits for a human always carries the pack with the
+        # values the operator needs - no matter which adapter produced it.
+        evidence = dict(result.evidence or {})
+        if "submission_pack" not in evidence:
+            adapter_for_pack = adapter if adapter.automatable else get_adapter("generic_manual")
+            evidence["submission_pack"] = _manual_pack(
+                website, opportunity, project, profile, adapter_for_pack
+            )
+            result.evidence = evidence
+            outcome = _outcome_from_result(result)
     website.last_checked_at = result_utcnow()
     website.last_result = outcome.message
     website.error_detail = outcome.error
