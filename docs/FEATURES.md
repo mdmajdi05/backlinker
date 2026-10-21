@@ -17,6 +17,45 @@ backend. Everything that needs the network (discovery, verification, form
 submissions) is the only part that needs an internet connection - and it needs
 it for the *target website*, not for the application itself.
 
+The proof: `apps/desktop/scripts/check-offline.py` drives the packaged
+application with a headless browser while every non-loopback request is
+blocked - 41 checks, 0 external requests.
+
+---
+
+## The workflow of a backlink campaign
+
+```
+1. Business profile      what the business is, once, reused by every project
+2. Project               the target website + the landing page that gets the link
+3. Website list          ONE place with every site where a backlink can go
+                         (manual entry or Excel import, editable, deletable,
+                          status: ACTIVE / NOT_WORKING / DELETED / …)
+4. Choose                the project picks the sites it wants from that list
+                         (filterable by category and niche)
+5. Auto pilot            approving a site queues it automatically - the worker
+                          submits in the background, retries, and never
+                          duplicates finished work
+6. Details               the site asks for a name, a description, an address…
+                          the operator fills what is missing, the assistant
+                          derives what it can from the profile and says what
+                          it cannot derive
+7. Verify                link present? anchor right? destination right? rel?
+8. Report                per website: how many submissions worked, how many not
+9. Re-import             verified → skip, failed → retry, pending → queue
+```
+
+### Where the work happens
+
+| Step | Web | Desktop | Local agent / cloud |
+| ----- | --- | ------- | ------------------- |
+| Website list, projects, queue, reports | yes | yes | - |
+| Browser submission | yes | yes | yes (the agent on another machine) |
+| Verification | yes | yes | yes |
+| Cloud workers | optional | optional | yes (Celery) |
+
+Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
+
 ## The screens
 
 | Screen | Web | Desktop | Backend endpoint |

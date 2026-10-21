@@ -285,7 +285,7 @@ def list_entries(
     if category:
         conditions.append(func.lower(Website.category) == category.strip().lower())
     if niche:
-        conditions.append(func.lower(Website.niche) == niche.strip().lower())
+        conditions.append(func.lower(Website.niche).contains(niche.strip().lower()))
     if search:
         pattern = f"%{search.strip().lower()}%"
         conditions.append(

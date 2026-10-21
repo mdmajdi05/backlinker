@@ -206,14 +206,6 @@ export function WebsiteListPanel({
     return Array.from(values).sort();
   }, [items, stats.data]);
 
-  const knownNiches = React.useMemo(() => {
-    const values = new Set<string>();
-    items.forEach((item) => {
-      if (item.niche) values.add(item.niche);
-    });
-    return Array.from(values).sort();
-  }, [items]);
-
   function toggle(id: string) {
     setSelected((previous) =>
       previous.includes(id)
@@ -692,11 +684,6 @@ function AddWebsiteDialog({
               onChange={(event) => setCategory(event.target.value)}
               placeholder="business_directory"
             />
-            <datalist id="website-categories">
-              {categories.map((value) => (
-                <option key={value} value={value} />
-              ))}
-            </datalist>
           </Field>
           <Field label="Niche" hint="The topic the site covers.">
             <Input
@@ -706,6 +693,11 @@ function AddWebsiteDialog({
             />
           </Field>
         </div>
+        <datalist id="website-categories">
+          {categories.map((value) => (
+            <option key={value} value={value} />
+          ))}
+        </datalist>
         <Field label="Submission method">
           <Select
             value={method}
@@ -838,11 +830,6 @@ function ImportWebsitesDialog({
               onChange={(event) => setCategory(event.target.value)}
               placeholder="business_directory"
             />
-            <datalist id="import-categories">
-              {categories.map((value) => (
-                <option key={value} value={value} />
-              ))}
-            </datalist>
           </Field>
           <Field label="Niche" hint="Applies to every row.">
             <Input
@@ -867,6 +854,11 @@ function ImportWebsitesDialog({
             </Select>
           </Field>
         </div>
+        <datalist id="import-categories">
+          {categories.map((value) => (
+            <option key={value} value={value} />
+          ))}
+        </datalist>
 
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="outline" loading={busy} onClick={() => void choose()}>
@@ -983,9 +975,10 @@ function DeleteWebsitesDialog({
       }
     >
       <p className="text-xs text-content-muted">
-        The site leaves the central list. The submissions, the tasks and the
-        verification records of this site are kept - the history stays intact and
-        the reports still show the old numbers.
+        The website is marked as deleted and is no longer offered to the
+        projects. The submissions, the tasks and the verification records stay
+        in the database - the history stays intact and the reports still show
+        the old numbers.
       </p>
     </Dialog>
   );

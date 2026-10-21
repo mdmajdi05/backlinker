@@ -440,6 +440,11 @@ export const api = {
     download: (c: ApiClient, id: string) =>
       c.download(`/api/v1/reports/${id}/download`, `report-${id}.xlsx`),
     remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/reports/${id}`),
+    retryFailed: (c: ApiClient, id: string, body: { domain?: string; project_id?: string }) =>
+      c.post<{ retried: number; skipped: number; task_ids: string[] }>(
+        `/api/v1/reports/${id}/retry-failed`,
+        body,
+      ),
   },
 
   activity: {

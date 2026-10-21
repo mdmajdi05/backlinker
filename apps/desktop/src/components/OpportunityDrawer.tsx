@@ -215,6 +215,36 @@ export function buildGapReport(
   };
 }
 
+/** The answer of the backend - it is never trusted blindly. */
+export function normalizeGapReport(raw: unknown): DetailsGapReport {
+  const data = (raw ?? {}) as Record<string, unknown>;
+  const list = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [];
+  const notDerivable = Array.isArray(data.not_derivable)
+    ? data.not_derivable.map((item) => {
+        const entry = (item ?? {}) as Record<string, unknown>;
+        const field = String(entry.field ?? "").trim();
+        return {
+          field,
+          label: String(entry.label ?? "").trim() || detailFieldLabel(field),
+          reason: String(entry.reason ?? "").trim(),
+        };
+      })
+    : [];
+  const required = list(data.required);
+  const missing = list(data.missing);
+  return {
+    required,
+    filled: list(data.filled),
+    missing,
+    derivable: list(data.derivable),
+    not_derivable: notDerivable,
+    source: String(data.source ?? "backend"),
+  };
+}
+
 export function OpportunityDrawer({
   opportunity,
   onClose,
@@ -257,14 +287,31 @@ export function OpportunityDrawer({
   const unsupported =
     Boolean(details.error) && isMissingEndpoint(rawError ?? details.error);
 
+  // The backend knows the gap report - an older one does not, then the
+  // desktop client computes it from the details and the profile.
+  const backendGap = useAsync(async () => {
+    try {
+      const raw = await apiClient.get<unknown>(
+        `/api/v1/opportunities/${opportunity.id}/details/gaps`,
+      );
+      return normalizeGapReport(raw);
+    } catch (err) {
+      if (isMissingEndpoint(err)) return null;
+      throw err;
+    }
+  }, [opportunity.id]);
+
   const gap = React.useMemo(() => {
+    if (backendGap.data) return backendGap.data;
     if (!data) return null;
     return buildGapReport(
       data.required.map((entry) => entry.field),
       data.missing.map((entry) => entry.field),
       profile.data ?? null,
     );
-  }, [data, profile.data]);
+  }, [backendGap.data, data, profile.data]);
+
+  const gapSource = backendGap.data ? "backend" : "client";
 
   async function generate() {
     setGenerating(true);
@@ -428,9 +475,9 @@ export function OpportunityDrawer({
                 )}
 
                 <p className="mt-3 text-[11px] text-content-subtle">
-                  The report is computed by the desktop client from the details
-                  of the backend and from the business profile of the project.
-                  A value is only filled when the profile really carries it.
+                  {gapSource === "backend"
+                    ? "The report comes from your local backend - it knows which values the business profile carries."
+                    : "The report is computed by the desktop client from the details of the backend and from the business profile of the project. A value is only filled when the profile really carries it."}
                 </p>
               </div>
             </section>
