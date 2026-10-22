@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Check the automation panel with a real browser.
+"""Check the automation page with a real browser.
 
-It signs in, opens Settings → "Automation & browser" and verifies that the
-isolation guarantees, the resource measurement and the pause / resume / stop
-controls are shown and that they work against the backend.
+It signs in, opens "Automation" and verifies that the pause / resume / stop
+controls, the isolation guarantees, the resource measurement, the browser
+runtime and the limits are shown and that they work against the backend.
 
 Usage:  .venv/bin/python scripts/check_automation_ui.py
 """
@@ -39,18 +39,19 @@ def main() -> int:
         page.wait_for_url(f"{BASE}/", timeout=30000)
         print("[PASS] signed in")
 
-        # -- settings ---------------------------------------------------
-        page.goto(f"{BASE}/settings", wait_until="networkidle")
-        page.wait_for_timeout(1200)
-        page.get_by_role("button", name="Automation & browser").click()
-        page.wait_for_timeout(2000)
+        # -- the automation page -----------------------------------------
+        page.goto(f"{BASE}/automation", wait_until="networkidle")
+        page.wait_for_timeout(2500)
 
         content = page.content()
         checks = [
+            ("the execution control is shown", "Execution control"),
+            ("the machine load is shown", "Memory free"),
             ("the isolation guarantee is shown", "personal browser is never touched"),
             ("the own profile directory is shown", "Own profile directory"),
-            ("the resource measurement is shown", "Resource usage"),
-            ("the parallel job limit is shown", "Parallel browser jobs"),
+            ("the browser runtime can be installed", "browser runtime"),
+            ("the parallel job limit is shown", "Maximum parallel browser jobs"),
+            ("the browser mode is shown", "Browser mode"),
             ("the headless default is shown", "headless"),
         ]
         for label, needle in checks:
@@ -73,20 +74,6 @@ def main() -> int:
         print(f"[{'PASS' if running else 'FAIL'}] the resume control works")
         if not running:
             errors.append("resume did not work")
-
-        # -- live automation page -----------------------------------------
-        page.goto(f"{BASE}/automation", wait_until="networkidle")
-        page.wait_for_timeout(1500)
-        live = page.content()
-        for label, needle in [
-            ("the automation page shows the execution control", "Execution control"),
-            ("the automation page shows the machine load", "Memory free"),
-            ("the automation page explains the isolation", "never opened or controlled"),
-        ]:
-            ok = needle.lower() in live.lower()
-            print(f"[{'PASS' if ok else 'FAIL'}] {label}")
-            if not ok:
-                errors.append(label)
 
         browser.close()
 
