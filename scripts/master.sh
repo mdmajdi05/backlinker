@@ -87,6 +87,12 @@ fi
 if [[ "$QUICK" == "0" ]]; then
   echo ""
   echo "=== Starting the API and the web client for the interface checks ==="
+  # Free the ports first - a server that is already running would keep the old
+  # build alive and the checks would talk to it instead of the fresh one.
+  /usr/bin/pkill -f "uvicorn app.main:app" >/dev/null 2>&1 || true
+  /usr/bin/pkill -f "next dev" >/dev/null 2>&1 || true
+  /usr/bin/pkill -f "next start" >/dev/null 2>&1 || true
+  sleep 3
   (cd apps/api && AUTOBL_DATA_DIR="$(mktemp -d)" nohup ../../.venv/bin/python -m uvicorn app.main:app \
     --host 127.0.0.1 --port 8000 >/tmp/master_api.log 2>&1 &)
   (cd apps/web && nohup npm run dev >/tmp/master_web.log 2>&1 &)

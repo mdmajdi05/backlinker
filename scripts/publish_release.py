@@ -103,7 +103,12 @@ def main() -> int:
         print(f"Could not create the release: {status} {body}", file=sys.stderr)
         return 1
 
-    # 2. the assets
+    # 2. the assets (replace an older upload of the same name)
+    _, existing_assets = request("GET", f"/repos/{REPO}/releases/{release_id}/assets", token)
+    for old in existing_assets:
+        request("DELETE", f"/repos/{REPO}/releases/assets/{old['id']}", token)
+        print(f"    replaced the older {old['name']}")
+
     for asset in sorted(release_dir.iterdir()):
         if asset.is_dir() or asset.suffix.lower() not in {".dmg", ".zip", ".txt", ".md"}:
             continue
