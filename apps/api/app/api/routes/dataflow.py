@@ -300,3 +300,60 @@ def delete_report(export_id: str, db: DbSession, user: CurrentUser) -> None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Report not found"})
     db.delete(job)
     db.commit()
+
+
+@reports_router.post("/{export_id}/retry-failed")
+def retry_failed_submissions(
+    export_id: str, payload: dict, db: DbSession, user: CurrentUser
+) -> dict:
+    """Re-queue the failed work of a report.
+
+    The report decides *what* is retried, the queue decides *how*: the attempt
+    history is preserved and the idempotency key makes sure that no second
+    task is created for the same work.
+    """
+    from app.db.models import Project, Task, Website
+    from app.services import queue as queue_service
+    from app.services.dataflow.exporter import report_failed_task_ids
+
+    job = db.get(ExportJob, export_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Report not found"})
+    if job.project_id:
+        project = db.get(Project, job.project_id)
+        if project and project.owner_id and project.owner_id != user.id and not user.is_admin:
+            raise HTTPException(
+                status_code=403, detail={"code": "forbidden", "message": "Access denied"}
+            )
+
+    domain = (payload.get("domain") or "").strip().lower()
+    retried = 0
+    skipped = 0
+    task_ids: list[str] = []
+
+    for task_id in report_failed_task_ids(db, job):
+        task = db.get(Task, task_id)
+        if task is None:
+            skipped += 1
+            continue
+        if domain:
+            website = db.get(Website, task.website_id) if task.website_id else None
+            if website is None or (website.domain or "").lower() != domain:
+                skipped += 1
+                continue
+        if task.status != "FAILED":
+            skipped += 1
+            continue
+        queue_service.retry_task(db, task)
+        record_event(
+            db,
+            "task.retry",
+            "Retried from a report",
+            task_id=task.id,
+            project_id=task.project_id,
+            metadata={"report_id": job.id, "domain": domain or None},
+        )
+        retried += 1
+        task_ids.append(task.id)
+
+    return {"retried": retried, "skipped": skipped, "task_ids": task_ids}

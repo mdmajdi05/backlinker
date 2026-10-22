@@ -214,7 +214,10 @@ def generate_report(db: Session, job: ExportJob) -> None:
     path = directory / f"report-{job.id}.{suffix}"
 
     if suffix == "csv":
-        _write_csv(path, data)
+        # The flat CSV carries the opportunities and, after them, one row per
+        # website with the counters of the work.
+        csv_rows = list(data["opportunities"]) + list(data["websites"])
+        _write_csv(path, csv_rows)
     else:
         _write_workbook(path, data)
 
@@ -423,9 +426,16 @@ def _collect(db: Session, project_id: str | None) -> dict[str, Any]:
         import_errors=import_error_rows,
     )
 
+    website_rows = _website_rows(
+        opportunities=opportunities,
+        tasks=tasks,
+        websites=websites,
+    )
+
     return {
         "summary": summary_rows,
         "opportunities": opportunity_rows,
+        "websites": website_rows,
         "verified": verified_rows,
         "pending": pending_rows,
         "failed": failed_rows,
@@ -517,6 +527,89 @@ def _opportunity_row(
     }
 
 
+def _website_rows(
+    *,
+    opportunities: list[Opportunity],
+    tasks: list[Task],
+    websites: dict[str, Website],
+) -> list[dict[str, Any]]:
+    """One row per website with the counters of the work that was done.
+
+    The numbers are computed from the tasks, never stored - a report always
+    reflects the current state of the database.
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+
+    def bucket(website_id: str | None) -> dict[str, Any]:
+        key = website_id or ""
+        if key not in buckets:
+            website = websites.get(website_id) if website_id else None
+            buckets[key] = {
+                "Domain": (website.domain if website else "") or "",
+                "Website": (website.name if website else "") or "",
+                "Category": (website.category if website else "") or "",
+                "Status": (website.status if website else "") or "",
+                "Opportunities": 0,
+                "Submitted": 0,
+                "Verified": 0,
+                "Failed": 0,
+                "Pending": 0,
+                "Waiting for details": 0,
+                "Last attempt": None,
+                "Notes": (website.notes if website else "") or "",
+                "_domain": (website.domain if website else "") or "",
+            }
+        return buckets[key]
+
+    for opportunity in opportunities:
+        bucket(opportunity.website_id)["Opportunities"] += 1
+
+    for task in tasks:
+        row = bucket(task.website_id)
+        status = task.status
+        if status in WEBSITE_SUBMITTED_STATUSES:
+            row["Submitted"] += 1
+        if status in WEBSITE_VERIFIED_STATUSES:
+            row["Verified"] += 1
+        if status in WEBSITE_FAILED_STATUSES:
+            row["Failed"] += 1
+        if status in PENDING_TASK_STATUSES:
+            row["Pending"] += 1
+        if status == "WAITING_FOR_USER":
+            row["Waiting for details"] += 1
+        started = task.started_at
+        if started is not None and (row["Last attempt"] is None or started > row["Last attempt"]):
+            row["Last attempt"] = started
+
+    rows: list[dict[str, Any]] = []
+    for row in buckets.values():
+        row.pop("_domain", None)
+        rows.append({column: row.get(column, "") for column in WEBSITE_COLUMNS})
+    rows.sort(
+        key=lambda item: (
+            -int(item.get("Failed") or 0),
+            -int(item.get("Submitted") or 0),
+            str(item.get("Domain") or ""),
+        )
+    )
+    return rows
+
+
+def report_failed_task_ids(db: Session, job: ExportJob) -> list[str]:
+    """The ids of the failed tasks that belong to a report.
+
+    Used by the retry endpoint: the report decides *what* is retried, the
+    queue service decides *how* (the attempt history is kept and the
+    idempotency key prevents a second task for the same work).
+    """
+    from app.db.models import Task as TaskModel
+
+    stmt = select(TaskModel.id).where(TaskModel.status == "FAILED")
+    if job.project_id:
+        stmt = stmt.where(TaskModel.project_id == job.project_id)
+    return list(db.execute(stmt).scalars().all())
+
+
 def _summary_rows(
     *,
     project_id: str | None,
@@ -565,12 +658,22 @@ def _json(value: Any) -> str:
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    """Write the flat CSV version of the "All Opportunities" sheet."""
+    """Write the flat CSV version of the report.
+
+    The file carries the opportunities and, after them, one row per website
+    with the counters of the work.  The header is the union of the columns of
+    every row so that no value is lost.
+    """
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(COLUMNS)
+        writer.writerow(columns)
         for row in rows:
-            writer.writerow([_csv_value(row.get(column)) for column in COLUMNS])
+            writer.writerow([_csv_value(row.get(column)) for column in columns])
 
 
 def _csv_value(value: Any) -> Any:
@@ -617,13 +720,14 @@ def _write_workbook(path: Path, data: dict[str, Any]) -> None:
 
     add_sheet(REPORT_SHEETS[0], SUMMARY_COLUMNS, data["summary"])
     add_sheet(REPORT_SHEETS[1], COLUMNS, data["opportunities"])
-    add_sheet(REPORT_SHEETS[2], COLUMNS, data["verified"])
-    add_sheet(REPORT_SHEETS[3], COLUMNS, data["pending"])
-    add_sheet(REPORT_SHEETS[4], COLUMNS, data["failed"])
-    add_sheet(REPORT_SHEETS[5], COLUMNS, data["skipped"])
-    add_sheet(REPORT_SHEETS[6], COLUMNS, data["history"])
-    add_sheet(REPORT_SHEETS[7], ACTIVITY_COLUMNS, data["activity"])
-    add_sheet(REPORT_SHEETS[8], IMPORT_ERROR_COLUMNS, data["import_errors"])
+    add_sheet(REPORT_SHEETS[2], WEBSITE_COLUMNS, data["websites"])
+    add_sheet(REPORT_SHEETS[3], COLUMNS, data["verified"])
+    add_sheet(REPORT_SHEETS[4], COLUMNS, data["pending"])
+    add_sheet(REPORT_SHEETS[5], COLUMNS, data["failed"])
+    add_sheet(REPORT_SHEETS[6], COLUMNS, data["skipped"])
+    add_sheet(REPORT_SHEETS[7], COLUMNS, data["history"])
+    add_sheet(REPORT_SHEETS[8], ACTIVITY_COLUMNS, data["activity"])
+    add_sheet(REPORT_SHEETS[9], IMPORT_ERROR_COLUMNS, data["import_errors"])
 
     workbook.save(path)
 
