@@ -24,6 +24,7 @@ from app.api.routes import (
     profiles,
     projects,
     queue,
+    recycle_bin,
     registry,
     site_details,
     storage,
@@ -200,6 +201,7 @@ def create_app() -> FastAPI:
     app.include_router(registry.router, prefix=prefix)
     app.include_router(websites.router, prefix=prefix)
     app.include_router(site_details.router, prefix=prefix)
+    app.include_router(recycle_bin.router, prefix=prefix)
     app.include_router(discovery.router, prefix=prefix)
     app.include_router(integrations.router, prefix=prefix)
     app.include_router(queue.router, prefix=prefix)

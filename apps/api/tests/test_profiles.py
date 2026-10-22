@@ -113,8 +113,11 @@ def test_delete_profile(authenticated_client, db_session) -> None:
 
     assert response.status_code == 204, response.text
     assert authenticated_client.get(f"{API}/profiles/{profile['id']}").status_code == 404
+    # The profile is not thrown away - it waits in the recycle bin.
     db_session.rollback()
-    assert db_session.get(BusinessProfile, profile["id"]) is None
+    stored = db_session.get(BusinessProfile, profile["id"])
+    assert stored is not None
+    assert stored.deleted_at is not None
 
 
 def test_listing_is_scoped_to_the_owner(authenticated_client, other_auth_headers) -> None:

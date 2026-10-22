@@ -76,6 +76,18 @@ class BusinessProfile(IdMixin, TimestampMixin, Base):
     target_domains: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     monthly_target: Mapped[int | None] = mapped_column(Integer, nullable=True)
     campaign_goals: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    #: The address of the company - a directory submission asks for it and the
+    #: profile is the one place where it is kept.
+    address: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    city: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    state: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    country: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    postal_code: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    founded_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    employee_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Set when the profile is removed - it waits in the recycle bin until it
+    #: is restored or deleted forever.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     owner: Mapped[User | None] = relationship(back_populates="profiles")
     projects: Mapped[list[Project]] = relationship(back_populates="business_profile")
@@ -97,6 +109,9 @@ class Project(IdMixin, TimestampMixin, Base):
     target_website: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="ACTIVE", nullable=False, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Set when the project is removed - it waits in the recycle bin together
+    #: with its opportunities and tasks.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     business_profile: Mapped[BusinessProfile | None] = relationship(back_populates="projects")
     settings: Mapped[ProjectSettings | None] = relationship(
@@ -222,6 +237,9 @@ class Website(IdMixin, TimestampMixin, Base):
     excluded_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Set when the website is removed from the central list.  The status
+    #: ``DELETED`` and this column are kept in sync.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     adapter: Mapped[AutomationAdapter | None] = relationship()
     opportunities: Mapped[list[Opportunity]] = relationship(
@@ -248,6 +266,8 @@ class Opportunity(IdMixin, TimestampMixin, Base):
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    #: Set when the opportunity is removed - it waits in the recycle bin.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     project: Mapped[Project] = relationship()
     website: Mapped[Website] = relationship(back_populates="opportunities")

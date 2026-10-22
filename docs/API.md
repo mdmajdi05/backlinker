@@ -406,6 +406,53 @@ supported actions in `details.supported`.
 
 ---
 
+## Recycle bin — `/api/v1/recycle-bin`
+
+Deleting a project, a business profile, a website or an opportunity does not
+throw the row away.  It gets a `deleted_at` timestamp, disappears from the
+normal endpoints and waits in the recycle bin - this keeps the old reports
+truthful, because the submissions and the verification records are still there.
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/recycle-bin?kind=&page=&page_size=` | The removed rows, newest first, plus the count of every kind. | yes |
+| GET | `/api/v1/recycle-bin/counts` | `{"project": n, "website": n, "profile": n, "opportunity": n}`. | yes |
+| POST | `/api/v1/recycle-bin/{kind}/{id}/restore` | Bring the row back into the normal lists. | yes |
+| DELETE | `/api/v1/recycle-bin/{kind}/{id}` | Delete it **forever**, with everything that depends on it. | yes |
+
+`kind` is `project`, `website`, `profile` or `opportunity`.  An item looks like
+`{"kind", "id", "title", "subtitle", "deleted_at", "meta"}`.
+
+What "delete forever" removes:
+
+* **project** - its opportunities, tasks, settings and landing pages,
+* **website** - its opportunities and the tasks of those opportunities,
+* **profile** - nothing else; the projects are only detached,
+* **opportunity** - nothing else; its tasks stay in the history without the link.
+
+Deleting also cancels the **open tasks** of the removed rows, so the worker
+cannot submit work for something that is gone.
+
+## Backlink details of a project — `/api/v1/projects/{id}/backlink-details`
+
+The facts a directory asks for (company name, description, e-mail, phone,
+website, address, categories, year founded, employees, anchors) live in the
+**business profile** of the project - one place, shared by every website of the
+project and by every project that uses the same profile.
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/projects/{id}/backlink-details` | The values, the target website, the landing pages, and `required` / `filled` / `missing`. | yes |
+| PUT | `/api/v1/projects/{id}/backlink-details` | Write the values (only the fields that are sent).  Creates and links a profile when the project has none. | yes |
+
+`POST /api/v1/projects` and `PATCH /api/v1/projects/{id}` accept a `details`
+block with the same fields, so a project can be created complete in one call.
+The answer also carries `shared_with_projects` and plain `notes` (for example
+"these details are shared with 2 other projects") so the interface can tell the
+truth instead of duplicating the data.
+
+---
+
 ## Status codes
 
 | Code | Meaning |

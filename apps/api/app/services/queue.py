@@ -29,6 +29,16 @@ log = get_logger(__name__)
 
 QUEUE_STATUSES = ("QUEUED", "RETRY_SCHEDULED")
 
+#: The statuses that still may turn into a submission.  When a project or an
+#: opportunity leaves the lists, its open tasks are cancelled so the worker
+#: cannot submit work for something that was deleted.
+OPEN_TASK_STATUSES = (
+    "QUEUED",
+    "RETRY_SCHEDULED",
+    "WAITING_FOR_APPROVAL",
+    "WAITING_FOR_USER",
+)
+
 
 class DuplicateTask(Exception):
     """Raised when a task with the same idempotency key already exists."""

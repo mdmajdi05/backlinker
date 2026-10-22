@@ -120,7 +120,11 @@ def queue_approved(db: Session, project_id: str) -> list[Task]:
     opportunities = db.execute(
         select(Opportunity, Website)
         .join(Website, Opportunity.website_id == Website.id)
-        .where(Opportunity.project_id == project_id, Opportunity.status == "APPROVED")
+        .where(
+            Opportunity.project_id == project_id,
+            Opportunity.status == "APPROVED",
+            Opportunity.deleted_at.is_(None),
+        )
     ).all()
     if not opportunities:
         return []
@@ -192,7 +196,11 @@ def _approved_opportunities(db: Session, project_id: str, allowed: list[str]) ->
     rows = db.execute(
         select(Opportunity, Website)
         .join(Website, Opportunity.website_id == Website.id)
-        .where(Opportunity.project_id == project_id, Opportunity.status == "APPROVED")
+        .where(
+            Opportunity.project_id == project_id,
+            Opportunity.status == "APPROVED",
+            Opportunity.deleted_at.is_(None),
+        )
     ).all()
     return [
         opportunity

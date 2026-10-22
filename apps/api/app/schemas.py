@@ -90,6 +90,13 @@ class BusinessProfileIn(BaseModel):
     target_domains: list[str] = []
     monthly_target: int | None = None
     campaign_goals: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    country: str = ""
+    postal_code: str = ""
+    founded_year: int | None = None
+    employee_count: int | None = None
 
     @field_validator("primary_website")
     @classmethod
@@ -129,6 +136,13 @@ class BusinessProfileOut(ORMModel):
     target_domains: list[str]
     monthly_target: int | None
     campaign_goals: str
+    address: str
+    city: str
+    state: str
+    country: str
+    postal_code: str
+    founded_year: int | None
+    employee_count: int | None
     created_at: datetime
     updated_at: datetime
 
@@ -207,6 +221,62 @@ class TargetWebsiteOut(ORMModel):
     updated_at: datetime
 
 
+class BacklinkDetailsIn(BaseModel):
+    """The facts a directory asks for - stored in the business profile.
+
+    Every field is optional: only the values that are sent are written.
+    """
+
+    company_name: str | None = None
+    description: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    categories: list[str] | None = None
+    founded_year: int | None = None
+    employee_count: int | None = None
+    #: The anchor texts the backlinks should use.
+    anchors: list[str] | None = None
+    #: The page of the project that should receive the backlinks.
+    target_website: str | None = None
+
+
+class BacklinkDetailsOut(BaseModel):
+    """The details of a project and how complete they are."""
+
+    profile_id: str | None = None
+    profile_name: str | None = None
+    #: How many (not removed) projects use the same profile.
+    shared_with_projects: int = 0
+    target_website: str = ""
+    landing_pages: list[dict[str, Any]] = []
+    company_name: str = ""
+    description: str = ""
+    email: str = ""
+    phone: str = ""
+    website: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    country: str = ""
+    postal_code: str = ""
+    categories: list[str] = []
+    founded_year: int | None = None
+    employee_count: int | None = None
+    anchors: list[str] = []
+    #: What the websites of the project ask for.
+    required: list[str] = []
+    filled: list[str] = []
+    missing: list[str] = []
+    #: Plain sentences for the user (e.g. the details are shared).
+    notes: list[str] = []
+
+
 class ProjectPatch(BaseModel):
     """Partial update - every field is optional."""
 
@@ -217,6 +287,8 @@ class ProjectPatch(BaseModel):
     status: str | None = None
     #: The landing pages of the project - the list is replaced when it is sent.
     landing_pages: list[LandingPageIn] | None = None
+    #: The company facts and the anchors (stored in the business profile).
+    details: BacklinkDetailsIn | None = None
 
     @field_validator("target_website")
     @classmethod
@@ -238,6 +310,9 @@ class ProjectIn(BaseModel):
     business_profile_id: str | None = None
     settings: ProjectSettingsIn | None = None
     landing_pages: list[LandingPageIn] = []
+    #: The company facts and the anchors a submission needs.  Stored in the
+    #: business profile (created and linked when the project has none).
+    details: BacklinkDetailsIn | None = None
 
     @field_validator("target_website")
     @classmethod
@@ -1080,3 +1155,30 @@ class AutopilotStateOut(BaseModel):
     pending: int = 0
     #: The open submission tasks of the project.
     queued: int = 0
+
+
+# --------------------------------------------------------------------------
+# Recycle bin
+# --------------------------------------------------------------------------
+class RecycleBinItem(BaseModel):
+    """One removed row that waits in the recycle bin."""
+
+    #: ``project``, ``website``, ``profile`` or ``opportunity``.
+    kind: str
+    id: str
+    title: str
+    subtitle: str | None = None
+    deleted_at: datetime | None = None
+    meta: dict[str, Any] = {}
+
+
+class RecycleBinPage(BaseModel):
+    """A page of the recycle bin plus the count of every kind."""
+
+    items: list[RecycleBinItem]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    #: How many rows of every kind wait in the bin (independent of the page).
+    counts: dict[str, int] = {}

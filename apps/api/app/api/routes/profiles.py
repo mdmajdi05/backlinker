@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.db.models import BusinessProfile, Project
+from app.db.base import utcnow
+from app.db.models import BusinessProfile
 from app.schemas import BusinessProfileIn, BusinessProfileOut
 from app.services.audit import record_audit
 
@@ -15,7 +16,8 @@ router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 def _owned(db, profile_id: str, user) -> BusinessProfile:
     profile = db.get(BusinessProfile, profile_id)
-    if profile is None:
+    if profile is None or profile.deleted_at is not None:
+        # A profile that waits in the recycle bin is gone for every reader.
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Profile not found"})
     if profile.owner_id and user and profile.owner_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Access denied"})
@@ -27,6 +29,7 @@ def list_profiles(db: DbSession, user: CurrentUser) -> list[BusinessProfile]:
     stmt = select(BusinessProfile).order_by(BusinessProfile.created_at.desc())
     if not user.is_admin:
         stmt = stmt.where((BusinessProfile.owner_id == user.id) | (BusinessProfile.owner_id.is_(None)))
+    stmt = stmt.where(BusinessProfile.deleted_at.is_(None))
     return list(db.execute(stmt).scalars().all())
 
 
@@ -72,12 +75,12 @@ def update_profile(
 
 @router.delete("/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_profile(profile_id: str, db: DbSession, user: CurrentUser) -> None:
+    """Move the profile into the recycle bin.
+
+    The projects keep their reference, so a restore brings the profile back
+    exactly where it was.  Only "delete forever" detaches them.
+    """
     profile = _owned(db, profile_id, user)
-    in_use = db.execute(select(Project).where(Project.business_profile_id == profile_id)).scalars().all()
-    if in_use:
-        for project in in_use:
-            project.business_profile_id = None
-        db.commit()
-    db.delete(profile)
+    profile.deleted_at = utcnow()
     db.commit()
     record_audit(db, "delete", "business_profile", profile_id, actor_id=user.id)

@@ -129,9 +129,12 @@ def test_bulk_delete_removes_the_opportunity(authenticated_client, project_id, d
         authenticated_client.get(f"{API}/opportunities/{opportunity['id']}").status_code == 404
     )
 
+    # The opportunity waits in the recycle bin and the website stays in the
+    # central list (other projects may still use it).
     db_session.rollback()
-    assert db_session.query(Opportunity).count() == 0
-    assert db_session.query(Website).count() == 0
+    stored = db_session.query(Opportunity).one()
+    assert stored.deleted_at is not None
+    assert db_session.query(Website).count() == 1
 
 
 def test_bulk_action_on_unknown_ids_affects_nothing(authenticated_client) -> None:

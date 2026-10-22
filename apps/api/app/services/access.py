@@ -7,7 +7,7 @@ shared projects that have no owner).
 
 from __future__ import annotations
 
-from sqlalchemy import select, true
+from sqlalchemy import and_, select, true
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -34,7 +34,9 @@ def accessible_project_ids(db: Session, user: User | None) -> list[str] | None:
     if user is None:
         return []
     stmt = select(Project.id).where(
-        (Project.owner_id == user.id) | (Project.owner_id.is_(None))
+        (Project.owner_id == user.id) | (Project.owner_id.is_(None)),
+        # A project that waits in the recycle bin is gone for every reader.
+        Project.deleted_at.is_(None),
     )
     return list(db.execute(stmt).scalars().all())
 
@@ -46,7 +48,7 @@ def owns_project(db: Session, user: User | None, project_id: str | None) -> bool
     if not project_id:
         return True
     project = db.get(Project, project_id)
-    if project is None:
+    if project is None or project.deleted_at is not None:
         return False
     return project.owner_id is None or (user is not None and project.owner_id == user.id)
 
@@ -68,17 +70,28 @@ def _scope_for(column, db: Session, user: User | None):
 
 
 def scope_opportunities(db: Session, user: User | None):
-    """Filter expression for opportunity queries."""
-    return _scope_for(Opportunity.project_id, db, user)
+    """Filter expression for opportunity queries.
+
+    An opportunity that waits in the recycle bin is not part of any listing.
+    """
+    return and_(
+        _scope_for(Opportunity.project_id, db, user),
+        Opportunity.deleted_at.is_(None),
+    )
 
 
 def scope_tasks(db: Session, user: User | None):
     """Filter expression for task queries.
 
     Tasks that are not bound to a project (workspace level work) stay visible;
-    project tasks are restricted to the projects the user owns.
+    project tasks are restricted to the projects the user owns.  Tasks of an
+    opportunity that waits in the recycle bin are hidden as well.
     """
-    return _scope_for(Task.project_id, db, user)
+    removed = select(Opportunity.id).where(Opportunity.deleted_at.is_not(None))
+    return and_(
+        _scope_for(Task.project_id, db, user),
+        Task.opportunity_id.is_(None) | Task.opportunity_id.not_in(removed),
+    )
 
 
 def scope_events(db: Session, user: User | None):

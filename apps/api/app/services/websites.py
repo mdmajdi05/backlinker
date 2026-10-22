@@ -425,6 +425,7 @@ def delete_entry(db: Session, website: Website) -> Website:
     database - only the status of the website changes.
     """
     website.status = DELETED_STATUS
+    website.deleted_at = utcnow()
     website.version += 1
     website.updated_at = utcnow()
     db.commit()
@@ -435,6 +436,7 @@ def delete_entry(db: Session, website: Website) -> Website:
 def restore_entry(db: Session, website: Website) -> Website:
     """Bring a removed website back into the list."""
     website.status = ACTIVE_STATUS
+    website.deleted_at = None
     website.version += 1
     website.updated_at = utcnow()
     db.commit()

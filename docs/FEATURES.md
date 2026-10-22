@@ -64,6 +64,8 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 | Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) and the business profile is untouched |
 | Settings | concurrency, request rate, retries, backoff, verification interval, execution environment |
 | Report | project scoped workbook with the **per website** counters (submitted / verified / failed / pending) and a *Retry failed* action |
+| Backlink details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and the **anchor texts** - asked when the project is created and editable at any time; they are stored in the business profile, so nothing is duplicated |
+| Recycle bin | everything that is deleted (projects, websites, business profiles, opportunities) waits here until it is **restored** or **deleted forever** |
 
 ## The screens
 
@@ -81,6 +83,7 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 | Browser isolation + runtime | yes | yes | `/browser/status`, `/browser/install` |
 | Verification | yes | yes | `/verification/records`, `/verification/run` |
 | Reports & exports | yes | yes | `/reports`, `/reports/{id}/download` |
+| Recycle bin | yes | yes | `/recycle-bin`, `/recycle-bin/{kind}/{id}/restore` |
 | Import centre | yes | yes | `/imports/preview`, `/imports/{id}/commit` |
 | Integrations (encrypted credentials) | yes | yes | `/integrations/credentials` |
 | Devices & agents | yes | yes | `/devices` |

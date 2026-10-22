@@ -72,6 +72,10 @@ import type {
   SubmissionDetailsUpdate,
   WebsiteChooseResult,
   WebsiteImportResult,
+  BacklinkDetails,
+  BacklinkDetailsUpdate,
+  RecycleBinItem,
+  RecycleBinPage,
   WebsiteListItem,
   WebsiteStats,
   StorageTestResult,
@@ -353,6 +357,11 @@ export const api = {
       c.get<ProjectSettings>(`/api/v1/projects/${id}/settings`),
     updateSettings: (c: ApiClient, id: string, body: Partial<ProjectSettings>) =>
       c.put<ProjectSettings>(`/api/v1/projects/${id}/settings`, body),
+    /** The company facts and anchors a submission needs (stored in the profile). */
+    details: (c: ApiClient, id: string) =>
+      c.get<BacklinkDetails>(`/api/v1/projects/${id}/backlink-details`),
+    saveDetails: (c: ApiClient, id: string, body: BacklinkDetailsUpdate) =>
+      c.put<BacklinkDetails>(`/api/v1/projects/${id}/backlink-details`, body),
     /** The landing pages of the project (the targets a backlink may point to). */
     websites: (c: ApiClient, id: string, q?: PageParams) =>
       c.get<Paginated<TargetWebsite>>(`/api/v1/projects/${id}/websites`, { ...q }),
@@ -612,6 +621,21 @@ export const api = {
    * The central list of websites where the backlinks are made.  It is
    * independent of the projects - a project picks the sites it wants from it.
    */
+  /**
+   * The recycle bin: everything that was deleted waits here until it is
+   * restored or deleted forever.
+   */
+  recycleBin: {
+    list: (c: ApiClient, query?: Query) => c.get<RecycleBinPage>("/api/v1/recycle-bin", { ...query }),
+    counts: (c: ApiClient) => c.get<Record<string, number>>("/api/v1/recycle-bin/counts"),
+    /** Bring a removed row back into the normal lists. */
+    restore: (c: ApiClient, kind: string, id: string) =>
+      c.post<RecycleBinItem>(`/api/v1/recycle-bin/${kind}/${id}/restore`),
+    /** Delete a row from the recycle bin forever, with everything that depends on it. */
+    purge: (c: ApiClient, kind: string, id: string) =>
+      c.delete<void>(`/api/v1/recycle-bin/${kind}/${id}`),
+  },
+
   websites: {
     list: (c: ApiClient, query?: Query) => c.get<Paginated<WebsiteListItem>>("/api/v1/websites", { ...query }),
     create: (c: ApiClient, body: Record<string, unknown>) => c.post<WebsiteListItem>("/api/v1/websites", body),

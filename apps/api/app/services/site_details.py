@@ -539,14 +539,28 @@ def generate_details(
         categories = [str(item).strip() for item in profile.preferred_categories if str(item).strip()]
         if categories:
             fill("categories", categories)
-    if not details.country and profile and profile.target_countries:
-        country = str(profile.target_countries[0]).strip()
+    if not details.address and profile and profile.address:
+        fill("address", profile.address.strip())
+    if not details.city and profile and profile.city:
+        fill("city", profile.city.strip())
+    if not details.postal_code and profile and profile.postal_code:
+        fill("postal_code", profile.postal_code.strip())
+    if not details.country and profile:
+        country = (profile.country or "").strip()
+        if not country and profile.target_countries:
+            country = str(profile.target_countries[0]).strip()
         if country:
             fill("country", country)
-    if not details.state and profile and profile.target_regions:
-        region = str(profile.target_regions[0]).strip()
+    if not details.state and profile:
+        region = (profile.state or "").strip()
+        if not region and profile.target_regions:
+            region = str(profile.target_regions[0]).strip()
         if region:
             fill("state", region)
+    if not details.founded_year and profile and profile.founded_year:
+        fill("founded_year", int(profile.founded_year))
+    if not details.employee_count and profile and profile.employee_count:
+        fill("employee_count", int(profile.employee_count))
 
     extra = dict(details.extra or {})
     if not extra.get("anchor_text"):
@@ -589,8 +603,13 @@ PROFILE_SOURCE: dict[str, str] = {
     "website": "primary_website",
     "logo_path": "logo_path",
     "categories": "preferred_categories",
-    "country": "target_countries",
-    "state": "target_regions",
+    "address": "address",
+    "city": "city",
+    "state": "state",
+    "country": "country",
+    "postal_code": "postal_code",
+    "founded_year": "founded_year",
+    "employee_count": "employee_count",
 }
 
 #: The plain reason why a field cannot be derived from the business profile.
@@ -624,6 +643,12 @@ def derivable_from_profile(profile: BusinessProfile | None, field: str) -> bool:
     fixed = target_field(field)
     if fixed == "description":
         return _profile_has_content(profile)
+    if fixed in ("country", "state"):
+        own = getattr(profile, fixed, "")
+        if str(own or "").strip():
+            return True
+        fallback = profile.target_countries if fixed == "country" else profile.target_regions
+        return bool(fallback)
     attribute = PROFILE_SOURCE.get(fixed)
     if attribute is None:
         return False

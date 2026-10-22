@@ -167,8 +167,12 @@ def test_delete_project(authenticated_client, project_id, db_session) -> None:
     assert response.status_code == 204, response.text
     assert authenticated_client.get(f"{API}/projects/{project_id}").status_code == 404
 
+    # The project is not thrown away - it waits in the recycle bin.
     db_session.rollback()
-    assert db_session.get(Project, project_id) is None
+    stored = db_session.get(Project, project_id)
+    assert stored is not None
+    assert stored.deleted_at is not None
+    assert authenticated_client.get(f"{API}/recycle-bin").json()["counts"]["project"] >= 1
 
 
 def test_listing_is_scoped_to_the_owner(authenticated_client, other_auth_headers) -> None:

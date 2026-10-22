@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.deps import CurrentUser, DbSession, Pagination
 from app.db.base import utcnow
@@ -19,6 +19,8 @@ from app.db.models import (
 )
 from app.db.repositories import paginate
 from app.schemas import (
+    BacklinkDetailsIn,
+    BacklinkDetailsOut,
     PaginatedResponse,
     ProjectDetailOut,
     ProjectIn,
@@ -28,7 +30,9 @@ from app.schemas import (
     ProjectSettingsOut,
     TargetWebsiteOut,
 )
+from app.services import backlink_details
 from app.services.audit import record_audit
+from app.services.queue import OPEN_TASK_STATUSES
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -40,7 +44,8 @@ def slugify(value: str) -> str:
 
 def _get_project(db, project_id: str, user) -> Project:
     project = db.get(Project, project_id)
-    if project is None:
+    if project is None or project.deleted_at is not None:
+        # A project that waits in the recycle bin is gone for every reader.
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Project not found"})
     if project.owner_id and user and project.owner_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Access denied"})
@@ -81,6 +86,8 @@ def list_projects(db: DbSession, user: CurrentUser, page: Pagination) -> Paginat
     if not user.is_admin:
         stmt = stmt.where((Project.owner_id == user.id) | (Project.owner_id.is_(None)))
         count_stmt = count_stmt.where((Project.owner_id == user.id) | (Project.owner_id.is_(None)))
+    stmt = stmt.where(Project.deleted_at.is_(None))
+    count_stmt = count_stmt.where(Project.deleted_at.is_(None))
     stmt = stmt.order_by(Project.created_at.desc())
     result = paginate(db, stmt, Project, page.page, page.page_size, count_stmt)
     return PaginatedResponse(
@@ -135,6 +142,10 @@ def create_project(payload: ProjectIn, db: DbSession, user: CurrentUser) -> Proj
         )
     db.commit()
     db.refresh(project)
+    if payload.details is not None:
+        backlink_details.write(
+            db, project, user, payload.details.model_dump(exclude_unset=True)
+        )
     record_audit(db, "create", "project", project.id, actor_id=user.id, after={"name": project.name})
     _queue_sync(db, project)
     return ProjectDetailOut(
@@ -159,6 +170,7 @@ def update_project(project_id: str, payload: ProjectPatch, db: DbSession, user: 
     project = _get_project(db, project_id, user)
     data = payload.model_dump(exclude_unset=True)
     landing_pages = data.pop("landing_pages", None)
+    details = data.pop("details", None)
     for field, value in data.items():
         if value is None:
             if field == "business_profile_id":
@@ -168,6 +180,8 @@ def update_project(project_id: str, payload: ProjectPatch, db: DbSession, user: 
         setattr(project, field, value)
     if landing_pages is not None:
         _replace_landing_pages(db, project, landing_pages)
+    if details is not None:
+        backlink_details.write(db, project, user, details)
     project.version += 1
     project.updated_at = utcnow()
     db.commit()
@@ -205,6 +219,28 @@ def _replace_landing_pages(db: DbSession, project: Project, pages: list[dict]) -
     db.flush()
 
 
+@router.get("/{project_id}/backlink-details", response_model=BacklinkDetailsOut)
+def get_backlink_details(project_id: str, db: DbSession, user: CurrentUser) -> BacklinkDetailsOut:
+    """The details a submission needs, and how complete they are."""
+    project = _get_project(db, project_id, user)
+    return BacklinkDetailsOut(**backlink_details.read(db, project))
+
+
+@router.put("/{project_id}/backlink-details", response_model=BacklinkDetailsOut)
+def put_backlink_details(
+    project_id: str, payload: BacklinkDetailsIn, db: DbSession, user: CurrentUser
+) -> BacklinkDetailsOut:
+    """Store the details of the project in its business profile.
+
+    This is the one place where the company facts live: a second project that
+    uses the same profile sees the same values, so nothing is duplicated.
+    """
+    project = _get_project(db, project_id, user)
+    stored = backlink_details.write(db, project, user, payload.model_dump(exclude_unset=True))
+    record_audit(db, "update", "project", project.id, actor_id=user.id, after={"details": True})
+    return BacklinkDetailsOut(**stored)
+
+
 def _queue_sync(db, project: Project) -> None:
     """Queue the project for the next hybrid synchronisation push."""
     from app.services.sync import record_change
@@ -230,8 +266,25 @@ def _queue_sync(db, project: Project) -> None:
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(project_id: str, db: DbSession, user: CurrentUser) -> None:
+    """Move the project into the recycle bin.
+
+    The project disappears from the lists, but its opportunities, tasks and
+    verification records stay so the reports keep telling the truth.  It waits
+    in the recycle bin until it is restored or deleted forever.
+    """
     project = _get_project(db, project_id, user)
-    db.delete(project)
+    project.deleted_at = utcnow()
+    project.version += 1
+    project.updated_at = utcnow()
+    # Nothing may be submitted for a project that left the lists.
+    db.execute(
+        update(Task)
+        .where(
+            Task.project_id == project.id,
+            Task.status.in_(OPEN_TASK_STATUSES),
+        )
+        .values(status="CANCELLED", finished_at=utcnow(), lease_owner=None, lease_expires_at=None)
+    )
     db.commit()
     record_audit(db, "delete", "project", project_id, actor_id=user.id)
 

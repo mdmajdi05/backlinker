@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 
 from app.api.deps import CurrentUser, DbSession, Pagination
-from app.db.models import Opportunity, Project, Website
+from app.db.base import utcnow
+from app.db.models import Opportunity, Project, Task, Website
 from app.schemas import (
     BulkActionRequest,
     OpportunityIn,
@@ -25,13 +26,15 @@ from app.services.opportunities import (
     normalize_url,
     opportunity_to_dict,
 )
+from app.services.queue import OPEN_TASK_STATUSES
 
 router = APIRouter(tags=["registry"])
 
 
 def _load(db, opportunity_id: str, user) -> tuple[Opportunity, Website]:
     opportunity = db.get(Opportunity, opportunity_id)
-    if opportunity is None:
+    if opportunity is None or opportunity.deleted_at is not None:
+        # An opportunity that waits in the recycle bin is gone for every reader.
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Opportunity not found"})
     if not access.owns_project(db, user, opportunity.project_id):
         raise HTTPException(status_code=403, detail={"code": "forbidden", "message": "Access denied"})
@@ -279,16 +282,28 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
             if created:
                 affected += 1
         elif action == "delete":
-            db.delete(opportunity)
-            db.flush()
-            if not db.execute(
-                select(Opportunity).where(Opportunity.website_id == website.id)
-            ).scalars().first():
-                db.delete(website)
+            # The opportunity goes to the recycle bin; the website stays in the
+            # central list because other projects may still use it.
+            opportunity.deleted_at = utcnow()
+            opportunity.version += 1
+            opportunity.updated_at = utcnow()
+            db.execute(
+                update(Task)
+                .where(
+                    Task.opportunity_id == opportunity.id,
+                    Task.status.in_(OPEN_TASK_STATUSES),
+                )
+                .values(
+                    status="CANCELLED",
+                    finished_at=utcnow(),
+                    lease_owner=None,
+                    lease_expires_at=None,
+                )
+            )
             record_event(
                 db,
                 "website.deleted",
-                f"Deleted {website.domain}",
+                f"Removed {website.domain} - it waits in the recycle bin",
                 project_id=opportunity.project_id,
                 metadata={"reason": payload.reason},
             )

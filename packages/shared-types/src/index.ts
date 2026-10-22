@@ -292,6 +292,14 @@ export interface BusinessProfile {
   target_domains: string[];
   monthly_target: number | null;
   campaign_goals: string;
+  /** The address of the company - a directory submission asks for it. */
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postal_code: string;
+  founded_year: number | null;
+  employee_count: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -1338,3 +1346,66 @@ export interface ImportRowDetail {
   errors: string | null;
   raw: Record<string, unknown>;
 }
+
+/* ------------------------------------------------------------------ */
+/* Recycle bin                                                         */
+/* ------------------------------------------------------------------ */
+
+/** The kinds of rows that can wait in the recycle bin. */
+export type RecycleBinKind = "project" | "website" | "profile" | "opportunity";
+
+/** One removed row that waits in the recycle bin. */
+export interface RecycleBinItem {
+  kind: RecycleBinKind | string;
+  id: string;
+  title: string;
+  subtitle?: string | null;
+  deleted_at?: string | null;
+  meta?: Record<string, unknown>;
+}
+
+/** A page of the recycle bin plus the count of every kind. */
+export interface RecycleBinPage {
+  items: RecycleBinItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  counts: Record<string, number>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Backlink details of a project                                       */
+/* ------------------------------------------------------------------ */
+
+/** The company facts and anchors a submission needs. */
+export interface BacklinkDetails {
+  profile_id?: string | null;
+  profile_name?: string | null;
+  shared_with_projects: number;
+  target_website: string;
+  landing_pages: Array<{ id?: string; name: string; url: string; kind?: string }>;
+  company_name: string;
+  description: string;
+  email: string;
+  phone: string;
+  website: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postal_code: string;
+  categories: string[];
+  founded_year?: number | null;
+  employee_count?: number | null;
+  anchors: string[];
+  required: string[];
+  filled: string[];
+  missing: string[];
+  notes: string[];
+}
+
+/** The values that can be written - every field is optional. */
+export type BacklinkDetailsUpdate = Partial<
+  Omit<BacklinkDetails, "profile_id" | "profile_name" | "shared_with_projects" | "landing_pages" | "required" | "filled" | "missing" | "notes">
+>;
