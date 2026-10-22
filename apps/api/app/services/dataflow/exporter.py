@@ -55,7 +55,7 @@ __all__ = [
     "REPORT_SHEETS",
     "WEBSITE_COLUMNS",
     "generate_report",
-    "report_failed_task_ids",
+    "scope_project_id",
 ]
 
 #: Sheet names (mirrors ``ReportSheet`` in ``packages/shared-types``).
@@ -98,6 +98,9 @@ WEBSITE_VERIFIED_STATUSES = ("VERIFIED_LIVE",)
 WEBSITE_FAILED_STATUSES = ("FAILED",)
 
 #: Task statuses that count as "the work is still in flight" in the sheet.
+#:
+#: ``WAITING_FOR_USER`` is *not* part of it: a task that waits for a human has
+#: its own counter so the two numbers never overlap.
 WEBSITE_PENDING_STATUSES = ("QUEUED", "RUNNING", "RETRY_SCHEDULED")
 
 #: Task statuses that count as "a human has to provide the site details".
@@ -205,8 +208,8 @@ DATE_COLUMNS = frozenset(
 
 def generate_report(db: Session, job: ExportJob) -> None:
     """Generate the report of an export job and fill in the job record."""
-    scope_project_id = _scope_project_id(job)
-    data = _collect(db, scope_project_id)
+    scope_project = scope_project_id(job)
+    data = _collect(db, scope_project)
 
     directory = settings.managed_files_dir / "reports"
     directory.mkdir(parents=True, exist_ok=True)
@@ -242,7 +245,7 @@ def generate_report(db: Session, job: ExportJob) -> None:
     )
 
 
-def _scope_project_id(job: ExportJob) -> str | None:
+def scope_project_id(job: ExportJob) -> str | None:
     """Return the project the report is limited to (``None`` = workspace)."""
     if job.project_id:
         return job.project_id
@@ -533,22 +536,33 @@ def _website_rows(
     tasks: list[Task],
     websites: dict[str, Website],
 ) -> list[dict[str, Any]]:
-    """One row per website with the counters of the work that was done.
+    """One row per domain with the counters of the work that was done.
 
-    The numbers are computed from the tasks, never stored - a report always
-    reflects the current state of the database.
+    The numbers are computed from the tasks and the opportunities of the
+    domain - they are never stored, so a report always reflects the current
+    state of the database.  A domain can carry several website records (one
+    per opportunity URL); their values are merged, the counters are summed.
     """
-    buckets: dict[str, dict[str, Any]] = {}
+    domain_of_website: dict[str, str] = {}
+    for website_id, website in websites.items():
+        domain_of_website[website_id] = (website.domain or "").strip().lower()
 
-    def bucket(website_id: str | None) -> dict[str, Any]:
-        key = website_id or ""
-        if key not in buckets:
-            website = websites.get(website_id) if website_id else None
-            buckets[key] = {
-                "Domain": (website.domain if website else "") or "",
-                "Website": (website.name if website else "") or "",
-                "Category": (website.category if website else "") or "",
-                "Status": (website.status if website else "") or "",
+    # opportunity id -> website id, so a task without a website is still
+    # attributed to the site its opportunity belongs to.
+    website_of_opportunity = {
+        opportunity.id: opportunity.website_id for opportunity in opportunities
+    }
+
+    domains: dict[str, dict[str, Any]] = {}
+
+    def bucket(domain: str) -> dict[str, Any]:
+        if domain not in domains:
+            domains[domain] = {
+                "Domain": domain,
+                "Website": [],
+                "Category": [],
+                "Status": [],
+                "Notes": [],
                 "Opportunities": 0,
                 "Submitted": 0,
                 "Verified": 0,
@@ -556,43 +570,85 @@ def _website_rows(
                 "Pending": 0,
                 "Waiting for details": 0,
                 "Last attempt": None,
-                "Notes": (website.notes if website else "") or "",
-                "_domain": (website.domain if website else "") or "",
             }
-        return buckets[key]
+        return domains[domain]
+
+    def website_values(website_id: str | None) -> tuple[str, list[str], list[str], list[str]]:
+        website = websites.get(website_id) if website_id else None
+        if website is None:
+            return "", [], [], []
+        return (
+            (website.name or "").strip(),
+            [(website.category or "").strip()],
+            [(website.status or "").strip()],
+            [(website.notes or "").strip()],
+        )
 
     for opportunity in opportunities:
-        bucket(opportunity.website_id)["Opportunities"] += 1
+        website_id = opportunity.website_id
+        domain = domain_of_website.get(website_id, "")
+        row = bucket(domain)
+        row["Opportunities"] += 1
+        name, categories, statuses, notes = website_values(website_id)
+        _merge_values(row["Website"], name)
+        _merge_values(row["Category"], categories)
+        _merge_values(row["Status"], statuses)
+        _merge_values(row["Notes"], notes)
 
     for task in tasks:
-        row = bucket(task.website_id)
-        status = task.status
+        website_id = task.website_id or website_of_opportunity.get(task.opportunity_id or "")
+        domain = domain_of_website.get(website_id, "")
+        if not domain:
+            # A task without a website cannot be attributed to a site.
+            continue
+        row = bucket(domain)
+        status = (task.status or "").upper()
         if status in WEBSITE_SUBMITTED_STATUSES:
             row["Submitted"] += 1
         if status in WEBSITE_VERIFIED_STATUSES:
             row["Verified"] += 1
         if status in WEBSITE_FAILED_STATUSES:
             row["Failed"] += 1
-        if status in PENDING_TASK_STATUSES:
+        if status in WEBSITE_PENDING_STATUSES:
             row["Pending"] += 1
-        if status == "WAITING_FOR_USER":
+        if status in WEBSITE_WAITING_STATUSES:
             row["Waiting for details"] += 1
         started = task.started_at
         if started is not None and (row["Last attempt"] is None or started > row["Last attempt"]):
             row["Last attempt"] = started
+        name, categories, statuses, notes = website_values(website_id)
+        _merge_values(row["Website"], name)
+        _merge_values(row["Category"], categories)
+        _merge_values(row["Status"], statuses)
+        _merge_values(row["Notes"], notes)
 
     rows: list[dict[str, Any]] = []
-    for row in buckets.values():
-        row.pop("_domain", None)
-        rows.append({column: row.get(column, "") for column in WEBSITE_COLUMNS})
-    rows.sort(
-        key=lambda item: (
-            -int(item.get("Failed") or 0),
-            -int(item.get("Submitted") or 0),
-            str(item.get("Domain") or ""),
+    for domain in sorted(domains):
+        row = domains[domain]
+        rows.append(
+            {
+                "Domain": domain,
+                "Website": ", ".join(value for value in row["Website"] if value),
+                "Category": ", ".join(value for value in row["Category"] if value),
+                "Status": ", ".join(value for value in row["Status"] if value),
+                "Opportunities": row["Opportunities"],
+                "Submitted": row["Submitted"],
+                "Verified": row["Verified"],
+                "Failed": row["Failed"],
+                "Pending": row["Pending"],
+                "Waiting for details": row["Waiting for details"],
+                "Last attempt": row["Last attempt"] or "",
+                "Notes": " | ".join(value for value in row["Notes"] if value),
+            }
         )
-    )
     return rows
+
+
+def _merge_values(target: list[str], values: list[str]) -> None:
+    """Add the values to the list, keeping the order and without duplicates."""
+    for value in values:
+        if value and value not in target:
+            target.append(value)
 
 
 def report_failed_task_ids(db: Session, job: ExportJob) -> list[str]:

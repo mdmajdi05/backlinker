@@ -760,6 +760,25 @@ class ExportCreateRequest(BaseModel):
     scope: str = "workspace"
 
 
+class ReportRetryRequest(BaseModel):
+    """The filters of the retry of a report.
+
+    Both filters are optional: without them every failed task of the report
+    is queued again.
+    """
+
+    domain: str | None = None
+    project_id: str | None = None
+
+
+class ReportRetryOut(BaseModel):
+    """The result of the retry of a report."""
+
+    retried: int = 0
+    skipped: int = 0
+    task_ids: list[str] = []
+
+
 # --------------------------------------------------------------------------
 # Misc
 # --------------------------------------------------------------------------

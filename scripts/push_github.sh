@@ -21,8 +21,11 @@ if [[ -z "$TOKEN" ]]; then
   exit 2
 fi
 
-URL="https://x-access-token:${TOKEN}@github.com/itnegbuy/backlinker-by-majdi.git"
+BASE="$(git remote get-url "$REMOTE")"
+BASE="${BASE#https://}"
+BASE="${BASE#git@}"
+URL="https://x-access-token:${TOKEN}@${BASE}"
 
-echo "==> pushing $(git rev-list --count HEAD) commits to ${REMOTE} (${BRANCH})"
-git push "$URL" "HEAD:${BRANCH}" "$@"
-echo "==> done: https://github.com/itnegbuy/backlinker-by-majdi/tree/${BRANCH}"
+echo "==> pushing $(git rev-list --count HEAD) commits to ${BASE} (${BRANCH})"
+git push "$URL" "HEAD:${BRANCH}"
+echo "==> done: https://${BASE}/tree/${BRANCH}"
