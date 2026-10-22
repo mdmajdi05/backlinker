@@ -257,6 +257,8 @@ export function ProjectEditDialog({
     const withLanding = await action.run(() =>
       api.projects.update(apiClient, projectId, body),
     );
+    /* The landing pages are only stored when the backend accepts the field. */
+    const landingSent = withLanding.ok;
     if (!withLanding.ok) {
       /* Not every backend accepts the extra field - save the core fields alone. */
       const core = await action.run(() =>
@@ -282,7 +284,7 @@ export function ProjectEditDialog({
           "The business profile was not removed - the backend keeps the previous one.",
         );
       }
-      if (!sameLandingPages(body.landing_pages, stored.landingPages)) {
+      if (landingSent && !sameLandingPages(body.landing_pages, stored.landingPages)) {
         problems.push(
           "The landing pages were not stored - the backend endpoint does not support changing them yet.",
         );

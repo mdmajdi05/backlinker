@@ -215,6 +215,8 @@ class ProjectPatch(BaseModel):
     target_website: str | None = None
     business_profile_id: str | None = None
     status: str | None = None
+    #: The landing pages of the project - the list is replaced when it is sent.
+    landing_pages: list[LandingPageIn] | None = None
 
     @field_validator("target_website")
     @classmethod

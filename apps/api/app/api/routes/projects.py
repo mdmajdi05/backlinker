@@ -158,9 +158,16 @@ def get_project(project_id: str, db: DbSession, user: CurrentUser) -> ProjectDet
 def update_project(project_id: str, payload: ProjectPatch, db: DbSession, user: CurrentUser) -> ProjectOut:
     project = _get_project(db, project_id, user)
     data = payload.model_dump(exclude_unset=True)
+    landing_pages = data.pop("landing_pages", None)
     for field, value in data.items():
-        if value is not None:
-            setattr(project, field, value)
+        if value is None:
+            if field == "business_profile_id":
+                # An empty profile detaches the project from the profile.
+                project.business_profile_id = None
+            continue
+        setattr(project, field, value)
+    if landing_pages is not None:
+        _replace_landing_pages(db, project, landing_pages)
     project.version += 1
     project.updated_at = utcnow()
     db.commit()
@@ -168,6 +175,34 @@ def update_project(project_id: str, payload: ProjectPatch, db: DbSession, user: 
     record_audit(db, "update", "project", project.id, actor_id=user.id)
     _queue_sync(db, project)
     return ProjectOut.model_validate(project)
+
+
+def _replace_landing_pages(db: DbSession, project: Project, pages: list[dict]) -> None:
+    """Replace the landing pages of a project with the given list."""
+    from app.db.models import TargetWebsite
+
+    for existing in list(
+        db.execute(select(TargetWebsite).where(TargetWebsite.project_id == project.id)).scalars().all()
+    ):
+        db.delete(existing)
+    db.flush()
+    for page in pages:
+        url = str(page.get("url") or "").strip()
+        if not url:
+            continue
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        url = url.rstrip("/")
+        db.add(
+            TargetWebsite(
+                project_id=project.id,
+                name=str(page.get("name") or url),
+                url=url,
+                domain=url.split("//", 1)[-1].split("/", 1)[0].lower(),
+                kind=str(page.get("kind") or "LANDING"),
+            )
+        )
+    db.flush()
 
 
 def _queue_sync(db, project: Project) -> None:
