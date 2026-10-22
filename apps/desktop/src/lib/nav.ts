@@ -10,6 +10,7 @@ export type RouteId =
   | "automation"
   | "verification"
   | "reports"
+  | "recycle-bin"
   | "imports"
   | "integrations"
   | "devices"
@@ -23,6 +24,11 @@ export interface NavEntry {
   group: "workspace" | "operations" | "system";
   /** Routes that are not part of the desktop build yet. */
   implemented: boolean;
+  /**
+   * Optional glyph of the shared navigation model. The desktop shell renders
+   * its SVG icons by route id and falls back to this glyph when there is none.
+   */
+  icon?: string;
 }
 
 export const NAV_ENTRIES: NavEntry[] = [
@@ -88,6 +94,15 @@ export const NAV_ENTRIES: NavEntry[] = [
     description: "Generated exports and downloads.",
     group: "operations",
     implemented: true,
+  },
+  {
+    id: "recycle-bin",
+    label: "Recycle bin",
+    description:
+      "Deleted projects, websites, business profiles and opportunities wait here until they are restored or deleted forever.",
+    group: "operations",
+    implemented: true,
+    icon: "⌫",
   },
   {
     id: "imports",

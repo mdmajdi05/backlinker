@@ -72,9 +72,9 @@ def main() -> int:
         text = dialog.inner_text()
         promises = {
             "keeps the websites": "website" in text.lower(),
-            "explains the removal": "removed" in text.lower(),
+            "explains the recycle bin": "recycle bin" in text.lower(),
             "mentions that the profile stays": "profile" in text.lower(),
-            "mentions undo or backup": "undo" in text.lower() or "backup" in text.lower(),
+            "mentions the restore": "restore" in text.lower(),
         }
         for label, value in promises.items():
             print(f"[{'PASS' if value else 'FAIL'}] the delete dialog {label}")

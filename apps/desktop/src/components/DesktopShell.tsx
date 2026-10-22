@@ -21,6 +21,7 @@ import { AutomationPage } from "../pages/AutomationPage";
 import { AutomationPanel } from "./AutomationPanel";
 import { VerificationPage } from "../pages/VerificationPage";
 import { ReportsPage } from "../pages/ReportsPage";
+import { RecycleBinPage } from "../pages/RecycleBinPage";
 import { ImportsPage } from "../pages/ImportsPage";
 import { DevicesPage } from "../pages/DevicesPage";
 import { ActivityPage } from "../pages/ActivityPage";
@@ -33,7 +34,7 @@ interface ShellEntry {
   label: string;
   description: string;
   group: NavEntry["group"];
-  icon: IconName;
+  icon: IconName | { glyph: string };
 }
 
 /**
@@ -62,13 +63,33 @@ function shellEntries(): ShellEntry[] {
     label: entry.label,
     description: entry.description,
     group: entry.group,
-    icon: entry.id as IconName,
+    // Shared navigation entries may carry a text glyph (e.g. the recycle
+    // bin); the desktop icons stay the default everywhere else.
+    icon: entry.icon ? { glyph: entry.icon } : (entry.id as IconName),
   }));
   return [...entries, ...EXTRA_ENTRIES];
 }
 
+/** The route without its query string - the hash router keeps `kind` there. */
+function routePath(route: string): string {
+  return route.split("?")[0] ?? route;
+}
+
 function isActive(route: string, id: string): boolean {
-  return route === id || route.startsWith(`${id}/`);
+  const path = routePath(route);
+  return path === id || path.startsWith(`${id}/`);
+}
+
+function NavIcon({ icon }: { icon: ShellEntry["icon"] }) {
+  if (typeof icon === "string") return <Icon name={icon} />;
+  return (
+    <span
+      aria-hidden
+      className="flex h-4 w-4 items-center justify-center text-sm leading-none"
+    >
+      {icon.glyph}
+    </span>
+  );
 }
 
 /**
@@ -145,7 +166,7 @@ function Sidebar() {
                             : "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-content-muted transition-colors hover:bg-surface-sunken hover:text-content"
                         }
                       >
-                        <Icon name={entry.icon} />
+                        <NavIcon icon={entry.icon} />
                         <span className="flex-1 truncate">{entry.label}</span>
                         {pending ? (
                           <span className="text-[10px] text-content-subtle">
@@ -215,17 +236,18 @@ export function BackendPill({ compact = false }: { compact?: boolean }) {
 }
 
 function routeHeadline(route: string): { title: string; description: string } {
-  if (route.startsWith("projects/")) {
+  const path = routePath(route);
+  if (path.startsWith("projects/")) {
     return {
       title: "Project",
       description: "Counters, execution settings and landing pages of one project.",
     };
   }
-  const extra = EXTRA_ENTRIES.find((entry) => entry.id === route);
+  const extra = EXTRA_ENTRIES.find((entry) => entry.id === path);
   if (extra) {
     return { title: extra.label, description: extra.description };
   }
-  const entry = navEntry(route);
+  const entry = navEntry(path);
   return {
     title: entry?.label ?? "Overview",
     description: entry?.description ?? "",
@@ -300,12 +322,13 @@ function TopBar() {
 }
 
 function renderRoute(route: string) {
-  if (route.startsWith("projects/")) {
-    const projectId = route.slice("projects/".length).trim();
+  const path = routePath(route);
+  if (path.startsWith("projects/")) {
+    const projectId = path.slice("projects/".length).trim();
     if (projectId) return <ProjectDetailPage projectId={projectId} />;
   }
 
-  switch (route) {
+  switch (path) {
     case "overview":
       return <OverviewPage />;
     case "projects":
@@ -329,6 +352,8 @@ function renderRoute(route: string) {
       return <VerificationPage />;
     case "reports":
       return <ReportsPage />;
+    case "recycle-bin":
+      return <RecycleBinPage />;
     case "imports":
       return <ImportsPage />;
     case "integrations":
@@ -342,7 +367,7 @@ function renderRoute(route: string) {
     case "onboarding":
       return <OnboardingPage />;
     default:
-      return <NotImplementedPage route={route} />;
+      return <NotImplementedPage route={path} />;
   }
 }
 

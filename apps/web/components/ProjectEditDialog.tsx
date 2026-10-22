@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { api } from "@autobacklinker/api-client";
+import type { BacklinkDetails, BacklinkDetailsUpdate } from "@autobacklinker/shared-types";
 import type { Project, TargetWebsite } from "@autobacklinker/shared-types";
 import {
   Alert,
@@ -136,6 +137,11 @@ export function ProjectEditDialog({
     [projectId],
     { enabled: open && Boolean(projectId) },
   );
+  const backlinkDetails = useResource(
+    () => api.projects.details(apiClient, projectId),
+    [projectId],
+    { enabled: open && Boolean(projectId) },
+  );
 
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
@@ -144,6 +150,9 @@ export function ProjectEditDialog({
   const [status, setStatus] = React.useState<Project["status"]>("ACTIVE");
   const [landingPages, setLandingPages] = React.useState<LandingDraft[]>([]);
   const [formError, setFormError] = React.useState<string | null>(null);
+  /** The details a directory asks for - stored in the business profile. */
+  const [details, setDetails] = React.useState<BacklinkDetailsUpdate | null>(null);
+  const [detailsInfo, setDetailsInfo] = React.useState<BacklinkDetails | null>(null);
   /** The changes the backend did not store - they are shown to the user. */
   const [notices, setNotices] = React.useState<string[]>([]);
   const keyCounter = React.useRef(0);
@@ -161,6 +170,34 @@ export function ProjectEditDialog({
     setFormError(null);
     setNotices([]);
   }, [open, detail.data]);
+
+  /* The backlink details come from the business profile of the project. */
+  React.useEffect(() => {
+    if (!open || !backlinkDetails.settled) return;
+    const source = backlinkDetails.data;
+    if (!source) {
+      setDetails(null);
+      setDetailsInfo(null);
+      return;
+    }
+    setDetailsInfo(source);
+    setDetails({
+      company_name: source.company_name,
+      description: source.description,
+      email: source.email,
+      phone: source.phone,
+      website: source.website,
+      address: source.address,
+      city: source.city,
+      state: source.state,
+      country: source.country,
+      postal_code: source.postal_code,
+      categories: source.categories,
+      founded_year: source.founded_year ?? null,
+      employee_count: source.employee_count ?? null,
+      anchors: source.anchors,
+    });
+  }, [open, backlinkDetails.settled, backlinkDetails.data]);
 
   /* The landing pages come from the landing pages of the project. */
   React.useEffect(() => {
@@ -253,6 +290,16 @@ export function ProjectEditDialog({
     };
 
     const problems: string[] = [];
+
+    /* The details live in the business profile - saving them is a second call. */
+    if (details) {
+      const stored = await action.run(() =>
+        api.projects.saveDetails(apiClient, projectId, details),
+      );
+      if (!stored.ok) {
+        problems.push("The backlink details could not be saved - the project fields were saved.");
+      }
+    }
 
     const withLanding = await action.run(() =>
       api.projects.update(apiClient, projectId, body),
@@ -549,6 +596,196 @@ export function ProjectEditDialog({
               This project has no landing page yet - the target website above is the only
               destination.
             </p>
+          ) : null}
+        </section>
+
+        <section className="space-y-2 border-t border-line pt-3">
+          <div>
+            <h3 className="text-sm font-semibold text-content">Backlink details</h3>
+            <p className="text-xs text-content-muted">
+              The facts a directory asks for when it publishes a backlink. They are stored once in
+              the business profile, so every website of this project reuses them.
+            </p>
+          </div>
+
+          {backlinkDetails.loading && !backlinkDetails.data ? (
+            <div className="space-y-2" aria-busy="true">
+              <span className="sr-only">Loading the backlink details…</span>
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : backlinkDetails.error ? (
+            <Alert
+              tone="danger"
+              title="The backlink details could not be loaded"
+              action={
+                <Button variant="outline" size="sm" onClick={backlinkDetails.reload}>
+                  Try again
+                </Button>
+              }
+            >
+              {errorMessage(backlinkDetails.error)}
+            </Alert>
+          ) : details ? (
+            <>
+              {(detailsInfo?.notes ?? []).map((note) => (
+                <p
+                  key={note}
+                  className="rounded-md border border-line bg-surface-sunken px-3 py-2 text-xs text-content-muted"
+                >
+                  {note}
+                </p>
+              ))}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Company name">
+                  <Input
+                    value={details.company_name ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, company_name: event.target.value })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Website">
+                  <Input
+                    value={details.website ?? ""}
+                    onChange={(event) => setDetails({ ...details, website: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="E-mail address">
+                  <Input
+                    type="email"
+                    value={details.email ?? ""}
+                    onChange={(event) => setDetails({ ...details, email: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Phone number">
+                  <Input
+                    value={details.phone ?? ""}
+                    onChange={(event) => setDetails({ ...details, phone: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Street address" className="sm:col-span-2">
+                  <Input
+                    value={details.address ?? ""}
+                    onChange={(event) => setDetails({ ...details, address: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="City">
+                  <Input
+                    value={details.city ?? ""}
+                    onChange={(event) => setDetails({ ...details, city: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="State / region">
+                  <Input
+                    value={details.state ?? ""}
+                    onChange={(event) => setDetails({ ...details, state: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Country">
+                  <Input
+                    value={details.country ?? ""}
+                    onChange={(event) => setDetails({ ...details, country: event.target.value })}
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Postal code">
+                  <Input
+                    value={details.postal_code ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, postal_code: event.target.value })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Categories" hint="Comma separated.">
+                  <Input
+                    value={(details.categories ?? []).join(", ")}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        categories: event.target.value
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Anchors" hint="Comma separated. The texts the backlinks should use.">
+                  <Input
+                    value={(details.anchors ?? []).join(", ")}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        anchors: event.target.value
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Year founded">
+                  <Input
+                    type="number"
+                    value={details.founded_year ?? ""}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        founded_year: event.target.value
+                          ? Number.parseInt(event.target.value, 10)
+                          : null,
+                      })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Number of employees">
+                  <Input
+                    type="number"
+                    value={details.employee_count ?? ""}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        employee_count: event.target.value
+                          ? Number.parseInt(event.target.value, 10)
+                          : null,
+                      })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+                <Field label="Description" className="sm:col-span-2">
+                  <Textarea
+                    rows={3}
+                    value={details.description ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, description: event.target.value })
+                    }
+                    disabled={action.pending}
+                  />
+                </Field>
+              </div>
+              {(detailsInfo?.required ?? []).length > 0 ? (
+                <p className="text-xs text-content-muted">
+                  Completeness: {(detailsInfo?.filled ?? []).length} of{" "}
+                  {(detailsInfo?.required ?? []).length} fields the websites ask for are available
+                  {(detailsInfo?.missing ?? []).length > 0
+                    ? ` - still missing: ${(detailsInfo?.missing ?? []).join(", ")}`
+                    : ""}
+                  .
+                </p>
+              ) : null}
+            </>
           ) : null}
         </section>
 

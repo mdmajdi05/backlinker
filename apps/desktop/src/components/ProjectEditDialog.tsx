@@ -30,6 +30,8 @@ import { useAsync } from "../lib/useAsync";
 import { sendNativeNotification } from "../lib/backend";
 import { formatNumber } from "../lib/format";
 import type {
+  BacklinkDetails,
+  BacklinkDetailsUpdate,
   BusinessProfile,
   Project,
   ProjectCounts,
@@ -165,6 +167,9 @@ export function ProjectEditDialog({
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notAccepted, setNotAccepted] = React.useState<string[]>([]);
+  /** The facts a directory asks for - stored in the business profile. */
+  const [details, setDetails] = React.useState<BacklinkDetailsUpdate | null>(null);
+  const [detailsInfo, setDetailsInfo] = React.useState<BacklinkDetails | null>(null);
   const counter = React.useRef(0);
 
   const profiles = useAsync(
@@ -184,6 +189,14 @@ export function ProjectEditDialog({
     [open, project?.id],
   );
 
+  const backlink = useAsync(
+    async () => {
+      if (!open || !project) return null;
+      return api.projects.details(apiClient, project.id);
+    },
+    [open, project?.id],
+  );
+
   // The form starts with the values of the project.  It is only reset when a
   // different project is opened - a reload of the list must not throw away
   // what the operator is typing.
@@ -199,6 +212,33 @@ export function ProjectEditDialog({
     setDrafts([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, project?.id]);
+
+  // The backlink details come from the business profile of the project.
+  React.useEffect(() => {
+    if (!open) return;
+    const source = backlink.data ?? null;
+    setDetailsInfo(source);
+    setDetails(
+      source
+        ? {
+            company_name: source.company_name,
+            description: source.description,
+            email: source.email,
+            phone: source.phone,
+            website: source.website,
+            address: source.address,
+            city: source.city,
+            state: source.state,
+            country: source.country,
+            postal_code: source.postal_code,
+            categories: source.categories,
+            founded_year: source.founded_year ?? null,
+            employee_count: source.employee_count ?? null,
+            anchors: source.anchors,
+          }
+        : null,
+    );
+  }, [open, backlink.data]);
 
   // The landing pages come from the backend.
   React.useEffect(() => {
@@ -265,6 +305,22 @@ export function ProjectEditDialog({
           kind: draft.kind,
         })),
     };
+
+    /* The details live in the business profile - they are a second call. */
+    if (details) {
+      try {
+        await api.projects.saveDetails(apiClient, project.id, details);
+      } catch (err) {
+        setError(
+          `The backlink details were not saved: ${errorText(
+            err,
+            "the backend did not answer",
+          )}`,
+        );
+        setSaving(false);
+        return;
+      }
+    }
 
     try {
       await api.projects.update(apiClient, project.id, body);
@@ -607,6 +663,210 @@ export function ProjectEditDialog({
           ) : null}
         </div>
 
+        <div className="rounded-md border border-line p-3">
+          <div className="mb-2">
+            <p className="text-xs font-semibold text-content">Backlink details</p>
+            <p className="text-[11px] text-content-subtle">
+              The facts a directory asks for. They are stored once in the
+              business profile, so every website of this project reuses them.
+            </p>
+          </div>
+
+          {backlink.loading && !backlink.data ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : null}
+
+          {backlink.error ? (
+            <Alert tone="warning" title="The backlink details could not be loaded">
+              {backlink.error}
+            </Alert>
+          ) : null}
+
+          {details ? (
+            <>
+              {(detailsInfo?.notes ?? []).map((note) => (
+                <p
+                  key={note}
+                  className="mb-2 rounded-md border border-line px-2 py-1.5 text-[11px] text-content-muted"
+                >
+                  {note}
+                </p>
+              ))}
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Field label="Company name">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.company_name ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, company_name: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Website">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.website ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, website: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="E-mail address">
+                  <Input
+                    className="h-8 text-xs"
+                    type="email"
+                    value={details.email ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, email: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Phone number">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.phone ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, phone: event.target.value })
+                    }
+                  />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Street address">
+                    <Input
+                      className="h-8 text-xs"
+                      value={details.address ?? ""}
+                      onChange={(event) =>
+                        setDetails({ ...details, address: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
+                <Field label="City">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.city ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, city: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="State / region">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.state ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, state: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Country">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.country ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, country: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Postal code">
+                  <Input
+                    className="h-8 text-xs"
+                    value={details.postal_code ?? ""}
+                    onChange={(event) =>
+                      setDetails({ ...details, postal_code: event.target.value })
+                    }
+                  />
+                </Field>
+                <Field label="Categories" hint="Comma separated.">
+                  <Input
+                    className="h-8 text-xs"
+                    value={(details.categories ?? []).join(", ")}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        categories: event.target.value
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Anchors" hint="Comma separated. The texts the backlinks should use.">
+                  <Input
+                    className="h-8 text-xs"
+                    value={(details.anchors ?? []).join(", ")}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        anchors: event.target.value
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Year founded">
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    value={details.founded_year ?? ""}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        founded_year: event.target.value
+                          ? Number.parseInt(event.target.value, 10)
+                          : null,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Number of employees">
+                  <Input
+                    className="h-8 text-xs"
+                    type="number"
+                    value={details.employee_count ?? ""}
+                    onChange={(event) =>
+                      setDetails({
+                        ...details,
+                        employee_count: event.target.value
+                          ? Number.parseInt(event.target.value, 10)
+                          : null,
+                      })
+                    }
+                  />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Description">
+                    <Textarea
+                      rows={3}
+                      value={details.description ?? ""}
+                      onChange={(event) =>
+                        setDetails({ ...details, description: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
+              </div>
+              {(detailsInfo?.required ?? []).length > 0 ? (
+                <p className="mt-2 text-[11px] text-content-muted">
+                  Completeness: {(detailsInfo?.filled ?? []).length} of{" "}
+                  {(detailsInfo?.required ?? []).length} fields the websites ask
+                  for are available
+                  {(detailsInfo?.missing ?? []).length > 0
+                    ? ` - still missing: ${(detailsInfo?.missing ?? []).join(", ")}`
+                    : ""}
+                  .
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+
         {project ? (
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-content-subtle">
             <Badge tone="neutral">v{project.version}</Badge>
@@ -652,7 +912,7 @@ export function ProjectDeleteDialog({
         if (!busy) onCancel();
       }}
       title={project ? `Delete the project "${project.name}"?` : "Delete the project"}
-      description="This cannot be undone."
+      description="The project goes to the recycle bin - you can restore it there."
       width="md"
       footer={
         <>
@@ -669,7 +929,7 @@ export function ProjectDeleteDialog({
             loading={busy}
             onClick={onConfirm}
           >
-            Delete the project
+            Move to the recycle bin
           </Button>
         </>
       }
@@ -698,8 +958,8 @@ export function ProjectDeleteDialog({
               ✕
             </span>
             <span>
-              The opportunities, the tasks, the attempts and the verification
-              records of this project are removed.
+              The project disappears from the lists; its opportunities, tasks,
+              attempts and verification records wait with it in the recycle bin.
             </span>
           </li>
           <li className="flex gap-2">
@@ -725,8 +985,8 @@ export function ProjectDeleteDialog({
               !
             </span>
             <span>
-              The deletion cannot be undone. A backup can be created in the
-              settings before you delete a project.
+              Nothing is lost right away. Restore it from the recycle bin, or use
+              "Delete forever" there to remove it (and everything above) for good.
             </span>
           </li>
         </ul>

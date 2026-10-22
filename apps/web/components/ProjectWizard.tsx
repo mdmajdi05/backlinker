@@ -21,7 +21,53 @@ interface LandingPageDraft {
   kind: "MAIN" | "LANDING" | "BLOG" | "OTHER";
 }
 
-const STEPS = ["Basics", "Landing pages", "Execution"] as const;
+/** The facts a directory asks for.  They are stored in the business profile. */
+interface DetailsDraft {
+  company_name: string;
+  description: string;
+  email: string;
+  phone: string;
+  website: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postal_code: string;
+  categories: string;
+  founded_year: string;
+  employee_count: string;
+  anchors: string;
+}
+
+const EMPTY_DETAILS: DetailsDraft = {
+  company_name: "",
+  description: "",
+  email: "",
+  phone: "",
+  website: "",
+  address: "",
+  city: "",
+  state: "",
+  country: "",
+  postal_code: "",
+  categories: "",
+  founded_year: "",
+  employee_count: "",
+  anchors: "",
+};
+
+const toList = (value: string) =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const toNumberOrNull = (value: string) => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const STEPS = ["Basics", "Backlink details", "Landing pages", "Execution"] as const;
 
 export function ProjectWizard({
   onCreated,
@@ -49,6 +95,11 @@ export function ProjectWizard({
   const [autoQueueApproved, setAutoQueueApproved] = React.useState(false);
   const [allowBrowserAutomation, setAllowBrowserAutomation] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const [details, setDetails] = React.useState<DetailsDraft>(EMPTY_DETAILS);
+
+  const selectedProfile = (profiles.data ?? []).find((profile) => profile.id === profileId) ?? null;
+  const setDetail = (field: keyof DetailsDraft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setDetails((previous) => ({ ...previous, [field]: event.target.value }));
 
   const action = useAction();
 
@@ -82,6 +133,27 @@ export function ProjectWizard({
             url: page.url.trim(),
             kind: page.kind,
           })),
+        ...(profileId
+          ? {}
+          : {
+              details: {
+                company_name: details.company_name.trim() || undefined,
+                description: details.description.trim() || undefined,
+                email: details.email.trim() || undefined,
+                phone: details.phone.trim() || undefined,
+                website: details.website.trim() || targetWebsite.trim(),
+                address: details.address.trim() || undefined,
+                city: details.city.trim() || undefined,
+                state: details.state.trim() || undefined,
+                country: details.country.trim() || undefined,
+                postal_code: details.postal_code.trim() || undefined,
+                categories: toList(details.categories),
+                founded_year: toNumberOrNull(details.founded_year),
+                employee_count: toNumberOrNull(details.employee_count),
+                anchors: toList(details.anchors),
+                target_website: targetWebsite.trim(),
+              },
+            }),
         settings: {
           max_concurrency: toInt(maxConcurrency, 3),
           request_rate_per_minute: toInt(requestRate, 60),
@@ -174,6 +246,92 @@ export function ProjectWizard({
 
       {step === 1 ? (
         <div className="space-y-3">
+          {selectedProfile ? (
+            <>
+              <p className="rounded-md border border-line bg-surface-sunken px-3 py-2 text-xs text-content-muted">
+                These details come from the business profile{" "}
+                <span className="font-medium text-content">{selectedProfile.name}</span>. They are
+                stored once and shared with every project that uses this profile - edit them in{" "}
+                <a className="underline" href="/settings">
+                  Settings
+                </a>{" "}
+                so nothing is duplicated.
+              </p>
+              <dl className="grid gap-2 text-xs sm:grid-cols-2">
+                {[
+                  ["Company", selectedProfile.name],
+                  ["Website", selectedProfile.primary_website],
+                  ["E-mail", selectedProfile.contact_email ?? ""],
+                  ["Phone", selectedProfile.contact_phone ?? ""],
+                  ["Address", [selectedProfile.address, selectedProfile.city, selectedProfile.country].filter(Boolean).join(", ")],
+                  ["Categories", (selectedProfile.preferred_categories ?? []).join(", ")],
+                  ["Anchors", (selectedProfile.preferred_anchors ?? []).join(", ")],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-md border border-line px-3 py-2">
+                    <dt className="text-[11px] uppercase tracking-wide text-content-subtle">{label}</dt>
+                    <dd className="text-content">{value || "—"}</dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-content-muted">
+                A directory asks for these facts when it publishes a backlink. They are stored once
+                in a business profile for this project, so every website can reuse them - you can
+                change them later at any time. Only the company name is required.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Company name">
+                  <Input value={details.company_name} onChange={setDetail("company_name")} placeholder="Acme Widgets Ltd" />
+                </Field>
+                <Field label="Website">
+                  <Input value={details.website} onChange={setDetail("website")} placeholder="https://www.example.com" />
+                </Field>
+                <Field label="E-mail address">
+                  <Input type="email" value={details.email} onChange={setDetail("email")} placeholder="hello@example.com" />
+                </Field>
+                <Field label="Phone number">
+                  <Input value={details.phone} onChange={setDetail("phone")} placeholder="+1 555 0100" />
+                </Field>
+                <Field label="Street address" className="sm:col-span-2">
+                  <Input value={details.address} onChange={setDetail("address")} placeholder="1 Main Street" />
+                </Field>
+                <Field label="City">
+                  <Input value={details.city} onChange={setDetail("city")} placeholder="Springfield" />
+                </Field>
+                <Field label="State / region">
+                  <Input value={details.state} onChange={setDetail("state")} placeholder="IL" />
+                </Field>
+                <Field label="Country">
+                  <Input value={details.country} onChange={setDetail("country")} placeholder="United States" />
+                </Field>
+                <Field label="Postal code">
+                  <Input value={details.postal_code} onChange={setDetail("postal_code")} placeholder="62701" />
+                </Field>
+                <Field label="Categories" hint="Comma separated, e.g. Business, Technology">
+                  <Input value={details.categories} onChange={setDetail("categories")} placeholder="Business, Technology" />
+                </Field>
+                <Field label="Anchors" hint="Comma separated. The texts the backlinks should use.">
+                  <Input value={details.anchors} onChange={setDetail("anchors")} placeholder="best widgets, acme widgets" />
+                </Field>
+                <Field label="Year founded">
+                  <Input type="number" value={details.founded_year} onChange={setDetail("founded_year")} placeholder="2015" />
+                </Field>
+                <Field label="Number of employees">
+                  <Input type="number" value={details.employee_count} onChange={setDetail("employee_count")} placeholder="24" />
+                </Field>
+                <Field label="Description" className="sm:col-span-2" hint="What the company does - the directories use it as the listing text.">
+                  <Textarea rows={3} value={details.description} onChange={setDetail("description")} placeholder="We make widgets for teams." />
+                </Field>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {step === 2 ? (
+        <div className="space-y-3">
           <p className="text-xs text-content-muted">
             Landing pages are additional destination URLs of this project. They are optional.
           </p>
@@ -251,7 +409,7 @@ export function ProjectWizard({
         </div>
       ) : null}
 
-      {step === 2 ? (
+      {step === 3 ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Max concurrency">
             <Input

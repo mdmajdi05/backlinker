@@ -16,6 +16,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/automation", label: "Live Automation", icon: "◈", group: "operations" },
   { href: "/verification", label: "Verification", icon: "✓", group: "operations" },
   { href: "/reports", label: "Reports & Exports", icon: "▧", group: "operations" },
+  { href: "/recycle-bin", label: "Recycle bin", icon: "⌫", group: "operations" },
   { href: "/imports", label: "Import Center", icon: "↥", group: "operations" },
   { href: "/integrations", label: "Integrations", icon: "⚯", group: "system" },
   { href: "/devices", label: "Devices & Agents", icon: "⌸", group: "system" },

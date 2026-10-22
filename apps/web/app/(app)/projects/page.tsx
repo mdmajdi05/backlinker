@@ -78,7 +78,7 @@ export default function ProjectsPage() {
     if (!deleteTarget) return;
     const outcome = await deleteAction.run(() => api.projects.remove(apiClient, deleteTarget.id));
     if (outcome.ok) {
-      toast.push(`Project "${deleteTarget.name}" deleted`, "success");
+      toast.push(`Project "${deleteTarget.name}" moved to the recycle bin`, "success");
       setDeleteTarget(null);
       projects.reload();
     }
@@ -265,9 +265,9 @@ export default function ProjectsPage() {
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title={`Delete "${deleteTarget?.name ?? "the project"}"?`}
-        description="This cannot be undone."
-        confirmLabel="Delete project"
+        title={`Move "${deleteTarget?.name ?? "the project"}" to the recycle bin?`}
+        description="The project leaves the lists - you can restore it from the recycle bin at any time."
+        confirmLabel="Move to the recycle bin"
         cancelLabel="Keep the project"
         destructive
         pending={deleteAction.pending}
@@ -279,16 +279,16 @@ export default function ProjectsPage() {
       >
         <ul className="list-inside list-disc space-y-1 text-xs text-content-muted">
           <li>
-            The opportunities, tasks, attempts and verification records of this project are
-            removed.
+            Its opportunities, tasks, attempts and verification records wait with it in the
+            recycle bin.
           </li>
           <li>
             The websites stay in the website list - they are shared with the other projects.
           </li>
           <li>The business profile is not touched.</li>
           <li>
-            The action cannot be undone - a backup can be created in Settings → Database &amp;
-            storage.
+            Nothing is lost right away: restore it from the recycle bin, or use "Delete forever"
+            there to remove it for good.
           </li>
         </ul>
         {deleteAction.error ? (
