@@ -58,8 +58,11 @@ migrations() {
     && AUTOBL_DATABASE_URL="sqlite:///$db" ../../.venv/bin/python -m alembic upgrade head)
 }
 package_desktop() {
+  # The .app bundle is built by Tauri; the disk image is created afterwards
+  # with `build-dmg.sh` (plain hdiutil) because the Tauri step needs the
+  # Finder via AppleScript, which is not available on a headless machine.
   (cd apps/desktop && npm run backend) \
-    && (cd apps/desktop && npm run tauri:build -- --target universal-apple-darwin) \
+    && (cd apps/desktop && npx tauri build --target universal-apple-darwin --bundles app) \
     && (cd apps/desktop && bash scripts/build-dmg.sh \
         --app src-tauri/target/universal-apple-darwin/release/bundle/macos/"Auto Backlinker.app" \
         --output src-tauri/target/universal-apple-darwin/release/bundle/dmg/"Auto Backlinker_1.0.0_universal.dmg") \
