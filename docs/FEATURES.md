@@ -56,6 +56,15 @@ blocked - 41 checks, 0 external requests.
 
 Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 
+### Managing a project
+
+| Action | What happens |
+| ------ | ------------ |
+| Edit | name, description, target website, business profile, status and the landing pages - only the fields that were sent are changed |
+| Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) and the business profile is untouched |
+| Settings | concurrency, request rate, retries, backoff, verification interval, execution environment |
+| Report | project scoped workbook with the **per website** counters (submitted / verified / failed / pending) and a *Retry failed* action |
+
 ## The screens
 
 | Screen | Web | Desktop | Backend endpoint |

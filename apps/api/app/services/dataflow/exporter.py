@@ -543,26 +543,28 @@ def _website_rows(
     state of the database.  A domain can carry several website records (one
     per opportunity URL); their values are merged, the counters are summed.
     """
-    domain_of_website: dict[str, str] = {}
-    for website_id, website in websites.items():
-        domain_of_website[website_id] = (website.domain or "").strip().lower()
-
-    # opportunity id -> website id, so a task without a website is still
-    # attributed to the site its opportunity belongs to.
+    domain_of_website = {
+        website_id: (website.domain or "").strip().lower()
+        for website_id, website in websites.items()
+    }
+    # A task without a website is still attributed to the site its
+    # opportunity belongs to.
     website_of_opportunity = {
         opportunity.id: opportunity.website_id for opportunity in opportunities
     }
 
     domains: dict[str, dict[str, Any]] = {}
 
-    def bucket(domain: str) -> dict[str, Any]:
+    def bucket(website_id: str | None) -> dict[str, Any] | None:
+        domain = domain_of_website.get(website_id or "")
+        if not domain:
+            return None
         if domain not in domains:
             domains[domain] = {
-                "Domain": domain,
-                "Website": [],
-                "Category": [],
-                "Status": [],
-                "Notes": [],
+                "names": [],
+                "categories": [],
+                "statuses": [],
+                "notes": [],
                 "Opportunities": 0,
                 "Submitted": 0,
                 "Verified": 0,
@@ -573,35 +575,30 @@ def _website_rows(
             }
         return domains[domain]
 
-    def website_values(website_id: str | None) -> tuple[str, list[str], list[str], list[str]]:
+    def merge(website_id: str | None) -> None:
         website = websites.get(website_id) if website_id else None
         if website is None:
-            return "", [], [], []
-        return (
-            (website.name or "").strip(),
-            [(website.category or "").strip()],
-            [(website.status or "").strip()],
-            [(website.notes or "").strip()],
-        )
+            return
+        row = bucket(website_id)
+        if row is None:
+            return
+        _merge_value(row["names"], (website.name or "").strip())
+        _merge_value(row["categories"], (website.category or "").strip())
+        _merge_value(row["statuses"], (website.status or "").strip())
+        _merge_value(row["notes"], (website.notes or "").strip())
 
     for opportunity in opportunities:
-        website_id = opportunity.website_id
-        domain = domain_of_website.get(website_id, "")
-        row = bucket(domain)
+        row = bucket(opportunity.website_id)
+        if row is None:
+            continue
         row["Opportunities"] += 1
-        name, categories, statuses, notes = website_values(website_id)
-        _merge_values(row["Website"], name)
-        _merge_values(row["Category"], categories)
-        _merge_values(row["Status"], statuses)
-        _merge_values(row["Notes"], notes)
+        merge(opportunity.website_id)
 
     for task in tasks:
         website_id = task.website_id or website_of_opportunity.get(task.opportunity_id or "")
-        domain = domain_of_website.get(website_id, "")
-        if not domain:
-            # A task without a website cannot be attributed to a site.
+        row = bucket(website_id)
+        if row is None:
             continue
-        row = bucket(domain)
         status = (task.status or "").upper()
         if status in WEBSITE_SUBMITTED_STATUSES:
             row["Submitted"] += 1
@@ -616,11 +613,7 @@ def _website_rows(
         started = task.started_at
         if started is not None and (row["Last attempt"] is None or started > row["Last attempt"]):
             row["Last attempt"] = started
-        name, categories, statuses, notes = website_values(website_id)
-        _merge_values(row["Website"], name)
-        _merge_values(row["Category"], categories)
-        _merge_values(row["Status"], statuses)
-        _merge_values(row["Notes"], notes)
+        merge(website_id)
 
     rows: list[dict[str, Any]] = []
     for domain in sorted(domains):
@@ -628,9 +621,9 @@ def _website_rows(
         rows.append(
             {
                 "Domain": domain,
-                "Website": ", ".join(value for value in row["Website"] if value),
-                "Category": ", ".join(value for value in row["Category"] if value),
-                "Status": ", ".join(value for value in row["Status"] if value),
+                "Website": ", ".join(row["names"]),
+                "Category": ", ".join(row["categories"]),
+                "Status": ", ".join(row["statuses"]),
                 "Opportunities": row["Opportunities"],
                 "Submitted": row["Submitted"],
                 "Verified": row["Verified"],
@@ -638,32 +631,16 @@ def _website_rows(
                 "Pending": row["Pending"],
                 "Waiting for details": row["Waiting for details"],
                 "Last attempt": row["Last attempt"] or "",
-                "Notes": " | ".join(value for value in row["Notes"] if value),
+                "Notes": " | ".join(row["notes"]),
             }
         )
     return rows
 
 
-def _merge_values(target: list[str], values: list[str]) -> None:
-    """Add the values to the list, keeping the order and without duplicates."""
-    for value in values:
-        if value and value not in target:
-            target.append(value)
-
-
-def report_failed_task_ids(db: Session, job: ExportJob) -> list[str]:
-    """The ids of the failed tasks that belong to a report.
-
-    Used by the retry endpoint: the report decides *what* is retried, the
-    queue service decides *how* (the attempt history is kept and the
-    idempotency key prevents a second task for the same work).
-    """
-    from app.db.models import Task as TaskModel
-
-    stmt = select(TaskModel.id).where(TaskModel.status == "FAILED")
-    if job.project_id:
-        stmt = stmt.where(TaskModel.project_id == job.project_id)
-    return list(db.execute(stmt).scalars().all())
+def _merge_value(target: list[str], value: str) -> None:
+    """Add a value to the list - without duplicates and without empty values."""
+    if value and value not in target:
+        target.append(value)
 
 
 def _summary_rows(
@@ -713,23 +690,27 @@ def _json(value: Any) -> str:
 # --------------------------------------------------------------------------
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+#: The columns of the flat CSV: the opportunities first, then the columns
+#: that only the per website rows have.
+CSV_COLUMNS: tuple[str, ...] = COLUMNS + tuple(
+    column for column in WEBSITE_COLUMNS if column not in COLUMNS
+)
+
+
+def _write_csv(path: Path, data: dict[str, Any]) -> None:
     """Write the flat CSV version of the report.
 
-    The file carries the opportunities and, after them, one row per website
-    with the counters of the work.  The header is the union of the columns of
-    every row so that no value is lost.
+    The file carries the opportunities of the report and, after them, one row
+    per website with the counters of the work.  The header is the union of the
+    columns of both, so the file stays one flat table.
     """
-    columns: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in columns:
-                columns.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(columns)
-        for row in rows:
-            writer.writerow([_csv_value(row.get(column)) for column in columns])
+        writer.writerow(CSV_COLUMNS)
+        for row in data["opportunities"]:
+            writer.writerow([_csv_value(row.get(column)) for column in CSV_COLUMNS])
+        for row in data["websites"]:
+            writer.writerow([_csv_value(row.get(column)) for column in CSV_COLUMNS])
 
 
 def _csv_value(value: Any) -> Any:

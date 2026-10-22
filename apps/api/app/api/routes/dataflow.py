@@ -8,11 +8,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, Pagination
 from app.core.config import settings
-from app.db.models import ExportJob, ImportJob, ImportRow, Task, Website
+from app.db.models import ExportJob, ImportJob, ImportRow, Opportunity, Task, Website
 from app.db.repositories import paginate
 from app.schemas import (
     ExportCreateRequest,
@@ -26,6 +26,7 @@ from app.schemas import (
     ReportRetryRequest,
 )
 from app.services import access
+from app.services.dataflow.exporter import scope_project_id
 from app.services.events import record_event
 
 imports_router = APIRouter(prefix="/imports", tags=["imports"])
@@ -323,20 +324,25 @@ def retry_failed_submissions(
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Report not found"})
 
     domain = (payload.domain or "").strip().lower()
-    project_id = payload.project_id or job.project_id
-    if project_id and not access.owns_project(db, user, project_id):
-        raise HTTPException(
-            status_code=403, detail={"code": "forbidden", "message": "Access denied"}
-        )
+    for project_id in (scope_project_id(job), payload.project_id):
+        if project_id and not access.owns_project(db, user, project_id):
+            raise HTTPException(
+                status_code=403, detail={"code": "forbidden", "message": "Access denied"}
+            )
 
     retried = 0
     skipped = 0
     task_ids: list[str] = []
 
-    for task in _failed_tasks_of_report(db, job, project_id=project_id, domain=domain):
+    for task in _failed_tasks_of_report(
+        db,
+        job,
+        project_id=payload.project_id,
+        domain=domain,
+    ):
         if task.status != "FAILED":
-            # The task was retried in the meantime - it is already queued or
-            # running, so it must not be queued a second time.
+            # The task was retried in the meantime: it is queued or running
+            # already, so it must not be queued a second time.
             skipped += 1
             continue
         queue_service.retry_task(db, task)
@@ -354,9 +360,19 @@ def retry_failed_submissions(
     return ReportRetryOut(retried=retried, skipped=skipped, task_ids=task_ids)
 
 
+#: The states of the failed work of a report: a task that failed, and a task
+#: that was retried after it failed and is in flight now.
+FAILED_WORK_STATUSES = ("FAILED", "QUEUED", "RUNNING", "RETRY_SCHEDULED")
+
+#: The states of a task that is already on its way - it must not be queued
+#: a second time.
+IN_FLIGHT_STATUSES = ("QUEUED", "RUNNING", "RETRY_SCHEDULED")
+
+
 def _failed_tasks_of_report(
     db: DbSession,
     job: ExportJob,
+    user,
     *,
     project_id: str | None,
     domain: str,
@@ -364,16 +380,23 @@ def _failed_tasks_of_report(
     """The failed tasks a report contains.
 
     A report knows the project it was generated for; the optional filters
-    narrow the selection down to one website or one project.
+    narrow the selection down to one website or one project.  Only the tasks
+    of the projects the user may work on are returned.
     """
-    stmt = select(Task).where(Task.status == "FAILED")
+    stmt = select(Task).where(Task.status.in_(FAILED_WORK_STATUSES))
+    scope = access.scope_tasks(db, user)
+    if scope is not None:
+        stmt = stmt.where(scope)
+    report_project = scope_project_id(job)
+    if report_project:
+        stmt = stmt.where(Task.project_id == report_project)
     if project_id:
         stmt = stmt.where(Task.project_id == project_id)
     if domain:
+        websites = select(Website.id).where(func.lower(Website.domain) == domain)
+        opportunities = select(Opportunity.id).where(Opportunity.website_id.in_(websites))
         stmt = stmt.where(
-            Task.website_id.in_(
-                select(Website.id).where(func.lower(Website.domain) == domain)
-            )
+            or_(Task.website_id.in_(websites), Task.opportunity_id.in_(opportunities))
         )
     stmt = stmt.order_by(Task.created_at.asc(), Task.id.asc())
     return list(db.execute(stmt).scalars().all())
