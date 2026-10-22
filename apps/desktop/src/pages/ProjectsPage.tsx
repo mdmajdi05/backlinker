@@ -71,6 +71,7 @@ export function ProjectsPage() {
   const [details, setDetails] = React.useState<
     Record<string, { counts?: ProjectCounts; environment?: string }>
   >({});
+  const [detailsNonce, setDetailsNonce] = React.useState(0);
 
   React.useEffect(() => {
     if (!itemIds) {
@@ -101,7 +102,7 @@ export function ProjectsPage() {
     return () => {
       cancelled = true;
     };
-  }, [itemIds]);
+  }, [itemIds, detailsNonce]);
 
   async function createProject() {
     setSaving(true);
@@ -118,6 +119,7 @@ export function ProjectsPage() {
       setTargetWebsite("");
       setDescription("");
       projects.reload();
+      setDetailsNonce((value) => value + 1);
     } catch (err) {
       setFormError(
         err && typeof err === "object" && "message" in err
@@ -135,6 +137,7 @@ export function ProjectsPage() {
       await api.projects.update(apiClient, project.id, { status: next });
       toast.push(`Project ${next === "ACTIVE" ? "resumed" : "paused"}`, "success");
       projects.reload();
+      setDetailsNonce((value) => value + 1);
     } catch (err) {
       toast.push(
         err && typeof err === "object" && "message" in err
@@ -163,6 +166,7 @@ export function ProjectsPage() {
       } else {
         projects.reload();
       }
+      setDetailsNonce((value) => value + 1);
     } catch (err) {
       setDeleteError(errorText(err, "Could not delete the project"));
     } finally {
@@ -359,7 +363,10 @@ export function ProjectsPage() {
         open={Boolean(editing)}
         project={editing}
         onClose={() => setEditing(null)}
-        onSaved={() => projects.reload()}
+        onSaved={() => {
+          projects.reload();
+          setDetailsNonce((value) => value + 1);
+        }}
       />
 
       <ProjectDeleteDialog

@@ -472,8 +472,9 @@ export function WebsiteListPanel({
       const failed = results.filter((result) => result.status === "rejected");
       if (failed.length > 0) {
         throw new Error(
-          `${failed.length} of ${results.length} websites could not be deleted forever - ${errorMessage(
+          `${failed.length} of ${results.length} websites could not be deleted forever - ${recycleBinError(
             (failed[0] as PromiseRejectedResult).reason,
+            "the backend refused the request",
           )}`,
         );
       }
@@ -518,8 +519,9 @@ export function WebsiteListPanel({
       const failed = results.filter((result) => result.status === "rejected");
       if (failed.length > 0) {
         throw new Error(
-          `${failed.length} of ${results.length} websites could not be restored - ${errorMessage(
+          `${failed.length} of ${results.length} websites could not be restored - ${recycleBinError(
             (failed[0] as PromiseRejectedResult).reason,
+            "the backend refused the request",
           )}`,
         );
       }

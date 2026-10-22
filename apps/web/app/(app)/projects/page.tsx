@@ -48,20 +48,19 @@ export default function ProjectsPage() {
   /* The list of the backend does not carry the counters - they come from the
    * detail of every project of the page.  A counter that could not be loaded
    * stays empty, it is never made up. */
-  const rowIds = React.useMemo(() => rows.map((row) => row.id).join(","), [rows]);
   const details = useResource(
     async () =>
       Promise.all(
-        (rowIds ? rowIds.split(",") : []).map(async (id) => {
+        (projects.data?.items ?? []).map(async (row) => {
           try {
-            const project = await api.projects.get(apiClient, id);
-            return { id, counts: project.counts ?? null, failed: false };
+            const project = await api.projects.get(apiClient, row.id);
+            return { id: row.id, counts: project.counts ?? null, failed: false };
           } catch {
-            return { id, counts: null, failed: true };
+            return { id: row.id, counts: null, failed: true };
           }
         }),
       ),
-    [rowIds],
+    [projects.data],
   );
 
   const countsById = React.useMemo(() => {

@@ -153,7 +153,7 @@ export function ProjectEditDialog({
   project: Project | null;
   onClose: () => void;
   /** Called after the backend accepted the change. */
-  onSaved?: (project: Project) => void;
+  onSaved?: (project?: Project) => void;
 }) {
   const toast = useToast();
   const [name, setName] = React.useState("");
@@ -268,37 +268,58 @@ export function ProjectEditDialog({
 
     try {
       await api.projects.update(apiClient, project.id, body);
+    } catch (err) {
+      setError(errorText(err, "Could not save the project"));
+      setSaving(false);
+      return;
+    }
 
-      // The backend may accept only a part of the payload - read the project
-      // back and say what did not arrive.  A silent success would be a lie.
-      const [fresh, freshLanding] = await Promise.all([
+    // The backend may accept only a part of the payload - read the project
+    // back and say what did not arrive.  A silent success would be a lie.
+    let fresh: Project;
+    let freshLanding: TargetWebsite[] = [];
+    try {
+      const [project_, landing_] = await Promise.all([
         api.projects.get(apiClient, project.id),
         api.projects.websites(apiClient, project.id, {
           page: 1,
           page_size: 100,
         }),
       ]);
-      const missing = rejectedFields(
-        body,
-        fresh,
-        freshLanding?.items ?? [],
+      fresh = project_;
+      freshLanding = landing_?.items ?? [];
+    } catch (err) {
+      // The save worked - only the check of the answer failed.
+      onSaved?.();
+      toast.push("Project saved", "success");
+      void sendNativeNotification(
+        "Auto Backlinker",
+        `The project ${body.name} was saved.`,
       );
+      setError(
+        `The project was saved, but it could not be read back: ${errorText(
+          err,
+          "the backend did not answer",
+        )}`,
+      );
+      setSaving(false);
+      return;
+    }
 
-      onSaved?.(fresh);
+    const missing = rejectedFields(body, fresh, freshLanding);
+    onSaved?.(fresh);
 
-      if (missing.length === 0) {
-        toast.push(`Project "${body.name}" saved`, "success");
-        void sendNativeNotification(
-          "Auto Backlinker",
-          `The project ${body.name} was saved.`,
-        );
-        onClose();
-        return;
-      }
-
+    if (missing.length === 0) {
+      toast.push(`Project "${body.name}" saved`, "success");
+      void sendNativeNotification(
+        "Auto Backlinker",
+        `The project ${body.name} was saved.`,
+      );
+      onClose();
+    } else {
       setNotAccepted(missing);
       setDrafts(
-        (freshLanding?.items ?? []).map((page) => ({
+        freshLanding.map((page) => ({
           key: page.id,
           name: page.name,
           url: page.url,
@@ -306,14 +327,11 @@ export function ProjectEditDialog({
         })),
       );
       toast.push(
-        `Project saved - ${missing.join(", ")} was not accepted by the backend`,
+        `Project saved - not accepted by the backend: ${missing.join(", ")}`,
         "error",
       );
-    } catch (err) {
-      setError(errorText(err, "Could not save the project"));
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   }
 
   const canSave = Boolean(name.trim() && targetWebsite.trim()) && !saving;
