@@ -7,20 +7,22 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  // Workspace: your projects, the sites they work on and where they come from.
   { href: "/", label: "Overview", icon: "◧", group: "workspace" },
   { href: "/projects", label: "Projects", icon: "▤", group: "workspace" },
-  { href: "/discovery", label: "Opportunity Discovery", icon: "◎", group: "workspace" },
-  { href: "/registry", label: "Website Registry", icon: "▦", group: "workspace" },
-  { href: "/websites", label: "Website list", icon: "▥", group: "workspace" },
-  { href: "/queue", label: "Backlink Queue", icon: "≣", group: "operations" },
-  { href: "/automation", label: "Live Automation", icon: "◈", group: "operations" },
+  { href: "/discovery", label: "Discovery", icon: "◎", group: "workspace" },
+  { href: "/registry", label: "Opportunities", icon: "▦", group: "workspace" },
+  { href: "/websites", label: "Websites", icon: "▥", group: "workspace" },
+  // Operations: what the system does with them.
+  { href: "/queue", label: "Queue", icon: "≣", group: "operations" },
+  { href: "/automation", label: "Automation", icon: "◈", group: "operations" },
   { href: "/verification", label: "Verification", icon: "✓", group: "operations" },
-  { href: "/reports", label: "Reports & Exports", icon: "▧", group: "operations" },
-  { href: "/recycle-bin", label: "Recycle bin", icon: "⌫", group: "operations" },
-  { href: "/imports", label: "Import Center", icon: "↥", group: "operations" },
-  { href: "/integrations", label: "Integrations", icon: "⚯", group: "system" },
-  { href: "/devices", label: "Devices & Agents", icon: "⌸", group: "system" },
-  { href: "/activity", label: "Activity Logs", icon: "≡", group: "system" },
+  { href: "/reports", label: "Reports", icon: "▧", group: "operations" },
+  { href: "/imports", label: "Opportunity import", icon: "↥", group: "operations" },
+  // System: the workspace itself.
+  { href: "/devices", label: "Devices", icon: "⌸", group: "system" },
+  { href: "/activity", label: "Activity", icon: "≡", group: "system" },
+  { href: "/recycle-bin", label: "Recycle bin", icon: "⌫", group: "system" },
   { href: "/settings", label: "Settings", icon: "⚙", group: "system" },
 ];
 

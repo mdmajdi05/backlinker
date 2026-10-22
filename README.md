@@ -44,7 +44,7 @@ The product is built around three rules:
 
 | Area | What works |
 | ---- | ---------- |
-| **Registry** | Global website registry, per-project opportunities, dedup by domain + normalised URL, exclusions, duplicate merging, bulk approve / reject / exclude / queue actions. |
+| **Opportunities** | Every website you can get a backlink from, per-project opportunities, dedup by domain + normalised URL, exclusions, duplicate merging, bulk approve / reject / exclude / queue actions. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. |
 | **Queue** | Durable, database backed queue with idempotency keys, atomic claiming (conditional `UPDATE`), leases, exponential backoff with jitter, priority reordering, bulk control, cancel / retry / requeue, append-only attempt history. |
 | **Adapters** | Five shipped adapters: `generic_manual`, `http_form`, `playwright_form`, `email_outreach`, `json_api`. Each declares the categories, methods, required config, success signals and retryable errors it supports. |
@@ -243,9 +243,10 @@ auto-backlinker/
 │   │   ├── pyproject.toml    ruff + pytest configuration
 │   │   └── requirements.txt
 │   ├── web/                  PRODUCT 1 - the browser client (Next.js 15)
-│   │   └── app/(app)/        Overview, Projects, Discovery, Registry, Queue,
-│   │                         Automation, Verification, Reports, Imports,
-│   │                         Integrations, Devices, Activity, Settings
+│   │   └── app/(app)/        Overview, Projects, Discovery, Opportunities,
+│   │                         Websites, Queue, Automation, Verification,
+│   │                         Reports, Imports, Devices, Activity,
+│   │                         Recycle bin, Settings
 │   ├── desktop/              PRODUCT 2 - the desktop software (Tauri 2)
 │   │   ├── src/              the same screens, desktop conventions
 │   │   ├── src-tauri/        Rust shell, sidecar supervisor, bundler config

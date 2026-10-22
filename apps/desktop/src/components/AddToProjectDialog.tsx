@@ -231,7 +231,7 @@ export function AddToProjectDialog({
           ) : items.length === 0 ? (
             <p className="p-4 text-xs text-content-subtle">
               No website matches the filter. The list is filled on the
-              &quot;Website list&quot; page.
+              &quot;Websites&quot; page.
             </p>
           ) : (
             <Table>

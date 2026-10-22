@@ -197,7 +197,7 @@ export default function OverviewPage() {
             description="Real counts reported by the backend"
             action={
               <Link href="/registry" className="text-xs font-medium text-accent hover:underline">
-                Open registry
+                Open Opportunities
               </Link>
             }
           />
@@ -308,6 +308,61 @@ export default function OverviewPage() {
               </tbody>
             </Table>
           </AsyncSection>
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Where do I do what?"
+          description="One page per job - so nothing is done twice"
+        />
+        <CardBody>
+          <dl className="grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
+            <div>
+              <dt className="font-medium text-content">Find new websites</dt>
+              <dd className="text-content-muted">
+                <Link className="underline" href="/discovery">Discovery</Link> runs a provider search
+                - the result is reviewed in{" "}
+                <Link className="underline" href="/registry">Opportunities</Link>.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-content">Review and approve</dt>
+              <dd className="text-content-muted">
+                <Link className="underline" href="/registry">Opportunities</Link> is the only place
+                where a website is approved, excluded or queued for a project.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-content">Keep the site list</dt>
+              <dd className="text-content-muted">
+                <Link className="underline" href="/websites">Websites</Link> is the central list -
+                add a site by hand or import a spreadsheet there.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-content">Run a project</dt>
+              <dd className="text-content-muted">
+                Open a project: its websites, its execution rules, the auto pilot and its report
+                live on the project page.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-content">Change your company details</dt>
+              <dd className="text-content-muted">
+                <Link className="underline" href="/settings">Settings → Business profiles</Link> -
+                every project submits with the same profile.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium text-content">Undo a deletion</dt>
+              <dd className="text-content-muted">
+                Everything you delete waits in the{" "}
+                <Link className="underline" href="/recycle-bin">Recycle bin</Link> - restore it
+                there or delete it forever.
+              </dd>
+            </div>
+          </dl>
         </CardBody>
       </Card>
 

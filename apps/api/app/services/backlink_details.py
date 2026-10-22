@@ -184,6 +184,13 @@ def write(db: Session, project: Project, user: User, payload: dict[str, Any]) ->
         db.flush()
         project.business_profile_id = profile.id
 
+    # The stored details of the opportunities copy these values.  Remember the
+    # old ones so they can be refreshed - a value typed for one website stays.
+    detail_before = {
+        attribute: getattr(profile, attribute, None)
+        for attribute in details_service.PROFILE_TO_DETAIL
+    }
+
     mapping = {
         "company_name": "name",
         "description": "description",
@@ -213,6 +220,8 @@ def write(db: Session, project: Project, user: User, payload: dict[str, Any]) ->
     if payload.get("target_website"):
         project.target_website = _normalise_website(str(payload["target_website"]))
     project.version += 1
+    db.flush()
+    details_service.refresh_derived_details(db, profile, detail_before)
 
     db.commit()
     db.refresh(project)

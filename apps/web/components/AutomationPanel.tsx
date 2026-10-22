@@ -29,7 +29,15 @@ import { useResource } from "@/lib/hooks";
  * machine and the switches that decide how much of the machine the jobs may
  * use.
  */
-export function AutomationPanel() {
+export function AutomationPanel({
+  showExecution = true,
+  showResources = true,
+}: {
+  /** The pause/resume/stop card (hidden when the page already controls it). */
+  showExecution?: boolean;
+  /** The live resource card (hidden when the page already shows the numbers). */
+  showResources?: boolean;
+} = {}) {
   const toast = useToast();
   const [busy, setBusy] = React.useState<string | null>(null);
   const [installLog, setInstallLog] = React.useState<string | null>(null);
@@ -87,6 +95,7 @@ export function AutomationPanel() {
 
   return (
     <div className="space-y-4">
+      {showExecution ? (
       <Card>
         <CardHeader
           title="Background execution"
@@ -152,6 +161,7 @@ export function AutomationPanel() {
           </div>
         </CardBody>
       </Card>
+      ) : null}
 
       <Card>
         <CardHeader
@@ -196,6 +206,7 @@ export function AutomationPanel() {
         </CardBody>
       </Card>
 
+      {showResources ? (
       <Card>
         <CardHeader
           title="Resource usage"
@@ -234,6 +245,7 @@ export function AutomationPanel() {
           )}
         </CardBody>
       </Card>
+      ) : null}
 
       <Card>
         <CardHeader title="Limits" description="How much of the machine the jobs may use." />

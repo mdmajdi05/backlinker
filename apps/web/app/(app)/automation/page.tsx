@@ -25,6 +25,7 @@ import { TASK_STATUS_LABELS, TASK_TYPE_LABELS } from "@/lib/constants";
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, TableSkeleton } from "@/components/States";
 import { TaskDrawer } from "@/components/TaskDrawer";
+import { AutomationPanel } from "@/components/AutomationPanel";
 
 const PAGE_SIZE = 25;
 
@@ -233,6 +234,10 @@ export default function AutomationPage() {
           </div>
         </CardBody>
       </Card>
+
+      {/* The browser runtime and the limits belong here - the live control is
+          above, the settings live on this page and nowhere else. */}
+      <AutomationPanel showExecution={false} showResources={false} />
 
       <Card>
         <CardHeader

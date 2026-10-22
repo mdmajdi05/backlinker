@@ -42,7 +42,7 @@ export default function DevicesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Devices & Agents"
+        title="Devices"
         description="Local agents and browsers that are allowed to execute tasks."
         actions={
           <Button variant="outline" size="sm" onClick={devices.reload} loading={devices.refreshing}>

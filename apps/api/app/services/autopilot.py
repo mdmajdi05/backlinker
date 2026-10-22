@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.base import utcnow
-from app.db.models import Opportunity, ProjectSettings, Task, Website
+from app.db.models import Opportunity, Project, ProjectSettings, Task, Website
 from app.services import queue as queue_service
 from app.services.events import record_event
 
@@ -116,6 +116,12 @@ def queue_approved(db: Session, project_id: str) -> list[Task]:
     if row is None or not row.auto_submit:
         return []
 
+    # One state decides whether a project is worked on: its status.  A paused
+    # or archived project never gets new tasks, even with the auto pilot on.
+    project = db.get(Project, project_id)
+    if project is None or project.deleted_at is not None or project.status != "ACTIVE":
+        return []
+
     allowed = categories_of(row)
     opportunities = db.execute(
         select(Opportunity, Website)
@@ -181,7 +187,13 @@ def sweep(db: Session) -> dict[str, int]:
     the setting are never touched.
     """
     rows = db.execute(
-        select(ProjectSettings).where(ProjectSettings.auto_submit.is_(True))
+        select(ProjectSettings)
+        .join(Project, Project.id == ProjectSettings.project_id)
+        .where(
+            ProjectSettings.auto_submit.is_(True),
+            Project.status == "ACTIVE",
+            Project.deleted_at.is_(None),
+        )
     ).scalars().all()
     queued = 0
     for row in rows:

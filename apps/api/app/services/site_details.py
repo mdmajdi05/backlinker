@@ -612,6 +612,79 @@ PROFILE_SOURCE: dict[str, str] = {
     "employee_count": "employee_count",
 }
 
+#: Business-profile attribute -> the field of a stored detail record.
+#: When the profile changes, these values are copied into the detail records
+#: that still carry the old value (a value typed for one website is kept).
+PROFILE_TO_DETAIL: dict[str, str] = {
+    "name": "company_name",
+    "description": "description",
+    "contact_email": "email",
+    "contact_phone": "phone",
+    "primary_website": "website",
+    "address": "address",
+    "city": "city",
+    "state": "state",
+    "country": "country",
+    "postal_code": "postal_code",
+    "founded_year": "founded_year",
+    "employee_count": "employee_count",
+    "preferred_categories": "categories",
+    "logo_path": "logo_path",
+}
+
+
+def _comparable(value: Any) -> Any:
+    """A value that can be compared across the database and the profile."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def refresh_derived_details(
+    db: Session, profile: BusinessProfile, before: dict[str, Any]
+) -> int:
+    """Re-align the detail records with a changed business profile.
+
+    A detail record belongs to one opportunity, so the operator may adapt it to
+    one website.  Therefore only the values that still carry the old profile
+    value (or are empty) are updated - a value typed for a website is never
+    overwritten.  Returns the number of changed detail rows.
+    """
+    project_ids = list(
+        db.execute(
+            select(Project.id).where(Project.business_profile_id == profile.id)
+        ).scalars().all()
+    )
+    if not project_ids:
+        return 0
+
+    rows = (
+        db.execute(select(SiteDetails).where(SiteDetails.project_id.in_(project_ids)))
+        .scalars()
+        .all()
+    )
+    changed_rows = 0
+    for row in rows:
+        changed = False
+        for attribute, field in PROFILE_TO_DETAIL.items():
+            old = _comparable(before.get(attribute))
+            new = _comparable(getattr(profile, attribute, None))
+            if old == new:
+                continue
+            current = _comparable(getattr(row, field, None))
+            if current in ("", ()) or current == old:
+                setattr(row, field, getattr(profile, attribute, None))
+                changed = True
+        if changed:
+            changed_rows += 1
+    db.flush()
+    return changed_rows
+
+
 #: The plain reason why a field cannot be derived from the business profile.
 NOT_DERIVABLE_REASON: dict[str, str] = {
     "company_name": "the business profile has no company name",

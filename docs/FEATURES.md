@@ -28,9 +28,10 @@ blocked - 41 checks, 0 external requests.
 ```
 1. Business profile      what the business is, once, reused by every project
 2. Project               the target website + the landing page that gets the link
-3. Website list          ONE place with every site where a backlink can go
+3. Websites              ONE place with every site where a backlink can go
                          (manual entry or Excel import, editable, deletable,
-                          status: ACTIVE / NOT_WORKING / DELETED / …)
+                          status: ACTIVE / NOT_WORKING / … - deleting moves a
+                          site to the recycle bin, where it can be restored)
 4. Choose                the project picks the sites it wants from that list
                          (filterable by category and niche)
 5. Auto pilot            approving a site queues it automatically - the worker
@@ -49,7 +50,7 @@ blocked - 41 checks, 0 external requests.
 
 | Step | Web | Desktop | Local agent / cloud |
 | ----- | --- | ------- | ------------------- |
-| Website list, projects, queue, reports | yes | yes | - |
+| Websites, projects, queue, reports | yes | yes | - |
 | Browser submission | yes | yes | yes (the agent on another machine) |
 | Verification | yes | yes | yes |
 | Cloud workers | optional | optional | yes (Celery) |

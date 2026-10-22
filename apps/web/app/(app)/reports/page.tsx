@@ -163,7 +163,7 @@ function ReportsView() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Reports & Exports"
+        title="Reports"
         description="Generate spreadsheet exports of the workspace data."
         actions={
           <Button variant="outline" size="sm" onClick={jobs.reload} loading={jobs.refreshing}>

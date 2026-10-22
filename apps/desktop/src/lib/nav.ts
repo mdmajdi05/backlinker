@@ -55,14 +55,14 @@ export const NAV_ENTRIES: NavEntry[] = [
   },
   {
     id: "registry",
-    label: "Registry",
+    label: "Opportunities",
     description: "Every discovered opportunity and its review state.",
     group: "workspace",
     implemented: true,
   },
   {
     id: "websites",
-    label: "Website list",
+    label: "Websites",
     description: "The central list of the sites where the backlinks are made.",
     group: "workspace",
     implemented: true,
@@ -96,17 +96,8 @@ export const NAV_ENTRIES: NavEntry[] = [
     implemented: true,
   },
   {
-    id: "recycle-bin",
-    label: "Recycle bin",
-    description:
-      "Deleted projects, websites, business profiles and opportunities wait here until they are restored or deleted forever.",
-    group: "operations",
-    implemented: true,
-    icon: "⌫",
-  },
-  {
     id: "imports",
-    label: "Imports",
+    label: "Opportunity import",
     description: "Import Excel/CSV files from this machine.",
     group: "operations",
     implemented: true,
@@ -131,6 +122,15 @@ export const NAV_ENTRIES: NavEntry[] = [
     description: "Persisted event log of the backend.",
     group: "system",
     implemented: true,
+  },
+  {
+    id: "recycle-bin",
+    label: "Recycle bin",
+    description:
+      "Deleted projects, websites, business profiles and opportunities wait here until they are restored or deleted forever.",
+    group: "system",
+    implemented: true,
+    icon: "⌫",
   },
   {
     id: "settings",

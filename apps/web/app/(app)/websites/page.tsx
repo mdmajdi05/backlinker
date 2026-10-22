@@ -9,7 +9,7 @@ export default function WebsitesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Website list"
+        title="Websites"
         description="The central list of the websites where your projects get backlinks. It is filled by hand or by an Excel import and every project picks the sites it needs from it."
       />
 
@@ -17,10 +17,9 @@ export default function WebsitesPage() {
         Add a website once - it stays in this list even when no project uses it. Mark a site
         that stopped working as &quot;not working&quot; instead of deleting it, pick the sites
         you need in the project and read the result (submitted, verified, failed) in the
-        report. A website you delete leaves the list, but its opportunities, its tasks and
-        its verification records stay - the old reports remain correct. The removed
-        websites wait in the recycle bin (the &quot;Deleted&quot; filter) until you restore
-        them or delete them forever.
+        report. A website you delete moves to the recycle bin and leaves the list, but its
+        opportunities, its tasks and its verification records stay - the old reports remain
+        correct. Restore it from the recycle bin at any time.
       </Alert>
 
       <WebsiteListPanel />

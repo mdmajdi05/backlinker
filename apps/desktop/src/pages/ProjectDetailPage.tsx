@@ -655,7 +655,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
       <Card>
         <CardHeader
           title="Report & results"
-          description="What happened on every website of this project"
+          description="What happened in this project - the totals of every website"
           action={
             <Button
               size="sm"
@@ -711,67 +711,11 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
                 />
               </div>
 
-              {reportRows.length > 0 ? (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Domain</Th>
-                      <Th>Category</Th>
-                      <Th className="text-right">Opportunities</Th>
-                      <Th className="text-right">Submitted</Th>
-                      <Th className="text-right">Verified</Th>
-                      <Th className="text-right">Failed</Th>
-                      <Th className="text-right">Pending</Th>
-                      <Th>Last attempt</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportRows.map((row) => (
-                      <tr
-                        key={`${row.domain}-${row.name}-${row.last_attempt_at}`}
-                      >
-                        <Td>
-                          <div className="min-w-0">
-                            <p className="truncate text-sm text-content">
-                              {row.domain || row.name || "-"}
-                            </p>
-                            {row.name && row.name !== row.domain ? (
-                              <p className="truncate text-xs text-content-subtle">
-                                {row.name}
-                              </p>
-                            ) : null}
-                          </div>
-                        </Td>
-                        <Td className="whitespace-nowrap text-xs">
-                          {row.category ? row.category.replace(/_/g, " ") : "-"}
-                        </Td>
-                        <Td className="text-right text-xs tabular-nums">
-                          {formatNumber(row.opportunities)}
-                        </Td>
-                        <Td className="text-right text-xs tabular-nums text-accent">
-                          {formatNumber(row.submitted)}
-                        </Td>
-                        <Td className="text-right text-xs tabular-nums text-success">
-                          {formatNumber(row.verified)}
-                        </Td>
-                        <Td className="text-right text-xs tabular-nums text-danger">
-                          {formatNumber(row.failed)}
-                        </Td>
-                        <Td className="text-right text-xs tabular-nums text-content-muted">
-                          {formatNumber(row.pending)}
-                        </Td>
-                        <Td className="whitespace-nowrap text-xs text-content-muted">
-                          {formatDate(row.last_attempt_at)}
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              ) : (
+              {reportRows.length === 0 ? (
                 <div className="p-4">
                   <NothingYet
                     title="Nothing happened yet"
-                    description="The report fills as soon as a website of this project is worked on. Add websites from the website list to get started."
+                    description="The report fills as soon as a website of this project is worked on. Every website is listed below with its own counters."
                     action={
                       <Button
                         size="sm"
@@ -782,13 +726,13 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
                     }
                   />
                 </div>
-              )}
+              ) : null}
             </>
           ) : null}
 
           <p className="border-t border-line px-4 py-3 text-xs text-content-muted">
-            Verified links are never submitted again. Use Imports to bring a
-            report back in - verified rows are skipped, failed rows are
+            Verified links are never submitted again. Use Opportunity import to
+            bring a report back in - verified rows are skipped, failed rows are
             retried.
           </p>
         </CardBody>

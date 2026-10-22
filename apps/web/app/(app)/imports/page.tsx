@@ -113,8 +113,8 @@ export default function ImportsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Import Center"
-        description="Upload CSV or XLSX files, review the plan and commit it."
+        title="Opportunity import"
+        description="Bring a report back in: upload a CSV or XLSX file, review the plan and commit it - verified rows are skipped, failed rows are retried."
         actions={
           <Button variant="outline" size="sm" onClick={history.reload} loading={history.refreshing}>
             Refresh

@@ -9,7 +9,6 @@ import {
   Button,
   Card,
   CardBody,
-  Checkbox,
   Dialog,
   Field,
   Input,
@@ -26,21 +25,17 @@ import {
 } from "@autobacklinker/ui";
 import { apiClient, errorMessage, isNotFoundError } from "@/lib/api";
 import { useAction, useDebounced, useResource } from "@/lib/hooks";
-import { formatDateTime, formatNumber, humanize } from "@/lib/format";
+import { formatNumber, humanize } from "@/lib/format";
 import {
   ALL_OPPORTUNITY_CATEGORIES,
   CATEGORY_LABELS,
   SUBMISSION_METHOD_LABELS,
 } from "@/lib/constants";
 import { AsyncSection, TableSkeleton } from "@/components/States";
-import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
-  REMOVED_WEBSITE_LABEL,
-  REMOVED_WEBSITE_STATUS,
   WEBSITE_STATUS_CHOICES,
   WEBSITE_STATUS_FILTERS,
   WEBSITE_STATUS_LABELS,
-  isRemovedWebsite,
   readCounters,
   websiteStatusLabel,
 } from "@/lib/websites";
@@ -48,20 +43,6 @@ import {
 const PAGE_SIZE = 25;
 
 type SortKey = "name" | "domain" | "status" | "created_at" | "updated_at";
-
-/**
- * The message of a failed recycle bin action.
- *
- * A 404 means either that the website is gone already or that the backend
- * does not know the recycle bin yet - both are told instead of a bare
- * "Not Found".
- */
-function recycleBinError(error: unknown, fallback: string): string {
-  if (isNotFoundError(error)) {
-    return "The backend answered 404 - the website may be gone already or the backend does not know the recycle bin yet.";
-  }
-  return errorMessage(error) || fallback;
-}
 
 interface AddForm {
   opportunity_url: string;
@@ -88,11 +69,10 @@ const EMPTY_ADD_FORM: AddForm = {
  * from it.  It offers the manual entry, the Excel import, the status of every
  * row, the notes and the deletion.
  *
- * The deletion has two steps: "Delete" takes the website out of the list and
- * keeps its history (the reports stay correct), "Delete forever" destroys the
- * website together with its opportunities and its tasks.  The removed websites
- * wait in the recycle bin (the "Deleted" filter) until they are restored or
- * deleted forever.
+ * Deleting a website moves it to the recycle bin: it disappears from the list
+ * and from every project, but its history stays correct and it can be restored
+ * from the recycle bin page.  The recycle bin lives in exactly one place - the
+ * "Recycle bin" page in the navigation.
  */
 export function WebsiteListPanel({
   projectId: scopedProjectId,
@@ -116,9 +96,6 @@ export function WebsiteListPanel({
   const [projectFilter, setProjectFilter] = React.useState(scopedProjectId ?? "");
   const [sort, setSort] = React.useState<SortKey>("updated_at");
   const [order, setOrder] = React.useState<"asc" | "desc">("desc");
-  /** The recycle bin is open - the list shows the removed websites only. */
-  const [binOpen, setBinOpen] = React.useState(false);
-
   const [selected, setSelected] = React.useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = React.useState("");
 
@@ -145,15 +122,6 @@ export function WebsiteListPanel({
   } | null>(null);
   const [deleting, setDeleting] = React.useState(false);
 
-  const [purgeTarget, setPurgeTarget] = React.useState<{
-    ids: string[];
-    label: string;
-    names: string[];
-  } | null>(null);
-  const [purging, setPurging] = React.useState(false);
-
-  const [restoringId, setRestoringId] = React.useState<string | null>(null);
-
   const [importOpen, setImportOpen] = React.useState(false);
   const [importCategory, setImportCategory] = React.useState("");
   const [importNiche, setImportNiche] = React.useState("");
@@ -165,8 +133,6 @@ export function WebsiteListPanel({
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const effectiveProjectId = scopedProjectId ?? projectFilter;
-  /** The recycle bin shows the removed websites - the normal list hides them. */
-  const effectiveStatus = binOpen ? REMOVED_WEBSITE_STATUS : status;
 
   const debouncedSearch = useDebounced(search, 400);
   const debouncedNiche = useDebounced(niche, 400);
@@ -181,7 +147,7 @@ export function WebsiteListPanel({
         search: debouncedSearch || undefined,
         category: category || undefined,
         niche: debouncedNiche || undefined,
-        status: effectiveStatus || undefined,
+        status: status || undefined,
         project_id: effectiveProjectId || undefined,
         sort,
         order,
@@ -191,7 +157,7 @@ export function WebsiteListPanel({
       debouncedSearch,
       category,
       debouncedNiche,
-      effectiveStatus,
+      status,
       effectiveProjectId,
       sort,
       order,
@@ -201,17 +167,6 @@ export function WebsiteListPanel({
   const stats = useResource(
     () => api.websites.stats(apiClient, effectiveProjectId || undefined),
     [effectiveProjectId],
-  );
-
-  /** How many websites wait in the recycle bin (the badge of the chip). */
-  const removed = useResource(
-    () =>
-      api.websites.list(apiClient, {
-        page: 1,
-        page_size: 1,
-        status: REMOVED_WEBSITE_STATUS,
-      }),
-    [],
   );
 
   const rows = websites.data?.items ?? [];
@@ -266,14 +221,13 @@ export function WebsiteListPanel({
 
   React.useEffect(() => {
     setSelected([]);
-  }, [page, effectiveProjectId, effectiveStatus, category, debouncedSearch, debouncedNiche]);
+  }, [page, effectiveProjectId, status, category, debouncedSearch, debouncedNiche]);
 
   const refreshAll = React.useCallback(() => {
     websites.reload();
     stats.reload();
-    removed.reload();
     onChanged?.();
-  }, [websites, stats, removed, onChanged]);
+  }, [websites, stats, onChanged]);
 
   const toggleSort = (key: SortKey) => {
     if (sort === key) {
@@ -305,7 +259,7 @@ export function WebsiteListPanel({
   };
 
   const filtersActive = Boolean(
-    search || category || niche || status || binOpen || (showProjectFilter && projectFilter),
+    search || category || niche || status || (showProjectFilter && projectFilter),
   );
 
   const resetFilters = () => {
@@ -313,7 +267,6 @@ export function WebsiteListPanel({
     setCategory("");
     setNiche("");
     setStatus("");
-    setBinOpen(false);
     if (showProjectFilter) setProjectFilter("");
     setPage(1);
   };
@@ -444,8 +397,8 @@ export function WebsiteListPanel({
       }
       toast.push(
         deleteTarget.ids.length === 1
-          ? `${deleteTarget.label} removed from the list - restore it with the "Deleted" filter`
-          : `${deleteTarget.ids.length} websites removed from the list - restore them with the "Deleted" filter`,
+          ? `${deleteTarget.label} moved to the recycle bin - restore it there at any time`
+          : `${deleteTarget.ids.length} websites moved to the recycle bin - restore them there at any time`,
         "success",
       );
       setDeleteTarget(null);
@@ -455,87 +408,6 @@ export function WebsiteListPanel({
       toast.push(errorMessage(err), "error");
     } finally {
       setDeleting(false);
-    }
-  };
-
-  /**
-   * Deletes the websites forever - the website, its opportunities and its
-   * tasks are gone.  This cannot be undone.
-   */
-  const confirmPurge = async () => {
-    if (!purgeTarget) return;
-    setPurging(true);
-    try {
-      const results = await Promise.allSettled(
-        purgeTarget.ids.map((id) => api.websites.purge(apiClient, id)),
-      );
-      const failed = results.filter((result) => result.status === "rejected");
-      if (failed.length > 0) {
-        throw new Error(
-          `${failed.length} of ${results.length} websites could not be deleted forever - ${recycleBinError(
-            (failed[0] as PromiseRejectedResult).reason,
-            "the backend refused the request",
-          )}`,
-        );
-      }
-      toast.push(
-        purgeTarget.ids.length === 1
-          ? `${purgeTarget.label} deleted forever - its opportunities and tasks are gone`
-          : `${purgeTarget.ids.length} websites deleted forever - their opportunities and tasks are gone`,
-        "success",
-      );
-      setPurgeTarget(null);
-      setSelected([]);
-      refreshAll();
-    } catch (err) {
-      toast.push(recycleBinError(err, "The websites could not be deleted forever"), "error");
-    } finally {
-      setPurging(false);
-    }
-  };
-
-  /** Brings one removed website back into the list. */
-  const restoreOne = async (row: WebsiteListItem) => {
-    setRestoringId(row.id);
-    try {
-      await api.websites.restore(apiClient, row.id);
-      toast.push(`${row.name} restored - it is back in the list with its history`, "success");
-      refreshAll();
-    } catch (err) {
-      toast.push(recycleBinError(err, "The website could not be restored"), "error");
-    } finally {
-      setRestoringId(null);
-    }
-  };
-
-  /** Brings the selected websites back into the list. */
-  const restoreSelected = async () => {
-    if (selected.length === 0) return;
-    const ids = [...selected];
-    const outcome = await action.run(async () => {
-      const results = await Promise.allSettled(
-        ids.map((id) => api.websites.restore(apiClient, id)),
-      );
-      const failed = results.filter((result) => result.status === "rejected");
-      if (failed.length > 0) {
-        throw new Error(
-          `${failed.length} of ${results.length} websites could not be restored - ${recycleBinError(
-            (failed[0] as PromiseRejectedResult).reason,
-            "the backend refused the request",
-          )}`,
-        );
-      }
-      return results.length;
-    });
-    if (outcome.ok) {
-      toast.push(
-        `${outcome.data ?? 0} website(s) restored - they are back in the list with their history`,
-        "success",
-      );
-      setSelected([]);
-      refreshAll();
-    } else {
-      toast.push(recycleBinError(outcome.error, "The websites could not be restored"), "error");
     }
   };
 
@@ -613,8 +485,7 @@ export function WebsiteListPanel({
         </datalist>
         <Field label="Status" className="w-44">
           <Select
-            value={binOpen ? REMOVED_WEBSITE_STATUS : status}
-            disabled={binOpen}
+            value={status}
             aria-label="Filter the websites by their status"
             onChange={(event) => {
               setStatus(event.target.value);
@@ -622,9 +493,6 @@ export function WebsiteListPanel({
             }}
           >
             <option value="">All statuses</option>
-            {binOpen ? (
-              <option value={REMOVED_WEBSITE_STATUS}>{REMOVED_WEBSITE_LABEL}</option>
-            ) : null}
             {WEBSITE_STATUS_FILTERS.map((value) => (
               <option key={value} value={value}>
                 {WEBSITE_STATUS_LABELS[value] ?? value}
@@ -632,32 +500,6 @@ export function WebsiteListPanel({
             ))}
           </Select>
         </Field>
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-content-muted">Recycle bin</span>
-          <button
-            type="button"
-            onClick={() => {
-              setBinOpen((previous) => !previous);
-              setPage(1);
-            }}
-            aria-pressed={binOpen}
-            aria-label={
-              binOpen
-                ? "Close the recycle bin and show the active websites again"
-                : "Show the removed websites (the recycle bin)"
-            }
-            className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors ${
-              binOpen
-                ? "border-accent bg-accent-soft text-accent"
-                : "border-line-strong bg-surface text-content-muted hover:text-content"
-            }`}
-          >
-            <span>Deleted</span>
-            <span className="rounded-full bg-surface-sunken px-1.5 py-0.5 text-[11px] text-content-muted">
-              {removed.data?.total ?? 0}
-            </span>
-          </button>
-        </div>
         {showProjectFilter ? (
           <Field label="Project" className="w-52">
             <Select
@@ -708,98 +550,57 @@ export function WebsiteListPanel({
 
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
         <span className="text-xs text-content-muted">{selected.length} selected</span>
-        {binOpen ? (
-          <>
-            <Button
-              size="sm"
-              disabled={selected.length === 0}
-              onClick={() => void restoreSelected()}
-              loading={action.pending}
-              title={
-                selected.length === 0
-                  ? "Select at least one website first"
-                  : "Bring the selected websites back into the list"
-              }
-            >
-              Restore selected
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={selected.length === 0}
-              onClick={() =>
-                setPurgeTarget({
-                  ids: [...selected],
-                  label: `${selected.length} websites`,
-                  names: selected
-                    .map((id) => rows.find((row) => row.id === id)?.name ?? id)
-                    .slice(0, 5),
-                })
-              }
-              title={
-                selected.length === 0
-                  ? "Select at least one website first"
-                  : "Delete the selected websites forever - this cannot be undone"
-              }
-            >
-              Delete forever
-            </Button>
-          </>
-        ) : (
-          <>
-            <Select
-              className="w-48"
-              value={bulkStatus}
-              onChange={(event) => setBulkStatus(event.target.value)}
-              aria-label="Status for the selected websites"
-              disabled={selected.length === 0}
-            >
-              <option value="">Set status…</option>
-              {WEBSITE_STATUS_CHOICES.map((value) => (
-                <option key={value} value={value}>
-                  {WEBSITE_STATUS_LABELS[value] ?? value}
-                </option>
-              ))}
-            </Select>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={selected.length === 0 || !bulkStatus}
-              onClick={() => void applyBulkStatus()}
-              loading={action.pending}
-              title={
-                selected.length === 0
-                  ? "Select at least one website first"
-                  : !bulkStatus
-                    ? "Choose the status the selected websites should get"
-                    : undefined
-              }
-            >
-              Apply status
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={selected.length === 0}
-              onClick={() =>
-                setDeleteTarget({
-                  ids: [...selected],
-                  label: `${selected.length} websites`,
-                  names: selected
-                    .map((id) => rows.find((row) => row.id === id)?.name ?? id)
-                    .slice(0, 5),
-                })
-              }
-              title={
-                selected.length === 0
-                  ? "Select at least one website first"
-                  : "Remove the selected websites from the list"
-              }
-            >
-              Delete selected
-            </Button>
-          </>
-        )}
+        <Select
+          className="w-48"
+          value={bulkStatus}
+          onChange={(event) => setBulkStatus(event.target.value)}
+          aria-label="Status for the selected websites"
+          disabled={selected.length === 0}
+        >
+          <option value="">Set status…</option>
+          {WEBSITE_STATUS_CHOICES.map((value) => (
+            <option key={value} value={value}>
+              {WEBSITE_STATUS_LABELS[value] ?? value}
+            </option>
+          ))}
+        </Select>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={selected.length === 0 || !bulkStatus}
+          onClick={() => void applyBulkStatus()}
+          loading={action.pending}
+          title={
+            selected.length === 0
+              ? "Select at least one website first"
+              : !bulkStatus
+                ? "Choose the status the selected websites should get"
+                : undefined
+          }
+        >
+          Apply status
+        </Button>
+        <Button
+          size="sm"
+          variant="danger"
+          disabled={selected.length === 0}
+          onClick={() =>
+            setDeleteTarget({
+              ids: [...selected],
+              label: `${selected.length} websites`,
+              names: selected
+                .map((id) => rows.find((row) => row.id === id)?.name ?? id)
+                .slice(0, 5),
+            })
+          }
+          title={
+            selected.length === 0
+              ? "Select at least one website first"
+              : "Move the selected websites to the recycle bin"
+          }
+        >
+          Delete selected
+        </Button>
       </div>
 
       {action.error ? (
@@ -845,14 +646,8 @@ export function WebsiteListPanel({
           data={websites.data}
           onRetry={websites.reload}
           isEmpty={rows.length === 0}
-          emptyTitle={
-            binOpen ? "The recycle bin is empty" : "No websites match these filters"
-          }
-          emptyDescription={
-            binOpen
-              ? "Every website that was removed from the list waits here until it is restored or deleted forever."
-              : "Add a website by hand, import a spreadsheet or adjust the filters."
-          }
+          emptyTitle="No websites match these filters"
+          emptyDescription="Add a website by hand, import a spreadsheet or adjust the filters. Deleted websites wait in the recycle bin."
           skeleton={<TableSkeleton rows={8} columns={10} />}
         >
           <Table>
@@ -901,7 +696,7 @@ export function WebsiteListPanel({
                 <Th className="w-16 text-right">Failed</Th>
                 <Th className="w-16 text-right">Pending</Th>
                 <Th className="w-44">Notes</Th>
-                <Th className={binOpen ? "w-44" : "w-28"}>Actions</Th>
+                <Th className="w-28">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -914,9 +709,8 @@ export function WebsiteListPanel({
                     : projectIds
                         .map((id) => projectNames.get(id) ?? id)
                         .join(", ");
-                const removedRow = isRemovedWebsite(row.status);
                 return (
-                  <tr key={row.id} className={removedRow ? "opacity-60" : undefined}>
+                  <tr key={row.id}>
                     <Td>
                       <input
                         type="checkbox"
@@ -941,29 +735,25 @@ export function WebsiteListPanel({
                     </Td>
                     <Td className="text-xs">{row.niche || "—"}</Td>
                     <Td>
-                      {removedRow ? (
-                        <Badge tone="neutral">{REMOVED_WEBSITE_LABEL}</Badge>
-                      ) : (
-                        <Select
-                          className="h-8 w-40 text-xs"
-                          value={row.status}
-                          onChange={(event) => void changeStatus(row, event.target.value)}
-                          aria-label={`Status of ${row.name}`}
-                        >
-                          {!WEBSITE_STATUS_CHOICES.includes(
-                            row.status as (typeof WEBSITE_STATUS_CHOICES)[number],
-                          ) ? (
-                            <option value={row.status}>
-                              {WEBSITE_STATUS_LABELS[row.status] ?? row.status}
-                            </option>
-                          ) : null}
-                          {WEBSITE_STATUS_CHOICES.map((value) => (
-                            <option key={value} value={value}>
-                              {WEBSITE_STATUS_LABELS[value] ?? value}
-                            </option>
-                          ))}
-                        </Select>
-                      )}
+                      <Select
+                        className="h-8 w-40 text-xs"
+                        value={row.status}
+                        onChange={(event) => void changeStatus(row, event.target.value)}
+                        aria-label={`Status of ${row.name}`}
+                      >
+                        {!WEBSITE_STATUS_CHOICES.includes(
+                          row.status as (typeof WEBSITE_STATUS_CHOICES)[number],
+                        ) ? (
+                          <option value={row.status}>
+                            {WEBSITE_STATUS_LABELS[row.status] ?? row.status}
+                          </option>
+                        ) : null}
+                        {WEBSITE_STATUS_CHOICES.map((value) => (
+                          <option key={value} value={value}>
+                            {WEBSITE_STATUS_LABELS[value] ?? value}
+                          </option>
+                        ))}
+                      </Select>
                     </Td>
                     <Td>
                       <Tooltip label={projectLabel}>
@@ -1014,53 +804,23 @@ export function WebsiteListPanel({
                     </Td>
                     <Td>
                       <div className="flex items-center gap-1">
-                        {removedRow ? (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              loading={restoringId === row.id}
-                              onClick={() => void restoreOne(row)}
-                              title={`Bring ${row.name} back into the list`}
-                            >
-                              Restore
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                setPurgeTarget({
-                                  ids: [row.id],
-                                  label: row.name,
-                                  names: [row.name],
-                                })
-                              }
-                              title={`Delete ${row.name} forever - this cannot be undone`}
-                            >
-                              Delete forever
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>
-                              Edit
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                setDeleteTarget({
-                                  ids: [row.id],
-                                  label: row.name,
-                                  names: [row.name],
-                                })
-                              }
-                              title={`Remove ${row.name} from the list`}
-                            >
-                              Delete
-                            </Button>
-                          </>
-                        )}
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setDeleteTarget({
+                              ids: [row.id],
+                              label: row.name,
+                              names: [row.name],
+                            })
+                          }
+                          title={`Move ${row.name} to the recycle bin`}
+                        >
+                          Delete
+                        </Button>
                       </div>
                     </Td>
                   </tr>
@@ -1445,18 +1205,7 @@ export function WebsiteListPanel({
             <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
               Cancel
             </Button>
-            <Button
-              variant="danger"
-              disabled={deleting}
-              onClick={() => {
-                setPurgeTarget(deleteTarget);
-                setDeleteTarget(null);
-              }}
-              title="Delete the website together with its history - this cannot be undone"
-            >
-              Delete forever
-            </Button>
-            <Button loading={deleting} onClick={() => void confirmDelete()}>
+            <Button variant="danger" loading={deleting} onClick={() => void confirmDelete()}>
               Move to the recycle bin
             </Button>
           </>
@@ -1472,65 +1221,17 @@ export function WebsiteListPanel({
             correct.
           </li>
           <li>
-            • You can bring it back at any time with the{" "}
-            <strong className="font-semibold text-content">Deleted</strong> filter (the recycle
-            bin).
+            • You can bring it back at any time from the{" "}
+            <strong className="font-semibold text-content">Recycle bin</strong> in the navigation -
+            delete it forever there.
           </li>
         </ul>
-        <p className="mt-3 text-xs text-content-muted">
-          Do you want it to be gone for good? Then use{" "}
-          <strong className="font-semibold text-content">Delete forever</strong>: the website, its
-          opportunities, its tasks and its verification records are destroyed and nothing can bring
-          them back.
-        </p>
-        <p className="mt-2 text-xs text-content-subtle">
+        <p className="mt-3 text-xs text-content-subtle">
           A website that only stopped working is better marked as &quot;not working&quot; than
           removed - the list keeps it and the project picks it again when it works.
         </p>
       </Dialog>
 
-      {/* ---------------------------------------------------------------- */}
-      {/* Delete forever - the website and its history are destroyed         */}
-      {/* ---------------------------------------------------------------- */}
-      <ConfirmDialog
-        open={purgeTarget !== null}
-        title={
-          purgeTarget && purgeTarget.ids.length > 1
-            ? `Delete ${purgeTarget.ids.length} websites forever?`
-            : purgeTarget
-              ? `Delete "${purgeTarget.label}" forever?`
-              : "Delete the website forever?"
-        }
-        description="This cannot be undone."
-        confirmLabel="Delete forever"
-        destructive
-        pending={purging}
-        onClose={() => setPurgeTarget(null)}
-        onConfirm={() => void confirmPurge()}
-      >
-        <p className="text-xs text-content-muted">
-          {purgeTarget && purgeTarget.ids.length === 1 ? (
-            <>
-              <strong className="font-semibold text-content">{purgeTarget.label}</strong> is
-              deleted forever. Its opportunities, its tasks and its verification records go with it
-              and the old reports lose this website. There is no way to undo this.
-            </>
-          ) : (
-            <>
-              These {purgeTarget?.ids.length ?? 0} websites are deleted forever. Their
-              opportunities, their tasks and their verification records go with them and the old
-              reports lose them. There is no way to undo this.
-            </>
-          )}
-        </p>
-        {purgeTarget && purgeTarget.names.length > 0 ? (
-          <ul className="mt-2 space-y-0.5 text-xs text-content-subtle">
-            {purgeTarget.names.map((name) => (
-              <li key={name}>• {name}</li>
-            ))}
-          </ul>
-        ) : null}
-      </ConfirmDialog>
     </Card>
   );
 }

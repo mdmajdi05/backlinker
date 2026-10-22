@@ -244,8 +244,8 @@ export default function RegistryPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Website Registry"
-        description="Every discovered opportunity with its score, state and submission readiness."
+        title="Opportunities"
+        description="Every website you can get a backlink from - its state, score and submission readiness."
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -257,7 +257,7 @@ export default function RegistryPage() {
                 setAddOpen(true);
               }}
             >
-              Add website
+              Add opportunity
             </Button>
             <Button variant="outline" size="sm" onClick={opportunities.reload} loading={opportunities.refreshing}>
               Refresh
@@ -582,8 +582,8 @@ export default function RegistryPage() {
       <Dialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add a website"
-        description="The page on which the backlink should be placed."
+        title="Add an opportunity"
+        description="The page on which the backlink should be placed - for example a directory form."
         width="lg"
         footer={
           <>
@@ -591,7 +591,7 @@ export default function RegistryPage() {
               Cancel
             </Button>
             <Button loading={adding} onClick={() => void submitManualWebsite()}>
-              Add to registry
+              Add opportunity
             </Button>
           </>
         }

@@ -15,16 +15,12 @@ import {
   MetricTile,
   Skeleton,
   StatusBadge,
-  Table,
-  Td,
-  Th,
 } from "@autobacklinker/ui";
 import { apiClient, isNotFoundError } from "@/lib/api";
 import { useResource } from "@/lib/hooks";
-import { formatDateTime, formatNumber, humanize } from "@/lib/format";
-import { CATEGORY_LABELS } from "@/lib/constants";
+import { formatDateTime, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
-import { AsyncSection, CardSkeleton, ErrorPanel, TableSkeleton } from "@/components/States";
+import { AsyncSection, CardSkeleton, ErrorPanel } from "@/components/States";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 import { AddToProjectDialog } from "@/components/AddToProjectDialog";
@@ -187,7 +183,7 @@ export default function ProjectDetailPage() {
             <Card>
               <CardHeader
                 title="Report & results"
-                description="What happened in this project - the counters of every website"
+                description="What happened in this project - the totals of every website"
                 action={
                   <Button
                     variant="outline"
@@ -246,80 +242,16 @@ export default function ProjectDetailPage() {
                       <MetricTile label="Pending" value={formatNumber(totals.pending)} />
                     </div>
 
-                    <AsyncSection
-                      loading={report.loading}
-                      error={report.error}
-                      data={report.data}
-                      onRetry={report.reload}
-                      isEmpty={reportRows.length === 0}
-                      emptyTitle="No website ran in this project yet"
-                      emptyDescription="As soon as opportunities are submitted, every website of the project is listed here with its counters."
-                      skeleton={<TableSkeleton rows={6} columns={8} />}
-                    >
-                      <Table>
-                        <thead>
-                          <tr>
-                            <Th>Website</Th>
-                            <Th className="w-48">Category</Th>
-                            <Th className="w-28 text-right">Opportunities</Th>
-                            <Th className="w-24 text-right">Submitted</Th>
-                            <Th className="w-24 text-right">Verified</Th>
-                            <Th className="w-24 text-right">Failed</Th>
-                            <Th className="w-24 text-right">Pending</Th>
-                            <Th className="w-40">Last attempt</Th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {reportRows.map((row) => (
-                            <tr key={`${row.domain}-${row.name}`}>
-                              <Td>
-                                <p className="font-medium text-content">
-                                  {row.name || row.domain}
-                                </p>
-                                <p className="max-w-xs truncate text-xs text-content-muted">
-                                  {row.domain}
-                                </p>
-                              </Td>
-                              <Td>
-                                <Badge tone="neutral">
-                                  {CATEGORY_LABELS[row.category] ?? humanize(row.category)}
-                                </Badge>
-                              </Td>
-                              <Td className="text-right tabular-nums">
-                                {formatNumber(row.opportunities)}
-                              </Td>
-                              <Td className="text-right tabular-nums">
-                                {formatNumber(row.submitted)}
-                              </Td>
-                              <Td className="text-right tabular-nums">
-                                {formatNumber(row.verified)}
-                              </Td>
-                              <Td className="text-right tabular-nums">
-                                {row.failed > 0 ? (
-                                  <span className="font-semibold text-danger">
-                                    {formatNumber(row.failed)}
-                                  </span>
-                                ) : (
-                                  formatNumber(row.failed)
-                                )}
-                              </Td>
-                              <Td className="text-right tabular-nums">
-                                {formatNumber(row.pending)}
-                              </Td>
-                              <Td className="text-xs text-content-muted">
-                                {formatDateTime(row.last_attempt_at)}
-                              </Td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </Table>
-                    </AsyncSection>
+                    <p className="text-xs text-content-muted">
+                      Every website of this project is listed below with its own counters -
+                      one table, always the same numbers. The full report adds the exports.
+                    </p>
                   </>
                 )}
 
                 <p className="border-t border-line pt-3 text-xs text-content-muted">
-                  Verified links are never submitted again. Use Import centre to bring a report
-                  back in - verified rows are skipped, failed rows are retried.
+                  Verified links are never submitted again. Use Opportunity import to bring a
+                  report back in - verified rows are skipped, failed rows are retried.
                 </p>
               </CardBody>
             </Card>

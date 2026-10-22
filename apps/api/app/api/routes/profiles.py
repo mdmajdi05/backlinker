@@ -9,6 +9,7 @@ from app.api.deps import CurrentUser, DbSession
 from app.db.base import utcnow
 from app.db.models import BusinessProfile
 from app.schemas import BusinessProfileIn, BusinessProfileOut
+from app.services import site_details as site_details_service
 from app.services.audit import record_audit
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -65,11 +66,29 @@ def update_profile(
 ) -> BusinessProfile:
     profile = _owned(db, profile_id, user)
     before = {"name": profile.name, "primary_website": profile.primary_website}
+    # The detail records of the projects copy these values - remember what they
+    # carried so they can be refreshed after the change (nothing is duplicated,
+    # the profile stays the one truth).
+    detail_before = {
+        attribute: getattr(profile, attribute, None)
+        for attribute in site_details_service.PROFILE_TO_DETAIL
+    }
     for field, value in payload.model_dump().items():
         setattr(profile, field, value)
+    db.flush()
+    refreshed = site_details_service.refresh_derived_details(db, profile, detail_before)
     db.commit()
     db.refresh(profile)
     record_audit(db, "update", "business_profile", profile.id, actor_id=user.id, before=before)
+    if refreshed:
+        record_audit(
+            db,
+            "refresh",
+            "site_details",
+            profile.id,
+            actor_id=user.id,
+            after={"rows": refreshed},
+        )
     return profile
 
 

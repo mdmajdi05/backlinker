@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { api } from "@autobacklinker/api-client";
 import type { DiscoveryRun, Opportunity, OpportunityCategory } from "@autobacklinker/shared-types";
 import {
@@ -117,12 +118,19 @@ export default function DiscoveryPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Opportunity Discovery"
-        description="Run provider searches and inspect what they produced."
+        title="Discovery"
+        description="Find new websites with a provider search, then review them in Opportunities."
         actions={
-          <Button variant="outline" size="sm" onClick={runs.reload} loading={runs.refreshing}>
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link href="/registry">
+              <Button variant="primary" size="sm">
+                Open Opportunities
+              </Button>
+            </Link>
+            <Button variant="outline" size="sm" onClick={runs.reload} loading={runs.refreshing}>
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -327,7 +335,7 @@ export default function DiscoveryPage() {
       {selectedRun ? (
         <Card>
           <CardHeader
-            title={`Opportunities from run ${selectedRun.provider}`}
+            title={`Websites found by ${selectedRun.provider}`}
             description={`${selectedRun.discovered_count} discovered · ${selectedRun.new_count} new · started ${formatDateTime(
               selectedRun.started_at ?? selectedRun.created_at,
             )}`}

@@ -94,7 +94,7 @@ export default function ActivityPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Activity Logs"
+        title="Activity"
         description="Every event recorded by the backend, filterable and exportable."
         actions={
           <>

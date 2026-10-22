@@ -134,8 +134,8 @@ export function RegistryPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Registry"
-        description="Every discovered opportunity with its review and execution state."
+        title="Opportunities"
+        description="Every website you can get a backlink from - its review and execution state."
       />
 
       <Card>
@@ -275,7 +275,7 @@ export function RegistryPage() {
       {!opportunities.loading && items.length === 0 && !opportunities.error ? (
         <NothingYet
           title="No opportunities"
-          description="Nothing matches the current filter. Run a discovery to populate the registry."
+          description="Nothing matches the current filter. Run a discovery to find new websites."
         />
       ) : null}
 

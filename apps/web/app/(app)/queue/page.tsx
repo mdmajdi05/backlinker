@@ -151,7 +151,7 @@ export default function QueuePage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Backlink Queue"
+        title="Queue"
         description="Submission, verification and discovery tasks with priority ordering."
         actions={
           <>
