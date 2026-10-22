@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.api.deps import CurrentUser, DbSession, Pagination
 from app.core.config import settings
@@ -308,23 +308,29 @@ def delete_report(export_id: str, db: DbSession, user: CurrentUser) -> None:
 
 @reports_router.post("/{export_id}/retry-failed", response_model=ReportRetryOut)
 def retry_failed_submissions(
-    export_id: str, payload: ReportRetryRequest, db: DbSession, user: CurrentUser
+    export_id: str,
+    db: DbSession,
+    user: CurrentUser,
+    payload: ReportRetryRequest | None = None,
 ) -> ReportRetryOut:
     """Re-queue the failed work of a report.
 
     The report decides *what* is retried, the queue decides *how*: the attempt
     history is preserved and the idempotency key makes sure that no second
-    task is created for the same work.  A task that was already retried and is
-    running now is skipped - it must not be queued a second time.
+    task is created for the same work.  A task that was retried in the
+    meantime and is running now is skipped - it must not be queued twice.
     """
     from app.services import queue as queue_service
 
     job = db.get(ExportJob, export_id)
     if job is None:
-        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Report not found"})
+        raise HTTPException(
+            status_code=404, detail={"code": "not_found", "message": "Report not found"}
+        )
 
-    domain = (payload.domain or "").strip().lower()
-    for project_id in (scope_project_id(job), payload.project_id):
+    request = payload or ReportRetryRequest()
+    domain = (request.domain or "").strip().lower()
+    for project_id in (scope_project_id(job), request.project_id):
         if project_id and not access.owns_project(db, user, project_id):
             raise HTTPException(
                 status_code=403, detail={"code": "forbidden", "message": "Access denied"}
@@ -337,7 +343,8 @@ def retry_failed_submissions(
     for task in _failed_tasks_of_report(
         db,
         job,
-        project_id=payload.project_id,
+        user,
+        project_id=request.project_id,
         domain=domain,
     ):
         if task.status != "FAILED":
@@ -357,12 +364,21 @@ def retry_failed_submissions(
         retried += 1
         task_ids.append(task.id)
 
-    return ReportRetryOut(retried=retried, skipped=skipped, task_ids=task_ids)
+    return ReportRetryOut(
+        retried=retried,
+        skipped=skipped,
+        task_ids=task_ids,
+        message=_retry_message(retried, skipped),
+    )
 
 
-#: The states of the failed work of a report: a task that failed, and a task
-#: that was retried after it failed and is in flight now.
-FAILED_WORK_STATUSES = ("FAILED", "QUEUED", "RUNNING", "RETRY_SCHEDULED")
+def _retry_message(retried: int, skipped: int) -> str:
+    """A short summary of what the retry did."""
+    parts = [f"{retried} task(s) queued again"]
+    if skipped:
+        parts.append(f"{skipped} skipped (already retried and running)")
+    return ", ".join(parts)
+
 
 #: The states of a task that is already on its way - it must not be queued
 #: a second time.
@@ -382,8 +398,18 @@ def _failed_tasks_of_report(
     A report knows the project it was generated for; the optional filters
     narrow the selection down to one website or one project.  Only the tasks
     of the projects the user may work on are returned.
+
+    A task that failed and was retried afterwards is on its way now: it is
+    part of the failed work of the report, but it must not be queued a second
+    time.  The attempts behind it tell the two apart from a task that was
+    never run at all.
     """
-    stmt = select(Task).where(Task.status.in_(FAILED_WORK_STATUSES))
+    stmt = select(Task).where(
+        or_(
+            Task.status == "FAILED",
+            and_(Task.status.in_(IN_FLIGHT_STATUSES), Task.attempts > 0),
+        )
+    )
     scope = access.scope_tasks(db, user)
     if scope is not None:
         stmt = stmt.where(scope)
@@ -400,4 +426,3 @@ def _failed_tasks_of_report(
         )
     stmt = stmt.order_by(Task.created_at.asc(), Task.id.asc())
     return list(db.execute(stmt).scalars().all())
-

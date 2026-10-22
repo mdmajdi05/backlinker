@@ -20,10 +20,26 @@ import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { formatDate, formatNumber, truncate } from "../lib/format";
 import { saveBytes, sendNativeNotification } from "../lib/backend";
+import { navigate } from "../lib/router";
 import { fetchWebsiteStats, retryFailedSubmissions } from "../lib/websites";
 import type { ExportJob, Project } from "@autobacklinker/shared-types";
 
 const PAGE_SIZE = 20;
+
+/**
+ * The project the reports view opens with.
+ *
+ * The desktop router only knows the plain route names - a project is handed
+ * over to the next mount of the reports view instead of being part of the
+ * hash.
+ */
+let pendingProjectId = "";
+
+/** Opens the reports view with the given project preselected. */
+export function openReportForProject(projectId: string): void {
+  pendingProjectId = projectId;
+  navigate("reports");
+}
 
 export function ReportsPage() {
   const toast = useToast();
@@ -44,17 +60,37 @@ export function ReportsPage() {
     [],
   );
   const reports = useAsync(
-    () => api.reports.list(apiClient, { page, page_size: PAGE_SIZE }),
-    [page],
+    () =>
+      api.reports.list(apiClient, {
+        page,
+        page_size: PAGE_SIZE,
+        project_id: projectId || undefined,
+      }),
+    [page, projectId],
   );
   const scopeReports = useAsync(
-    () => api.reports.list(apiClient, { page: 1, page_size: 50 }),
-    [],
+    () =>
+      api.reports.list(apiClient, {
+        page: 1,
+        page_size: 50,
+        project_id: projectId || undefined,
+      }),
+    [projectId],
   );
   const websiteStats = useAsync(
     () => fetchWebsiteStats(projectId || undefined),
     [projectId],
   );
+
+  // A project that was handed over by the project page is preselected.
+  const bootstrapped = React.useRef(false);
+  React.useEffect(() => {
+    if (bootstrapped.current) return;
+    bootstrapped.current = true;
+    if (!pendingProjectId) return;
+    setProjectId(pendingProjectId);
+    pendingProjectId = "";
+  }, []);
 
   const items = reports.data?.items ?? [];
 
@@ -207,7 +243,10 @@ export function ReportsPage() {
               <Field label="Project">
                 <Select
                   value={projectId}
-                  onChange={(event) => setProjectId(event.target.value)}
+                  onChange={(event) => {
+                    setProjectId(event.target.value);
+                    setPage(1);
+                  }}
                 >
                   <option value="">All projects</option>
                   {(projects.data?.items ?? []).map((project: Project) => (
@@ -491,6 +530,12 @@ export function ReportsPage() {
               </tbody>
             </Table>
           ) : null}
+
+          <p className="border-t border-line px-4 py-3 text-xs text-content-muted">
+            Verified links are never submitted again. Use Imports to bring a
+            report back in - verified rows are skipped, failed rows are
+            retried.
+          </p>
         </CardBody>
       </Card>
     </div>

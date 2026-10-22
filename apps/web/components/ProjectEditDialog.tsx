@@ -1,0 +1,572 @@
+"use client";
+
+import * as React from "react";
+import { api } from "@autobacklinker/api-client";
+import type { Project, TargetWebsite } from "@autobacklinker/shared-types";
+import {
+  Alert,
+  Button,
+  Dialog,
+  Field,
+  IconButton,
+  Input,
+  Select,
+  Skeleton,
+  Textarea,
+  useToast,
+} from "@autobacklinker/ui";
+import { apiClient, errorMessage } from "@/lib/api";
+import { useAction, useResource } from "@/lib/hooks";
+
+/** The states a project can have - the backend stores them as plain strings. */
+const STATUS_OPTIONS: Array<{ value: Project["status"]; label: string }> = [
+  { value: "ACTIVE", label: "Active - the campaign runs" },
+  { value: "PAUSED", label: "Paused - nothing new is queued" },
+  { value: "ARCHIVED", label: "Archived - finished, kept for the reports" },
+];
+
+const KIND_OPTIONS: Array<{ value: TargetWebsite["kind"]; label: string }> = [
+  { value: "MAIN", label: "Main" },
+  { value: "LANDING", label: "Landing" },
+  { value: "BLOG", label: "Blog" },
+  { value: "OTHER", label: "Other" },
+];
+
+/** One landing page of the draft. */
+interface LandingDraft {
+  key: string;
+  name: string;
+  url: string;
+  kind: TargetWebsite["kind"];
+}
+
+/**
+ * The body of the PATCH request.
+ *
+ * `landing_pages` is not part of the project record of the backend - it is sent
+ * nevertheless, because the endpoint is supposed to store it.  Whether it did
+ * is checked afterwards (see `readStoredState`).
+ */
+interface ProjectEditBody {
+  name: string;
+  description: string;
+  target_website: string;
+  business_profile_id: string | null;
+  status: Project["status"];
+  landing_pages: Array<{ name: string; url: string; kind: TargetWebsite["kind"] }>;
+}
+
+/**
+ * Normalizes a target website the way the backend does: the scheme is added
+ * when it is missing and the trailing slash is removed.
+ *
+ * Returns null when the value is not a plain http(s) URL - the same rules the
+ * backend applies (no credentials in the URL, no exotic schemes).
+ */
+export function normalizeWebsite(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+  if (!parsed.hostname) return null;
+  if (parsed.username || parsed.password) return null;
+  return candidate.replace(/\/+$/, "");
+}
+
+/** The identity of a landing page - used to compare the draft with the server. */
+function landingKey(page: { name: string; url: string; kind: string }): string {
+  const url = normalizeWebsite(page.url) ?? page.url.trim();
+  return `${page.name.trim()}|${url}|${page.kind}`;
+}
+
+/** True when both lists hold the same landing pages (the order does not matter). */
+function sameLandingPages(
+  left: Array<{ name: string; url: string; kind: string }>,
+  right: Array<{ name: string; url: string; kind: string }>,
+): boolean {
+  if (left.length !== right.length) return false;
+  const a = left.map(landingKey).sort();
+  const b = right.map(landingKey).sort();
+  return a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Edit dialog of a project.
+ *
+ * It changes the name, the description, the target website, the business
+ * profile, the status and the landing pages of a project.  Only the fields
+ * that were sent are changed - the backend works the same way.
+ *
+ * After the save the stored state is read back.  Everything the backend did
+ * not store is reported to the user instead of being claimed as saved.
+ */
+export function ProjectEditDialog({
+  open,
+  project,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  /** The project that is edited - null closes the dialog. */
+  project: Project | null;
+  onClose: () => void;
+  /** Called with the stored project - the list reloads it. */
+  onSaved: (project: Project) => void;
+}) {
+  const toast = useToast();
+  const action = useAction();
+  const projectId = project?.id ?? "";
+
+  const profiles = useResource(() => api.profiles.list(apiClient), []);
+  const detail = useResource(
+    () => api.projects.get(apiClient, projectId),
+    [projectId],
+    { enabled: open && Boolean(projectId) },
+  );
+  const landing = useResource(
+    () => api.projects.websites(apiClient, projectId, { page: 1, page_size: 100 }),
+    [projectId],
+    { enabled: open && Boolean(projectId) },
+  );
+
+  const [name, setName] = React.useState("");
+  const [description, setDescription] = React.useState("");
+  const [targetWebsite, setTargetWebsite] = React.useState("");
+  const [profileId, setProfileId] = React.useState("");
+  const [status, setStatus] = React.useState<Project["status"]>("ACTIVE");
+  const [landingPages, setLandingPages] = React.useState<LandingDraft[]>([]);
+  const [formError, setFormError] = React.useState<string | null>(null);
+  /** The changes the backend did not store - they are shown to the user. */
+  const [notices, setNotices] = React.useState<string[]>([]);
+  const keyCounter = React.useRef(0);
+
+  /* The form follows the record of the backend - never a stale list row. */
+  React.useEffect(() => {
+    if (!open) return;
+    const source = detail.data;
+    if (!source) return;
+    setName(source.name);
+    setDescription(source.description ?? "");
+    setTargetWebsite(source.target_website);
+    setProfileId(source.business_profile_id ?? "");
+    setStatus(source.status);
+    setFormError(null);
+    setNotices([]);
+  }, [open, detail.data]);
+
+  /* The landing pages come from the landing pages of the project. */
+  React.useEffect(() => {
+    if (!open || !landing.settled) return;
+    setLandingPages(
+      (landing.data?.items ?? []).map((item) => ({
+        key: item.id,
+        name: item.name,
+        url: item.url,
+        kind: item.kind,
+      })),
+    );
+  }, [open, landing.settled, landing.data]);
+
+  const moveLandingPage = (index: number, delta: number) => {
+    setLandingPages((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  };
+
+  const addLandingPage = () => {
+    keyCounter.current += 1;
+    setLandingPages((prev) => [
+      ...prev,
+      { key: `new-${keyCounter.current}`, name: "", url: "", kind: "LANDING" },
+    ]);
+  };
+
+  /** Reads the stored state of the project back from the backend. */
+  const readStoredState = async (
+    id: string,
+  ): Promise<{
+    project: Project;
+    landingPages: Array<{ name: string; url: string; kind: TargetWebsite["kind"] }>;
+  } | null> => {
+    try {
+      const [stored, pages] = await Promise.all([
+        api.projects.get(apiClient, id),
+        api.projects.websites(apiClient, id, { page: 1, page_size: 100 }),
+      ]);
+      return {
+        project: stored,
+        landingPages: pages.items.map((item) => ({
+          name: item.name,
+          url: item.url,
+          kind: item.kind,
+        })),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const save = async () => {
+    setFormError(null);
+    setNotices([]);
+
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setFormError("The project name is required.");
+      return;
+    }
+    const website = normalizeWebsite(targetWebsite);
+    if (!website) {
+      setFormError(
+        "The target website must be a valid http(s) address - for example https://www.example.com",
+      );
+      return;
+    }
+
+    const pages = landingPages
+      .filter((page) => page.url.trim())
+      .map((page) => {
+        const url = normalizeWebsite(page.url) ?? page.url.trim();
+        return { name: page.name.trim() || url, url, kind: page.kind };
+      });
+
+    const body: ProjectEditBody = {
+      name: trimmedName,
+      description: description.trim(),
+      target_website: website,
+      business_profile_id: profileId || null,
+      status,
+      landing_pages: pages,
+    };
+
+    const problems: string[] = [];
+
+    const withLanding = await action.run(() =>
+      api.projects.update(apiClient, projectId, body),
+    );
+    if (!withLanding.ok) {
+      /* Not every backend accepts the extra field - save the core fields alone. */
+      const core = await action.run(() =>
+        api.projects.update(apiClient, projectId, {
+          name: body.name,
+          description: body.description,
+          target_website: body.target_website,
+          business_profile_id: body.business_profile_id,
+          status: body.status,
+        }),
+      );
+      if (!core.ok) return;
+      problems.push(
+        "The backend rejected the landing pages in the request - only the other fields were saved.",
+      );
+    }
+
+    /* Read the stored state back: nothing is claimed that was not stored. */
+    const stored = await readStoredState(projectId);
+    if (stored) {
+      if (!body.business_profile_id && stored.project.business_profile_id) {
+        problems.push(
+          "The business profile was not removed - the backend keeps the previous one.",
+        );
+      }
+      if (!sameLandingPages(body.landing_pages, stored.landingPages)) {
+        problems.push(
+          "The landing pages were not stored - the backend endpoint does not support changing them yet.",
+        );
+      }
+    }
+
+    setNotices(problems);
+    onSaved(stored?.project ?? withLanding.data ?? (project as Project));
+
+    if (problems.length > 0) {
+      toast.push("Project saved - the backend did not store everything", "info");
+      return;
+    }
+    toast.push("Project saved", "success");
+    onClose();
+  };
+
+  const loading = detail.loading && !detail.data;
+
+  return (
+    <Dialog
+      open={open && Boolean(project)}
+      onClose={onClose}
+      title="Edit project"
+      description="Only the fields you change are sent to the backend."
+      width="lg"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={action.pending}>
+            Cancel
+          </Button>
+          <Button onClick={() => void save()} loading={action.pending}>
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {notices.length > 0 ? (
+          <Alert tone="warning" title="The backend did not store everything">
+            <ul className="list-inside list-disc space-y-0.5">
+              {notices.map((notice) => (
+                <li key={notice}>{notice}</li>
+              ))}
+            </ul>
+          </Alert>
+        ) : null}
+
+        {detail.error && !detail.data ? (
+          <Alert tone="danger" title="The project could not be loaded">
+            {errorMessage(detail.error)}
+          </Alert>
+        ) : null}
+
+        {loading ? (
+          <div className="space-y-2" aria-busy="true">
+            <span className="sr-only">Loading the project…</span>
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-2/3" />
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Project name" required>
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Website Authority Growth"
+                  disabled={action.pending}
+                />
+              </Field>
+              <Field label="Status" hint="A paused project queues nothing new.">
+                <Select
+                  value={status}
+                  onChange={(event) => setStatus(event.target.value as Project["status"])}
+                  disabled={action.pending}
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+
+            <Field label="Description">
+              <Textarea
+                rows={2}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="What is this project trying to achieve?"
+                disabled={action.pending}
+              />
+            </Field>
+
+            <Field
+              label="Target website"
+              required
+              hint="The page that should receive the backlinks. The scheme is added when it is missing."
+            >
+              <Input
+                value={targetWebsite}
+                onChange={(event) => setTargetWebsite(event.target.value)}
+                placeholder="https://www.example.com"
+                disabled={action.pending}
+              />
+            </Field>
+
+            <Field
+              label="Business profile"
+              hint="The profile provides the anchors and the descriptions of the submission."
+            >
+              <Select
+                value={profileId}
+                onChange={(event) => setProfileId(event.target.value)}
+                disabled={action.pending}
+              >
+                <option value="">No profile selected</option>
+                {(profiles.data ?? []).map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {profiles.loading ? (
+              <p className="text-xs text-content-subtle">Loading business profiles…</p>
+            ) : null}
+            {profiles.error ? (
+              <p className="text-xs text-danger">{errorMessage(profiles.error)}</p>
+            ) : null}
+          </>
+        )}
+
+        <section className="space-y-2 border-t border-line pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-content">Landing pages</h3>
+              <p className="text-xs text-content-muted">
+                The additional pages of this project a backlink may point to. Add, remove and
+                reorder them.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addLandingPage}
+              disabled={action.pending}
+            >
+              Add landing page
+            </Button>
+          </div>
+
+          {landing.loading && !landing.data ? (
+            <div className="space-y-2" aria-busy="true">
+              <span className="sr-only">Loading the landing pages…</span>
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : landing.error ? (
+            <Alert
+              tone="danger"
+              title="The landing pages could not be loaded"
+              action={
+                <Button variant="outline" size="sm" onClick={landing.reload}>
+                  Try again
+                </Button>
+              }
+            >
+              {errorMessage(landing.error)}
+            </Alert>
+          ) : null}
+
+          {landingPages.map((page, index) => (
+            <div
+              key={page.key}
+              className="grid gap-2 rounded-md border border-line p-3 sm:grid-cols-[1fr_1fr_140px_auto]"
+            >
+              <Field label="Name">
+                <Input
+                  value={page.name}
+                  onChange={(event) =>
+                    setLandingPages((prev) =>
+                      prev.map((item, i) =>
+                        i === index ? { ...item, name: event.target.value } : item,
+                      ),
+                    )
+                  }
+                  placeholder="Pricing"
+                  disabled={action.pending}
+                />
+              </Field>
+              <Field label="URL">
+                <Input
+                  value={page.url}
+                  onChange={(event) =>
+                    setLandingPages((prev) =>
+                      prev.map((item, i) =>
+                        i === index ? { ...item, url: event.target.value } : item,
+                      ),
+                    )
+                  }
+                  placeholder="https://www.example.com/pricing"
+                  disabled={action.pending}
+                />
+              </Field>
+              <Field label="Kind">
+                <Select
+                  value={page.kind}
+                  onChange={(event) =>
+                    setLandingPages((prev) =>
+                      prev.map((item, i) =>
+                        i === index
+                          ? { ...item, kind: event.target.value as TargetWebsite["kind"] }
+                          : item,
+                      ),
+                    )
+                  }
+                  disabled={action.pending}
+                >
+                  {KIND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="flex items-end gap-1">
+                <IconButton
+                  label={`Move ${page.name || "landing page"} up`}
+                  onClick={() => moveLandingPage(index, -1)}
+                  disabled={index === 0 || action.pending}
+                >
+                  ↑
+                </IconButton>
+                <IconButton
+                  label={`Move ${page.name || "landing page"} down`}
+                  onClick={() => moveLandingPage(index, 1)}
+                  disabled={index === landingPages.length - 1 || action.pending}
+                >
+                  ↓
+                </IconButton>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setLandingPages((prev) => prev.filter((_, i) => i !== index))
+                  }
+                  disabled={action.pending}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          ))}
+
+          {landingPages.length === 0 && !landing.loading ? (
+            <p className="text-xs text-content-subtle">
+              This project has no landing page yet - the target website above is the only
+              destination.
+            </p>
+          ) : null}
+        </section>
+
+        {formError ? (
+          <p
+            role="alert"
+            className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger"
+          >
+            {formError}
+          </p>
+        ) : null}
+        {action.error ? (
+          <p
+            role="alert"
+            className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger"
+          >
+            {errorMessage(action.error)}
+          </p>
+        ) : null}
+      </div>
+    </Dialog>
+  );
+}

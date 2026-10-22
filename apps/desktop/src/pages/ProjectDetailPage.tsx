@@ -24,11 +24,16 @@ import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { AutoPilotPanel } from "../components/AutoPilotPanel";
 import { AddToProjectDialog } from "../components/AddToProjectDialog";
+import {
+  ProjectDeleteDialog,
+  ProjectEditDialog,
+} from "../components/ProjectEditDialog";
 import { formatDate, formatNumber, titleCase } from "../lib/format";
 import { navigate } from "../lib/router";
 import { openPath, sendNativeNotification } from "../lib/backend";
-import { fetchWebsites, websiteStatusLabel } from "../lib/websites";
+import { fetchWebsites, fetchWebsiteStats, websiteStatusLabel } from "../lib/websites";
 import { isMissingEndpoint } from "../lib/api";
+import { openReportForProject } from "./ReportsPage";
 import type {
   BusinessProfile,
   ExecutionEnvironment,
@@ -346,6 +351,10 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
   const toast = useToast();
   const [switching, setSwitching] = React.useState(false);
   const [choosingWebsites, setChoosingWebsites] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+  const [deletingBusy, setDeletingBusy] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
 
   const project = useAsync(
     () => api.projects.get(apiClient, projectId),
@@ -384,6 +393,11 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
     () => fetchWebsites({ page: 1, page_size: 100, project_id: projectId }),
     [projectId],
   );
+  // The report of the project: the counters of every website it works on.
+  const reportStats = useAsync(
+    () => fetchWebsiteStats(projectId),
+    [projectId],
+  );
   const profile = useAsync(
     () => {
       const id = project.data?.business_profile_id;
@@ -417,6 +431,29 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
     return Array.from(pages).filter(Boolean);
   }, [profile.data, opportunities.data, landingPages]);
 
+  // The websites of the report - the failing ones come first.
+  const reportRows = React.useMemo(() => {
+    return [...(reportStats.data ?? [])].sort((a, b) => {
+      if (b.failed !== a.failed) return b.failed - a.failed;
+      if (b.pending !== a.pending) return b.pending - a.pending;
+      return (a.domain || a.name || "").localeCompare(b.domain || b.name || "");
+    });
+  }, [reportStats.data]);
+
+  // The counters of the project - the sum of the rows above.
+  const reportTotals = React.useMemo(() => {
+    return (reportStats.data ?? []).reduce(
+      (acc, row) => ({
+        opportunities: acc.opportunities + row.opportunities,
+        submitted: acc.submitted + row.submitted,
+        verified: acc.verified + row.verified,
+        failed: acc.failed + row.failed,
+        pending: acc.pending + row.pending,
+      }),
+      { opportunities: 0, submitted: 0, verified: 0, failed: 0, pending: 0 },
+    );
+  }, [reportStats.data]);
+
   async function toggleStatus() {
     if (!data) return;
     const next = data.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
@@ -433,6 +470,26 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
       toast.push(errorText(err, "Could not update the project"), "error");
     } finally {
       setSwitching(false);
+    }
+  }
+
+  async function deleteProject() {
+    if (!data) return;
+    setDeletingBusy(true);
+    setDeleteError(null);
+    try {
+      await api.projects.remove(apiClient, data.id);
+      toast.push(`Project "${data.name}" deleted`, "success");
+      void sendNativeNotification(
+        "Auto Backlinker",
+        `The project ${data.name} was deleted. The websites stay in the website list.`,
+      );
+      setDeleting(false);
+      navigate("projects");
+    } catch (err) {
+      setDeleteError(errorText(err, "Could not delete the project"));
+    } finally {
+      setDeletingBusy(false);
     }
   }
 
@@ -471,11 +528,31 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
             <Button
               size="sm"
               variant="outline"
+              disabled={!data}
+              onClick={() => setEditing(true)}
+            >
+              Edit project
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               loading={switching}
               disabled={!data}
               onClick={toggleStatus}
             >
               {data?.status === "ACTIVE" ? "Pause" : "Resume"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-danger"
+              disabled={!data}
+              onClick={() => {
+                setDeleteError(null);
+                setDeleting(true);
+              }}
+            >
+              Delete project
             </Button>
             <Button size="sm" variant="outline" onClick={project.reload}>
               Refresh
@@ -572,6 +649,148 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           ) : (
             <p className="text-xs text-content-subtle">No statistics available.</p>
           )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Report & results"
+          description="What happened on every website of this project"
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => openReportForProject(projectId)}
+            >
+              Open the full report
+            </Button>
+          }
+        />
+        <CardBody className="p-0">
+          {reportStats.loading && !reportStats.data ? (
+            <div className="p-4">
+              <LoadingBlock rows={3} />
+            </div>
+          ) : null}
+
+          {reportStats.error ? (
+            <div className="p-4">
+              <ErrorBlock
+                message={reportStats.error}
+                onRetry={reportStats.reload}
+              />
+            </div>
+          ) : null}
+
+          {reportStats.data ? (
+            <>
+              <div className="grid grid-cols-2 gap-3 border-b border-line p-4 md:grid-cols-5">
+                <MetricTile
+                  label="Opportunities"
+                  value={formatNumber(reportTotals.opportunities)}
+                />
+                <MetricTile
+                  label="Submitted"
+                  value={formatNumber(reportTotals.submitted)}
+                  tone="accent"
+                />
+                <MetricTile
+                  label="Verified"
+                  value={formatNumber(reportTotals.verified)}
+                  tone="success"
+                />
+                <MetricTile
+                  label="Failed"
+                  value={formatNumber(reportTotals.failed)}
+                  tone="danger"
+                />
+                <MetricTile
+                  label="Pending"
+                  value={formatNumber(reportTotals.pending)}
+                  tone="warning"
+                />
+              </div>
+
+              {reportRows.length > 0 ? (
+                <Table>
+                  <thead>
+                    <tr>
+                      <Th>Domain</Th>
+                      <Th>Category</Th>
+                      <Th className="text-right">Opportunities</Th>
+                      <Th className="text-right">Submitted</Th>
+                      <Th className="text-right">Verified</Th>
+                      <Th className="text-right">Failed</Th>
+                      <Th className="text-right">Pending</Th>
+                      <Th>Last attempt</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportRows.map((row) => (
+                      <tr
+                        key={`${row.domain}-${row.name}-${row.last_attempt_at}`}
+                      >
+                        <Td>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-content">
+                              {row.domain || row.name || "-"}
+                            </p>
+                            {row.name && row.name !== row.domain ? (
+                              <p className="truncate text-xs text-content-subtle">
+                                {row.name}
+                              </p>
+                            ) : null}
+                          </div>
+                        </Td>
+                        <Td className="whitespace-nowrap text-xs">
+                          {row.category ? row.category.replace(/_/g, " ") : "-"}
+                        </Td>
+                        <Td className="text-right text-xs tabular-nums">
+                          {formatNumber(row.opportunities)}
+                        </Td>
+                        <Td className="text-right text-xs tabular-nums text-accent">
+                          {formatNumber(row.submitted)}
+                        </Td>
+                        <Td className="text-right text-xs tabular-nums text-success">
+                          {formatNumber(row.verified)}
+                        </Td>
+                        <Td className="text-right text-xs tabular-nums text-danger">
+                          {formatNumber(row.failed)}
+                        </Td>
+                        <Td className="text-right text-xs tabular-nums text-content-muted">
+                          {formatNumber(row.pending)}
+                        </Td>
+                        <Td className="whitespace-nowrap text-xs text-content-muted">
+                          {formatDate(row.last_attempt_at)}
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+              ) : (
+                <div className="p-4">
+                  <NothingYet
+                    title="Nothing happened yet"
+                    description="The report fills as soon as a website of this project is worked on. Add websites from the website list to get started."
+                    action={
+                      <Button
+                        size="sm"
+                        onClick={() => setChoosingWebsites(true)}
+                      >
+                        Add from the website list
+                      </Button>
+                    }
+                  />
+                </div>
+              )}
+            </>
+          ) : null}
+
+          <p className="border-t border-line px-4 py-3 text-xs text-content-muted">
+            Verified links are never submitted again. Use Imports to bring a
+            report back in - verified rows are skipped, failed rows are
+            retried.
+          </p>
         </CardBody>
       </Card>
 
@@ -853,6 +1072,31 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         defaultTargetLandingPage={
           data?.target_website || landingPages[0]?.url || ""
         }
+      />
+
+      <ProjectEditDialog
+        open={editing}
+        project={data}
+        onClose={() => setEditing(false)}
+        onSaved={() => {
+          project.reload();
+          websites.reload();
+          reportStats.reload();
+        }}
+      />
+
+      <ProjectDeleteDialog
+        open={deleting}
+        project={data}
+        counts={counts ?? null}
+        busy={deletingBusy}
+        error={deleteError}
+        onCancel={() => {
+          if (deletingBusy) return;
+          setDeleting(false);
+          setDeleteError(null);
+        }}
+        onConfirm={() => void deleteProject()}
       />
     </div>
   );

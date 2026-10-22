@@ -199,6 +199,8 @@ export type StorageMode = (typeof StorageMode)[keyof typeof StorageMode];
 export const ReportSheet = {
   EXECUTIVE_SUMMARY: "Executive Summary",
   ALL_OPPORTUNITIES: "All Opportunities",
+  /** One row per website with the counters of the work that was done. */
+  PER_WEBSITE: "Per website",
   VERIFIED_BACKLINKS: "Verified Backlinks",
   PENDING_TASKS: "Pending Tasks",
   FAILED_TASKS: "Failed Tasks",

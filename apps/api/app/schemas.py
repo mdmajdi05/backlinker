@@ -777,6 +777,7 @@ class ReportRetryOut(BaseModel):
     retried: int = 0
     skipped: int = 0
     task_ids: list[str] = []
+    message: str = ""
 
 
 # --------------------------------------------------------------------------

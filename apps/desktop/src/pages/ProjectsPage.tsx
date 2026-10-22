@@ -19,10 +19,22 @@ import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { useToast } from "@autobacklinker/ui";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
+import {
+  ProjectDeleteDialog,
+  ProjectEditDialog,
+} from "../components/ProjectEditDialog";
+import { sendNativeNotification } from "../lib/backend";
 import { formatDate, formatNumber } from "../lib/format";
-import type { Project } from "@autobacklinker/shared-types";
+import type { Project, ProjectCounts } from "@autobacklinker/shared-types";
 
 const PAGE_SIZE = 20;
+
+function errorText(error: unknown, fallback: string): string {
+  if (error && typeof error === "object" && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return fallback;
+}
 
 export function ProjectsPage() {
   const toast = useToast();
@@ -34,6 +46,12 @@ export function ProjectsPage() {
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
 
+  // The project that is edited or deleted at the moment.
+  const [editing, setEditing] = React.useState<Project | null>(null);
+  const [deleting, setDeleting] = React.useState<Project | null>(null);
+  const [deletingBusy, setDeletingBusy] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
+
   const projects = useAsync(
     () =>
       api.projects.list(apiClient, {
@@ -44,6 +62,46 @@ export function ProjectsPage() {
   );
 
   const items = projects.data?.items ?? [];
+  const itemIds = items.map((project) => project.id).join(",");
+
+  // The list of the backend only knows the projects themselves - the counters
+  // and the execution environment come from the detail of every project of the
+  // page.  A project that does not answer keeps an empty counter: the view
+  // shows a dash instead of a number it does not have.
+  const [details, setDetails] = React.useState<
+    Record<string, { counts?: ProjectCounts; environment?: string }>
+  >({});
+
+  React.useEffect(() => {
+    if (!itemIds) {
+      setDetails({});
+      return;
+    }
+    let cancelled = false;
+    const ids = itemIds.split(",");
+    void Promise.all(
+      ids.map(async (id) => {
+        try {
+          const detail = await api.projects.get(apiClient, id);
+          return [
+            id,
+            {
+              counts: detail.counts,
+              environment: detail.settings?.execution_environment,
+            },
+          ] as const;
+        } catch {
+          return [id, {}] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setDetails(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemIds]);
 
   async function createProject() {
     setSaving(true);
@@ -87,6 +145,31 @@ export function ProjectsPage() {
     }
   }
 
+  async function deleteProject() {
+    if (!deleting) return;
+    setDeletingBusy(true);
+    setDeleteError(null);
+    try {
+      await api.projects.remove(apiClient, deleting.id);
+      toast.push(`Project "${deleting.name}" deleted`, "success");
+      void sendNativeNotification(
+        "Auto Backlinker",
+        `The project ${deleting.name} was deleted. The websites stay in the website list.`,
+      );
+      setDeleting(null);
+      // The last row of the last page is gone - go one page back.
+      if (items.length === 1 && page > 1) {
+        setPage(page - 1);
+      } else {
+        projects.reload();
+      }
+    } catch (err) {
+      setDeleteError(errorText(err, "Could not delete the project"));
+    } finally {
+      setDeletingBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -105,9 +188,9 @@ export function ProjectsPage() {
       {!projects.loading && items.length === 0 && !projects.error ? (
         <NothingYet
           title="No projects yet"
-          description="Create a project to start tracking backlink opportunities for a website."
+          description="Create a project to start tracking backlink opportunities for a website. Every project has its own report - and it can be edited or deleted at any time."
           action={
-            <Button onClick={() => setCreating(true)}>New project</Button>
+            <Button onClick={() => setCreating(true)}>Create project</Button>
           }
         />
       ) : null}
@@ -126,17 +209,21 @@ export function ProjectsPage() {
                   <Th>Target</Th>
                   <Th>Status</Th>
                   <Th>Execution</Th>
-                  <Th className="text-right">Approved</Th>
+                  <Th className="text-right">Opportunities</Th>
                   <Th className="text-right">Queued</Th>
                   <Th className="text-right">Verified</Th>
+                  <Th className="text-right">Failed</Th>
                   <Th>Updated</Th>
                   <Th />
                 </tr>
               </thead>
               <tbody>
-                {items.map((project) => (
+                {items.map((project) => {
+                  const detail = details[project.id];
+                  const counts = detail?.counts;
+                  return (
                   <tr key={project.id}>
-                    <Td>
+                    <Td className="max-w-[240px]">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-content">
                           {project.name}
@@ -146,7 +233,7 @@ export function ProjectsPage() {
                         </p>
                       </div>
                     </Td>
-                    <Td className="max-w-[220px] truncate text-xs">
+                    <Td className="max-w-[180px] truncate text-xs">
                       {project.target_website}
                     </Td>
                     <Td>
@@ -154,32 +241,56 @@ export function ProjectsPage() {
                     </Td>
                     <Td>
                       <Badge tone="neutral">
-                        {project.settings?.execution_environment ?? "CLOUD"}
+                        {detail?.environment ?? "-"}
                       </Badge>
                     </Td>
-                    <Td className="text-right text-xs">
-                      {formatNumber(project.counts?.approved)}
+                    <Td className="text-right text-xs tabular-nums">
+                      {formatNumber(counts?.opportunities)}
                     </Td>
-                    <Td className="text-right text-xs">
-                      {formatNumber(project.counts?.queued)}
+                    <Td className="text-right text-xs tabular-nums">
+                      {formatNumber(counts?.queued)}
                     </Td>
-                    <Td className="text-right text-xs">
-                      {formatNumber(project.counts?.verified_live)}
+                    <Td className="text-right text-xs tabular-nums text-success">
+                      {formatNumber(counts?.verified_live)}
+                    </Td>
+                    <Td className="text-right text-xs tabular-nums text-danger">
+                      {formatNumber(counts?.failed)}
                     </Td>
                     <Td className="whitespace-nowrap text-xs text-content-muted">
                       {formatDate(project.updated_at)}
                     </Td>
                     <Td className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => toggleStatus(project)}
-                      >
-                        {project.status === "ACTIVE" ? "Pause" : "Resume"}
-                      </Button>
+                      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setEditing(project)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => toggleStatus(project)}
+                        >
+                          {project.status === "ACTIVE" ? "Pause" : "Resume"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-danger"
+                          onClick={() => {
+                            setDeleteError(null);
+                            setDeleting(project);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </Td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </Table>
             <Pagination
@@ -243,6 +354,27 @@ export function ProjectsPage() {
           ) : null}
         </div>
       </Dialog>
+
+      <ProjectEditDialog
+        open={Boolean(editing)}
+        project={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => projects.reload()}
+      />
+
+      <ProjectDeleteDialog
+        open={Boolean(deleting)}
+        project={deleting}
+        counts={deleting ? details[deleting.id]?.counts ?? null : null}
+        busy={deletingBusy}
+        error={deleteError}
+        onCancel={() => {
+          if (deletingBusy) return;
+          setDeleting(null);
+          setDeleteError(null);
+        }}
+        onConfirm={() => void deleteProject()}
+      />
     </div>
   );
 }

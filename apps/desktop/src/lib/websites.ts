@@ -31,10 +31,24 @@ import { titleCase } from "./format";
 /* ------------------------------------------------------------------ */
 
 /**
+ * The state a removed website carries.
+ *
+ * The delete action does not destroy a website - it takes it out of the list
+ * and marks it as `DELETED`.  The backend hides those rows from the normal
+ * list and only shows them when the filter asks for them (the recycle bin).
+ */
+export const REMOVED_WEBSITE_STATUS = "DELETED";
+
+/** The badge of a website that lives in the recycle bin. */
+export const REMOVED_WEBSITE_LABEL = "Removed";
+
+/**
  * The states an operator may set by hand.
  *
  * `DISCOVERED` and `DUPLICATE` exist in the data model but are set by the
- * backend - the operator picks one of the states below.
+ * backend - the operator picks one of the states below.  `DELETED` is not one
+ * of them: a website leaves the list through the delete action, not through
+ * the state drop-down.
  */
 export const WEBSITE_STATUS_CHOICES = [
   "ACTIVE",
@@ -43,7 +57,6 @@ export const WEBSITE_STATUS_CHOICES = [
   "NOT_WORKING",
   "EXCLUDED",
   "REJECTED",
-  "DELETED",
 ] as const;
 
 export type WebsiteStatusChoice = (typeof WEBSITE_STATUS_CHOICES)[number];
@@ -55,7 +68,7 @@ const STATUS_LABELS: Record<string, string> = {
   NOT_WORKING: "Not working",
   EXCLUDED: "Excluded",
   REJECTED: "Rejected",
-  DELETED: "Deleted",
+  DELETED: REMOVED_WEBSITE_LABEL,
   DISCOVERED: "Discovered",
   DUPLICATE: "Duplicate",
 };
@@ -65,6 +78,16 @@ export function websiteStatusLabel(status: string | null | undefined): string {
   const key = (status ?? "").trim().toUpperCase();
   if (!key) return "Unknown";
   return STATUS_LABELS[key] ?? titleCase(key);
+}
+
+/**
+ * True when the website was removed from the list.
+ *
+ * A removed website lives in the recycle bin: it is hidden in the normal
+ * view, its history is kept and it can be restored.
+ */
+export function isRemovedWebsite(status: string | null | undefined): boolean {
+  return (status ?? "").trim().toUpperCase() === REMOVED_WEBSITE_STATUS;
 }
 
 /** The states of the filter - every state plus "all". */
@@ -264,6 +287,25 @@ export async function updateWebsite(
 /** Removes one website from the central list. */
 export async function removeWebsite(id: string): Promise<void> {
   await api.websites.remove(apiClient, id);
+}
+
+/**
+ * Brings a removed website back into the central list.
+ *
+ * The website was only *removed* - its opportunities, its tasks and its
+ * verification records were never thrown away.
+ */
+export async function restoreWebsite(id: string): Promise<WebsiteListItem> {
+  const raw = await api.websites.restore(apiClient, id);
+  return normalizeWebsite(raw);
+}
+
+/**
+ * Deletes a website forever - the website, its opportunities and its tasks
+ * are gone.  This cannot be undone.
+ */
+export async function purgeWebsite(id: string): Promise<void> {
+  await api.websites.purge(apiClient, id);
 }
 
 export interface WebsiteImportInput {

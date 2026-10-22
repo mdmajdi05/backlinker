@@ -185,6 +185,45 @@ def delete_website(website_id: str, db: DbSession, user: CurrentUser) -> None:
     record_audit(db, "delete", "website", website.id, actor_id=user.id)
 
 
+@router.post("/websites/{website_id}/restore", response_model=WebsiteListItem)
+def restore_website(website_id: str, db: DbSession, user: CurrentUser) -> WebsiteListItem:
+    """Bring a removed website back into the central list.
+
+    This is the counterpart of the delete: the website was only *removed* from
+    the list, its history was never thrown away.
+    """
+    website = _entry(db, website_id)
+    restored = website_service.restore_entry(db, website)
+    record_event(
+        db,
+        "website.restored",
+        f"Restored {restored.domain} in the central list",
+        website_id=restored.id,
+    )
+    record_audit(db, "restore", "website", restored.id, actor_id=user.id)
+    return WebsiteListItem(**website_service.item_payload(db, [restored])[0])
+
+
+@router.delete("/websites/{website_id}/purge", status_code=status.HTTP_204_NO_CONTENT)
+def purge_website(website_id: str, db: DbSession, user: CurrentUser) -> None:
+    """Delete a website **forever** - including its opportunities and tasks.
+
+    This cannot be undone.  It exists for the cases where a site should not
+    even be visible in the history any more (a wrong import, a site that was
+    never real).
+    """
+    website = _entry(db, website_id)
+    domain = website.domain
+    removed = website_service.purge_entry(db, website)
+    record_event(
+        db,
+        "website.purged",
+        f"Purged {domain} and its history",
+        metadata={"url": website.opportunity_url, "opportunities": removed},
+    )
+    record_audit(db, "purge", "website", website.id, actor_id=user.id, after={"domain": domain})
+
+
 @router.post("/websites/import", response_model=WebsiteImportResult)
 async def import_websites(
     db: DbSession,

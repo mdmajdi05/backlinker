@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { ExportJob } from "@autobacklinker/shared-types";
 import {
@@ -32,20 +33,48 @@ import { websiteStatusLabel } from "@/lib/websites";
 const PAGE_SIZE = 20;
 
 export default function ReportsPage() {
+  /* The search parameters are read inside a Suspense boundary - Next.js
+   * renders the page on the server first. */
+  return (
+    <React.Suspense
+      fallback={
+        <Card>
+          <CardBody className="py-8 text-center text-sm text-content-muted">Loading…</CardBody>
+        </Card>
+      }
+    >
+      <ReportsView />
+    </React.Suspense>
+  );
+}
+
+function ReportsView() {
   const toast = useToast();
   const action = useAction();
   const retryAction = useAction();
+  const searchParams = useSearchParams();
+
+  /* The project of the URL preselects the scope of the report - the detail
+   * page of a project links here with `/reports?project_id=<id>`. */
+  const requestedProjectId = searchParams.get("project_id") ?? "";
 
   const [page, setPage] = React.useState(1);
-  const [projectId, setProjectId] = React.useState("");
-  const [scope, setScope] = React.useState("workspace");
+  const [projectId, setProjectId] = React.useState(requestedProjectId);
+  const [scope, setScope] = React.useState(requestedProjectId ? "project" : "workspace");
   const [format, setFormat] = React.useState<"xlsx" | "csv">("xlsx");
 
   /* The per website statistics and the retry of the failed submissions. */
-  const [statsProjectId, setStatsProjectId] = React.useState("");
+  const [statsProjectId, setStatsProjectId] = React.useState(requestedProjectId);
   const [retryExportId, setRetryExportId] = React.useState("");
   const [retryMessage, setRetryMessage] = React.useState<string | null>(null);
   const [retryUnavailable, setRetryUnavailable] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!requestedProjectId) return;
+    setScope("project");
+    setProjectId(requestedProjectId);
+    setStatsProjectId(requestedProjectId);
+  }, [requestedProjectId]);
 
   const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
   const jobs = useResource(
@@ -165,6 +194,12 @@ export default function ReportsPage() {
                     ))}
                   </Select>
                 </Field>
+              ) : null}
+              {requestedProjectId ? (
+                <p className="text-xs text-content-subtle">
+                  The scope comes from the link you opened - the report covers that project
+                  only.
+                </p>
               ) : null}
               <Field label="Format">
                 <Select

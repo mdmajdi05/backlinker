@@ -617,6 +617,10 @@ export const api = {
     create: (c: ApiClient, body: Record<string, unknown>) => c.post<WebsiteListItem>("/api/v1/websites", body),
     update: (c: ApiClient, id: string, body: Record<string, unknown>) => c.patch<WebsiteListItem>(`/api/v1/websites/${id}`, body),
     remove: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/websites/${id}`),
+    /** Bring a removed website back into the list. */
+    restore: (c: ApiClient, id: string) => c.post<WebsiteListItem>(`/api/v1/websites/${id}/restore`),
+    /** Delete a website forever, including its opportunities and tasks. */
+    purge: (c: ApiClient, id: string) => c.delete<void>(`/api/v1/websites/${id}/purge`),
     importFile: (c: ApiClient, file: File, fields: Record<string, string> = {}) => c.upload<WebsiteImportResult>("/api/v1/websites/import", file, fields),
     stats: (c: ApiClient, projectId?: string) => c.get<WebsiteStatsRow[]>("/api/v1/websites/stats", { project_id: projectId }),
     chooseForProject: (c: ApiClient, projectId: string, body: Record<string, unknown>) => c.post<WebsiteChooseResult>(`/api/v1/projects/${projectId}/websites/choose`, body),

@@ -2,23 +2,29 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { Project } from "@autobacklinker/shared-types";
 import {
+  Alert,
   Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
   MetricTile,
+  Skeleton,
   StatusBadge,
+  Table,
+  Td,
+  Th,
 } from "@autobacklinker/ui";
-import { apiClient } from "@/lib/api";
+import { apiClient, isNotFoundError } from "@/lib/api";
 import { useResource } from "@/lib/hooks";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatDateTime, formatNumber, humanize } from "@/lib/format";
+import { CATEGORY_LABELS } from "@/lib/constants";
 import { PageHeader } from "@/components/PageHeader";
-import { AsyncSection, CardSkeleton, ErrorPanel } from "@/components/States";
+import { AsyncSection, CardSkeleton, ErrorPanel, TableSkeleton } from "@/components/States";
 import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 import { AddToProjectDialog } from "@/components/AddToProjectDialog";
@@ -26,6 +32,7 @@ import { WebsiteListPanel } from "@/components/WebsiteListPanel";
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const projectId = params.id;
   const [addOpen, setAddOpen] = React.useState(false);
 
@@ -38,8 +45,36 @@ export default function ProjectDetailPage() {
     () => api.dashboard.metrics(apiClient, projectId),
     [projectId],
   );
+  /* The report of the project: one row per website of the project. */
+  const report = useResource(() => api.websites.stats(apiClient, projectId), [projectId]);
 
   const data: Project | null = project.data;
+
+  /* The websites that failed come first - they are the ones to work on. */
+  const reportRows = React.useMemo(() => {
+    const rows = [...(report.data ?? [])];
+    rows.sort((a, b) => {
+      if (b.failed !== a.failed) return b.failed - a.failed;
+      if (b.opportunities !== a.opportunities) return b.opportunities - a.opportunities;
+      return (a.domain ?? "").localeCompare(b.domain ?? "");
+    });
+    return rows;
+  }, [report.data]);
+
+  /* The counters of the project - the sum of the rows of the report. */
+  const totals = React.useMemo(() => {
+    const sum = { opportunities: 0, submitted: 0, verified: 0, failed: 0, pending: 0 };
+    for (const row of reportRows) {
+      sum.opportunities += row.opportunities;
+      sum.submitted += row.submitted;
+      sum.verified += row.verified;
+      sum.failed += row.failed;
+      sum.pending += row.pending;
+    }
+    return sum;
+  }, [reportRows]);
+
+  const reportUnavailable = Boolean(report.error) && isNotFoundError(report.error);
 
   return (
     <div className="space-y-4">
@@ -146,6 +181,146 @@ export default function ProjectDetailPage() {
                 ) : (
                   <p className="text-xs text-content-subtle">No statistics available.</p>
                 )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Report & results"
+                description="What happened in this project - the counters of every website"
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push(`/reports?project_id=${projectId}`)}
+                  >
+                    Open the full report
+                  </Button>
+                }
+              />
+              <CardBody className="space-y-4">
+                {report.loading && !report.data ? (
+                  <div
+                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
+                    aria-busy="true"
+                    aria-live="polite"
+                  >
+                    <span className="sr-only">Loading the report…</span>
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <Skeleton key={index} className="h-14 w-full" />
+                    ))}
+                  </div>
+                ) : report.error ? (
+                  reportUnavailable ? (
+                    <Alert
+                      tone="neutral"
+                      title="The per website statistics are not available yet"
+                      action={
+                        <Button variant="outline" size="sm" onClick={report.reload}>
+                          Try again
+                        </Button>
+                      }
+                    >
+                      The backend answered 404 for{" "}
+                      <code className="font-mono text-[11px]">GET /api/v1/websites/stats</code>.
+                      The report of the project can not be shown until the endpoint exists - the
+                      counters above stay correct.
+                    </Alert>
+                  ) : (
+                    <ErrorPanel
+                      error={report.error}
+                      onRetry={report.reload}
+                      title="The report could not be loaded"
+                    />
+                  )
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                      <MetricTile
+                        label="Opportunities"
+                        value={formatNumber(totals.opportunities)}
+                      />
+                      <MetricTile label="Submitted" value={formatNumber(totals.submitted)} />
+                      <MetricTile label="Verified" value={formatNumber(totals.verified)} />
+                      <MetricTile label="Failed" value={formatNumber(totals.failed)} />
+                      <MetricTile label="Pending" value={formatNumber(totals.pending)} />
+                    </div>
+
+                    <AsyncSection
+                      loading={report.loading}
+                      error={report.error}
+                      data={report.data}
+                      onRetry={report.reload}
+                      isEmpty={reportRows.length === 0}
+                      emptyTitle="No website ran in this project yet"
+                      emptyDescription="As soon as opportunities are submitted, every website of the project is listed here with its counters."
+                      skeleton={<TableSkeleton rows={6} columns={8} />}
+                    >
+                      <Table>
+                        <thead>
+                          <tr>
+                            <Th>Website</Th>
+                            <Th className="w-48">Category</Th>
+                            <Th className="w-28 text-right">Opportunities</Th>
+                            <Th className="w-24 text-right">Submitted</Th>
+                            <Th className="w-24 text-right">Verified</Th>
+                            <Th className="w-24 text-right">Failed</Th>
+                            <Th className="w-24 text-right">Pending</Th>
+                            <Th className="w-40">Last attempt</Th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {reportRows.map((row) => (
+                            <tr key={`${row.domain}-${row.name}`}>
+                              <Td>
+                                <p className="font-medium text-content">
+                                  {row.name || row.domain}
+                                </p>
+                                <p className="max-w-xs truncate text-xs text-content-muted">
+                                  {row.domain}
+                                </p>
+                              </Td>
+                              <Td>
+                                <Badge tone="neutral">
+                                  {CATEGORY_LABELS[row.category] ?? humanize(row.category)}
+                                </Badge>
+                              </Td>
+                              <Td className="text-right tabular-nums">
+                                {formatNumber(row.opportunities)}
+                              </Td>
+                              <Td className="text-right tabular-nums">
+                                {formatNumber(row.submitted)}
+                              </Td>
+                              <Td className="text-right tabular-nums">
+                                {formatNumber(row.verified)}
+                              </Td>
+                              <Td className="text-right tabular-nums">
+                                {row.failed > 0 ? (
+                                  <span className="font-semibold text-danger">
+                                    {formatNumber(row.failed)}
+                                  </span>
+                                ) : (
+                                  formatNumber(row.failed)
+                                )}
+                              </Td>
+                              <Td className="text-right tabular-nums">
+                                {formatNumber(row.pending)}
+                              </Td>
+                              <Td className="text-xs text-content-muted">
+                                {formatDateTime(row.last_attempt_at)}
+                              </Td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </AsyncSection>
+                  </>
+                )}
+
+                <p className="border-t border-line pt-3 text-xs text-content-muted">
+                  Verified links are never submitted again. Use Import centre to bring a report
+                  back in - verified rows are skipped, failed rows are retried.
+                </p>
               </CardBody>
             </Card>
 

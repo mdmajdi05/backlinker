@@ -58,7 +58,8 @@ __all__ = [
     "scope_project_id",
 ]
 
-#: Sheet names (mirrors ``ReportSheet`` in ``packages/shared-types``).
+#: Sheet names (the shared contract ``ReportSheet`` plus the per website
+#: sheet, which is only used by the report itself).
 REPORT_SHEETS: tuple[str, ...] = (
     "Executive Summary",
     "All Opportunities",
@@ -219,8 +220,7 @@ def generate_report(db: Session, job: ExportJob) -> None:
     if suffix == "csv":
         # The flat CSV carries the opportunities and, after them, one row per
         # website with the counters of the work.
-        csv_rows = list(data["opportunities"]) + list(data["websites"])
-        _write_csv(path, csv_rows)
+        _write_csv(path, data)
     else:
         _write_workbook(path, data)
 

@@ -20,7 +20,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.base import utcnow
@@ -68,6 +68,7 @@ DEFAULT_STATUS = "ACTIVE"
 
 #: The status a removed website carries (the rows stay, the history stays).
 DELETED_STATUS = "DELETED"
+ACTIVE_STATUS = "ACTIVE"
 
 #: The category a website gets when nothing else is known.
 DEFAULT_CATEGORY = "BUSINESS_DIRECTORY"
@@ -429,6 +430,32 @@ def delete_entry(db: Session, website: Website) -> Website:
     db.commit()
     db.refresh(website)
     return website
+
+
+def restore_entry(db: Session, website: Website) -> Website:
+    """Bring a removed website back into the list."""
+    website.status = ACTIVE_STATUS
+    website.version += 1
+    website.updated_at = utcnow()
+    db.commit()
+    db.refresh(website)
+    return website
+
+
+def purge_entry(db: Session, website: Website) -> int:
+    """Delete a website forever - including its opportunities and tasks.
+
+    Returns the number of opportunities that were removed with it.
+    """
+    opportunities = list(
+        db.execute(select(Opportunity).where(Opportunity.website_id == website.id)).scalars().all()
+    )
+    for opportunity in opportunities:
+        db.execute(delete(Task).where(Task.opportunity_id == opportunity.id))
+        db.delete(opportunity)
+    db.delete(website)
+    db.commit()
+    return len(opportunities)
 
 
 # --------------------------------------------------------------------------

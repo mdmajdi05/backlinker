@@ -17,6 +17,9 @@ import type { Project } from "@autobacklinker/shared-types";
  * The list is the single place where the sites of every project live: it is
  * filled by hand or by a spreadsheet, the state of a site is changed here and
  * a project picks the sites it wants from the list.
+ *
+ * A website that is removed leaves the list - it waits in the recycle bin
+ * (the "Deleted" filter) until it is restored or deleted forever.
  */
 export function WebsiteListPage() {
   const [filters, setFilters] = React.useState<WebsiteListFilters>(
@@ -25,6 +28,7 @@ export function WebsiteListPage() {
   const [searchInput, setSearchInput] = React.useState("");
   const [adding, setAdding] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
+  const [removedCount, setRemovedCount] = React.useState<number | null>(null);
 
   const projects = useAsync(
     () => api.projects.list(apiClient, { page: 1, page_size: 100 }),
@@ -53,11 +57,22 @@ export function WebsiteListPage() {
     setFilters(EMPTY_WEBSITE_FILTERS);
   }
 
+  /** Opens the recycle bin - the list shows the removed websites only. */
+  function showRemoved(open: boolean) {
+    setFilters((previous) => ({
+      ...previous,
+      removed: open,
+      // The state filter and the recycle bin do not work together.
+      status: open ? "" : previous.status,
+    }));
+  }
+
   const active =
     filters.search ||
     filters.category ||
     filters.niche ||
     filters.status ||
+    filters.removed ||
     filters.project_id;
 
   return (
@@ -84,7 +99,7 @@ export function WebsiteListPage() {
       <Card>
         <CardHeader
           title="Filters"
-          description="Search by name or domain, or narrow the list down by category, niche, state and project."
+          description="Search by name or domain, or narrow the list down by category, niche, state and project. A website you delete leaves the list - it waits in the recycle bin until you restore it or delete it forever."
           action={
             <div className="flex gap-2">
               {active ? (
@@ -131,6 +146,7 @@ export function WebsiteListPage() {
               <Field label="State">
                 <Select
                   value={filters.status}
+                  disabled={filters.removed}
                   onChange={(event) => update({ status: event.target.value })}
                   aria-label="Filter by state"
                 >
@@ -140,6 +156,33 @@ export function WebsiteListPage() {
                     </option>
                   ))}
                 </Select>
+              </Field>
+            </div>
+            <div className="w-48">
+              <Field
+                label="Recycle bin"
+                hint="The websites that were removed from the list."
+              >
+                <button
+                  type="button"
+                  onClick={() => showRemoved(!filters.removed)}
+                  aria-pressed={filters.removed}
+                  aria-label={
+                    filters.removed
+                      ? "Close the recycle bin and show the active websites again"
+                      : "Show the removed websites (the recycle bin)"
+                  }
+                  className={`inline-flex h-9 w-full items-center justify-between gap-2 rounded-md border px-3 text-sm font-medium transition-colors ${
+                    filters.removed
+                      ? "border-accent bg-accent-soft text-accent"
+                      : "border-line-strong bg-surface text-content-muted hover:text-content"
+                  }`}
+                >
+                  <span>Deleted</span>
+                  <span className="rounded-full bg-surface-sunken px-1.5 py-0.5 text-[11px] text-content-muted">
+                    {removedCount ?? 0}
+                  </span>
+                </button>
               </Field>
             </div>
             <div className="w-64">
@@ -167,6 +210,7 @@ export function WebsiteListPage() {
       <WebsiteListPanel
         filters={filters}
         onFiltersChange={setFilters}
+        onRemovedCountChange={setRemovedCount}
         projects={projects.data?.items ?? []}
         addOpen={adding}
         onAddOpenChange={setAdding}

@@ -727,6 +727,7 @@ def check_report(db: Session, project: Project) -> None:
     expected = [
         "Executive Summary",
         "All Opportunities",
+        "Per website",
         "Verified Backlinks",
         "Pending Tasks",
         "Failed Tasks",
