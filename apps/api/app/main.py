@@ -16,6 +16,7 @@ from app.api.routes import (
     auth,
     automation,
     autopilot,
+    backlink_campaign,
     campaigns,
     dataflow,
     discovery,
@@ -215,6 +216,7 @@ def create_app() -> FastAPI:
     app.include_router(misc.events_router, prefix=prefix)
     app.include_router(automation.router, prefix=prefix)
     app.include_router(campaigns.router, prefix=prefix)
+    app.include_router(backlink_campaign.router, prefix=prefix)
     app.include_router(storage.router, prefix=prefix)
     app.include_router(sync.router, prefix=prefix)
     app.include_router(ai.router, prefix=prefix)

@@ -23,6 +23,7 @@ import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { AutoPilotPanel } from "../components/AutoPilotPanel";
+import { CampaignPanel } from "../components/CampaignPanel";
 import { AddToProjectDialog } from "../components/AddToProjectDialog";
 import {
   ProjectDeleteDialog,
@@ -355,6 +356,9 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
   const [deleting, setDeleting] = React.useState(false);
   const [deletingBusy, setDeletingBusy] = React.useState(false);
   const [deleteError, setDeleteError] = React.useState<string | null>(null);
+  /* Bumped after the website picker added rows, so the campaign shows them
+     immediately instead of waiting for its next refresh. */
+  const [campaignReload, setCampaignReload] = React.useState(0);
 
   const project = useAsync(
     () => api.projects.get(apiClient, projectId),
@@ -586,7 +590,30 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+      <CampaignPanel
+        projectId={projectId}
+        onChanged={() => {
+          project.reload();
+          linkedWebsites.reload();
+          reportStats.reload();
+          opportunities.reload();
+        }}
+        onPickFromList={() => setChoosingWebsites(true)}
+        onOpenReport={() => openReportForProject(projectId)}
+        reloadToken={campaignReload}
+      />
+
+      <details className="rounded-lg border border-line bg-surface">
+        <summary className="cursor-pointer list-none px-4 py-3">
+          <span className="text-sm font-semibold text-content">
+            Advanced: counts, report, auto pilot and execution settings
+          </span>
+          <span className="ml-2 text-xs font-normal text-content-muted">
+            Optional - the campaign above works without it.
+          </span>
+        </summary>
+        <div className="flex flex-col gap-4 border-t border-line p-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <MetricTile
           label="Opportunities"
           value={formatNumber(counts?.opportunities)}
@@ -1003,13 +1030,18 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           ) : null}
         </CardBody>
       </Card>
+        </div>
+      </details>
 
       <AddToProjectDialog
         projectId={projectId}
         projectName={data?.name}
         open={choosingWebsites}
         onClose={() => setChoosingWebsites(false)}
-        onAdded={() => linkedWebsites.reload()}
+        onAdded={() => {
+          linkedWebsites.reload();
+          setCampaignReload((value) => value + 1);
+        }}
         defaultAnchorText={
           profile.data?.preferred_anchors?.[0] || profile.data?.name || ""
         }

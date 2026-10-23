@@ -32,11 +32,14 @@ blocked - 41 checks, 0 external requests.
                          (manual entry or Excel import, editable, deletable,
                           status: ACTIVE / NOT_WORKING / … - deleting moves a
                           site to the recycle bin, where it can be restored)
-4. Choose                the project picks the sites it wants from that list
-                         (filterable by category and niche)
-5. Auto pilot            approving a site queues it automatically - the worker
-                          submits in the background, retries, and never
-                          duplicates finished work
+4. Campaign              the project page: paste one or many URLs or import a
+                         spreadsheet, press "Start backlinks" and watch the live
+                         table (data filled, status, last update).  The websites
+                         are added to the ONE central list and linked to the
+                         project.
+5. Auto pilot            optional: approving a site queues it automatically -
+                          the worker submits in the background, retries, and
+                          never duplicates finished work
 6. Details               the site asks for a name, a description, an address…
                           the operator fills what is missing, the assistant
                           derives what it can from the profile and says what
@@ -45,6 +48,21 @@ blocked - 41 checks, 0 external requests.
 8. Report                per website: how many submissions worked, how many not
 9. Re-import             verified → skip, failed → retry, pending → queue
 ```
+
+### The campaign cockpit (the project page)
+
+The project page answers three questions on one screen - *which websites*,
+*how far is each* and *what is left*:
+
+| Element | What it does |
+| ------- | ------------ |
+| Add websites | one URL, or many separated by a comma / space / new line; each is added to the central list once and linked to the project |
+| Import Excel / CSV | the same spreadsheet columns as the central list; the imported rows are linked to the project in one step |
+| Pick from list | choose existing websites of the central list |
+| Start backlinks | fills the details from the business profile, sets the project to ACTIVE and queues every website with complete details; a row that misses values is reported, never sent half filled |
+| Live table | website, data filled (%), status (`Queued`, `Submitting`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
+| Mark submitted | for directories without an automation: record the published page, complete the waiting task and queue the verification |
+| Advanced (collapsed) | every website field, auto pilot, execution settings and the project statistics - ready when needed, out of the way when not |
 
 ### Where the work happens
 
@@ -74,7 +92,7 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 | ------ | --- | ------- | ---------------- |
 | Overview (metrics + live activity) | yes | yes | `/dashboard/metrics`, `/activity` |
 | Projects | yes | yes | `/projects` |
-| Project detail | yes | yes | `/projects/{id}`, `/projects/{id}/settings` |
+| Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start` |
 | Onboarding wizard | yes | yes | `/profiles`, `/projects` |
 | Opportunity discovery | yes | yes | `/discovery/providers`, `/discovery/runs` |
 | Website registry | yes | yes | `/opportunities`, `/opportunities/bulk` |

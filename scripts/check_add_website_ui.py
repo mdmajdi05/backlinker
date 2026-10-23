@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Check the "Add website" dialog of the registry with a real browser.
+"""Check the "Add opportunity" dialog of the Opportunities page with a real browser.
 
-It signs in, opens the registry, adds a website through the dialog and
-verifies that the new record shows up in the table.  A second run adds the
-same URL again - the backend deduplicates it, so the registry must not grow.
+It signs in, opens the Opportunities page, adds a website through the dialog
+and verifies that the new record shows up in the table.  A second run adds
+the same URL again - the backend deduplicates it, so the list must not grow.
 
 Usage:  .venv/bin/python scripts/check_add_website_ui.py
 """
@@ -48,31 +48,31 @@ def main() -> int:
         before = page.locator("tbody tr").count()
 
         # -- open the dialog ---------------------------------------------
-        page.get_by_role("button", name="Add website").click()
+        page.get_by_role("button", name="Add opportunity").click()
         page.wait_for_timeout(600)
-        assert page.get_by_text("Add a website").first.is_visible(), "the dialog did not open"
-        print("[PASS] the 'Add website' dialog opens")
+        assert page.get_by_text("Add an opportunity").first.is_visible(), "the dialog did not open"
+        print("[PASS] the 'Add opportunity' dialog opens")
 
         # -- fill it in ----------------------------------------------------
         page.get_by_label("Opportunity URL").fill(URL)
         page.get_by_label("Name", exact=False).first.fill("UI check directory")
         page.get_by_label("Anchor text").fill("Acme Analytics")
         page.get_by_label("Target landing page").fill("https://acme-analytics.example/product")
-        page.get_by_role("button", name="Add to registry").click()
+        page.get_by_role("dialog").last.get_by_role("button", name="Add opportunity").click()
         page.wait_for_timeout(2500)
 
         after = page.locator("tbody tr").count()
         content = page.content()
         added = "ui-check-directory.example" in content
-        print(f"[{'PASS' if added else 'FAIL'}] the website appears in the registry")
+        print(f"[{'PASS' if added else 'FAIL'}] the website appears in the Opportunities list")
         if not added:
             errors.append("the new website is not listed")
 
         # -- duplicate is deduplicated -------------------------------------
-        page.get_by_role("button", name="Add website").click()
+        page.get_by_role("button", name="Add opportunity").click()
         page.wait_for_timeout(500)
         page.get_by_label("Opportunity URL").fill(URL)
-        page.get_by_role("button", name="Add to registry").click()
+        page.get_by_role("dialog").last.get_by_role("button", name="Add opportunity").click()
         page.wait_for_timeout(2500)
         rows_after_duplicate = page.locator("tbody tr").count()
         duplicate_ok = rows_after_duplicate <= max(after, before) + 1
@@ -85,7 +85,7 @@ def main() -> int:
         for error in errors:
             print("  ", error)
         return 1
-    print("\nadd-website UI check passed")
+    print("\nadd-opportunity UI check passed")
     return 0
 
 

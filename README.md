@@ -44,6 +44,7 @@ The product is built around three rules:
 
 | Area | What works |
 | ---- | ---------- |
+| **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, press **Start backlinks** and watch a live table with the data-filled percent, the row status and the last update. Manual directories can be marked submitted and verified from the same row. |
 | **Opportunities** | Every website you can get a backlink from, per-project opportunities, dedup by domain + normalised URL, exclusions, duplicate merging, bulk approve / reject / exclude / queue actions. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. |
 | **Queue** | Durable, database backed queue with idempotency keys, atomic claiming (conditional `UPDATE`), leases, exponential backoff with jitter, priority reordering, bulk control, cancel / retry / requeue, append-only attempt history. |

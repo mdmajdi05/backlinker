@@ -966,6 +966,114 @@ export interface Campaign {
   updated_at: string;
 }
 
+/**
+ * The state of one row of the campaign table of a project.
+ *
+ * ``NEEDS_DETAILS``  - the profile does not carry every value the site asks for
+ * ``READY``          - complete, waiting for the start button
+ * ``QUEUED``         - a task waits for a worker
+ * ``SUBMITTING``     - a worker is submitting right now
+ * ``WAITING_MANUAL`` - the form has to be filled by hand - the values are ready
+ * ``SUBMITTED``      - submitted, the link is not verified yet
+ * ``VERIFIED``       - the link was found on the page
+ * ``FAILED``         - the submission failed and can be retried
+ * ``VERIFICATION_FAILED`` - the page was checked but the link was not found
+ */
+export type CampaignRowStatus =
+  | "NOT_STARTED"
+  | "NEEDS_DETAILS"
+  | "READY"
+  | "QUEUED"
+  | "SUBMITTING"
+  | "WAITING_MANUAL"
+  | "SUBMITTED"
+  | "VERIFIED"
+  | "FAILED"
+  | "VERIFICATION_FAILED"
+  | "EXCLUDED";
+
+export interface CampaignRow {
+  opportunity_id: string;
+  website_id: string;
+  name: string;
+  domain: string;
+  url: string;
+  category: string;
+  status: CampaignRowStatus;
+  /** How many of the values the site asks for are filled (0-100). */
+  details_percent: number;
+  details_complete: boolean;
+  /** Human readable names of the values that are still missing. */
+  missing: string[];
+  task_id: string | null;
+  task_status: string | null;
+  backlink_id: string | null;
+  verification_status: string | null;
+  published_page_url: string | null;
+  last_update: string | null;
+}
+
+export interface CampaignSummary {
+  total: number;
+  /** Verified + submitted - the work that is done. */
+  done: number;
+  verified: number;
+  submitted: number;
+  in_progress: number;
+  waiting_manual: number;
+  needs_details: number;
+  not_started: number;
+  failed: number;
+  excluded: number;
+  remaining: number;
+  /** Done / total, 0-100. */
+  percent: number;
+}
+
+export interface CampaignView {
+  project_id: string;
+  project_status: string;
+  generated_at: string;
+  rows: CampaignRow[];
+  summary: CampaignSummary;
+}
+
+export interface CampaignAddRow {
+  input: string;
+  url: string;
+  status: "added" | "linked" | "existing" | "invalid" | "deleted";
+  message: string;
+  website_id?: string;
+  opportunity_id?: string;
+}
+
+export interface CampaignAddResult {
+  results: CampaignAddRow[];
+  added: number;
+  linked: number;
+  existing: number;
+  invalid: number;
+  deleted: number;
+}
+
+export interface CampaignStartResult {
+  queued: number;
+  already_queued: number;
+  needs_details: Array<{ opportunity_id: string; website: string; missing: string[] }>;
+  done: number;
+  excluded: number;
+  skipped: number;
+  total: number;
+}
+
+export interface CampaignSubmitResult {
+  backlink_id: string;
+  published_page_url: string | null;
+  verification_status: string;
+  verify_task_id: string | null;
+  opportunity_id: string;
+}
+
 /** A recurring job (discovery or verification) of the scheduler. */
 export interface Schedule {
   id: string;

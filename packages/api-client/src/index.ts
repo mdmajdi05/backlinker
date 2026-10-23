@@ -22,6 +22,10 @@ import type {
   BusinessProfile,
   BusinessProfileUpsert,
   Campaign,
+  CampaignAddResult,
+  CampaignStartResult,
+  CampaignSubmitResult,
+  CampaignView,
   DashboardMetrics,
   Device,
   DeviceHeartbeatRequest,
@@ -570,6 +574,42 @@ export const api = {
       c.post<Campaign>(`/api/v1/projects/${projectId}/campaigns`, body),
     remove: (c: ApiClient, campaignId: string) =>
       c.delete<void>(`/api/v1/campaigns/${campaignId}`),
+  },
+
+  /**
+   * The campaign cockpit of a project: add websites, start the work and read
+   * the live state of every row.
+   */
+  campaign: {
+    get: (c: ApiClient, projectId: string) =>
+      c.get<CampaignView>(`/api/v1/projects/${projectId}/campaign`),
+    /** Add one URL or a comma / new line separated list. */
+    add: (c: ApiClient, projectId: string, text: string) =>
+      c.post<CampaignAddResult>(`/api/v1/projects/${projectId}/campaign/websites`, {
+        text,
+      }),
+    /** Import a spreadsheet and link the imported rows to the project. */
+    import: (c: ApiClient, projectId: string, file: File) =>
+      c.upload<
+        CampaignAddResult & { created: number; updated: number; skipped: number; linked: number }
+      >(`/api/v1/projects/${projectId}/campaign/import`, file),
+    start: (c: ApiClient, projectId: string) =>
+      c.post<CampaignStartResult>(`/api/v1/projects/${projectId}/campaign/start`),
+    /** Record a submission the operator made by hand. */
+    markSubmitted: (
+      c: ApiClient,
+      projectId: string,
+      opportunityId: string,
+      body: { published_url?: string; anchor_text?: string; verify?: boolean } = {},
+    ) =>
+      c.post<CampaignSubmitResult>(
+        `/api/v1/projects/${projectId}/campaign/${opportunityId}/submit`,
+        body,
+      ),
+    verify: (c: ApiClient, projectId: string, opportunityId: string) =>
+      c.post<{ task_id: string; backlink_id: string; created: boolean }>(
+        `/api/v1/projects/${projectId}/campaign/${opportunityId}/verify`,
+      ),
   },
 
   schedules: {

@@ -33,6 +33,10 @@ data/
 .env
 .env.local
 
+# Runtime logs (servers write here while developing)
+apps/api/logs/
+*.log
+
 # Build artifacts (large binaries stay on disk, the manifest is tracked)
 release/macos/*.dmg
 release/macos/*.app/

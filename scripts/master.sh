@@ -51,6 +51,7 @@ web_build() { (cd apps/web && npm run build); }
 desktop_build() { (cd apps/desktop && npm run build); }
 ui_check() { ./.venv/bin/python scripts/check_add_website_ui.py; }
 automation_ui_check() { ./.venv/bin/python scripts/check_automation_ui.py; }
+campaign_ui_check() { ./.venv/bin/python scripts/check_campaign_ui.py; }
 migrations() {
   local db; db="$(mktemp -d)/m.db"
   (cd apps/api && AUTOBL_DATABASE_URL="sqlite:///$db" ../../.venv/bin/python -m alembic upgrade head \
@@ -107,6 +108,7 @@ if [[ "$QUICK" == "0" ]]; then
 
   step "Web client UI check" ui_check
   step "Automation UI check" automation_ui_check
+  step "Campaign UI check" campaign_ui_check
 
   echo ""
   echo "=== Stopping the development servers ==="

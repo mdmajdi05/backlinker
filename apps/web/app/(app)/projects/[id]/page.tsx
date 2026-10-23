@@ -6,17 +6,15 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { Project } from "@autobacklinker/shared-types";
 import {
-  Alert,
   Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
   MetricTile,
-  Skeleton,
   StatusBadge,
 } from "@autobacklinker/ui";
-import { apiClient, isNotFoundError } from "@/lib/api";
+import { apiClient } from "@/lib/api";
 import { useResource } from "@/lib/hooks";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
@@ -25,12 +23,25 @@ import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 import { AddToProjectDialog } from "@/components/AddToProjectDialog";
 import { WebsiteListPanel } from "@/components/WebsiteListPanel";
+import { CampaignPanel } from "@/components/CampaignPanel";
 
+/**
+ * One project, one screen.
+ *
+ * The campaign is the primary view: add websites, press start and watch the
+ * live table.  Everything that is only needed once in a while - the full
+ * website fields, the auto pilot and the execution settings - lives in the
+ * "Advanced" section further down, so the page stays understandable without
+ * hiding a feature.
+ */
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const projectId = params.id;
   const [addOpen, setAddOpen] = React.useState(false);
+  /* Bumped after the website picker added rows, so the campaign shows them
+     immediately instead of waiting for its next refresh. */
+  const [campaignReload, setCampaignReload] = React.useState(0);
 
   const project = useResource(() => api.projects.get(apiClient, projectId), [projectId]);
   const settings = useResource(
@@ -41,36 +52,8 @@ export default function ProjectDetailPage() {
     () => api.dashboard.metrics(apiClient, projectId),
     [projectId],
   );
-  /* The report of the project: one row per website of the project. */
-  const report = useResource(() => api.websites.stats(apiClient, projectId), [projectId]);
 
   const data: Project | null = project.data;
-
-  /* The websites that failed come first - they are the ones to work on. */
-  const reportRows = React.useMemo(() => {
-    const rows = [...(report.data ?? [])];
-    rows.sort((a, b) => {
-      if (b.failed !== a.failed) return b.failed - a.failed;
-      if (b.opportunities !== a.opportunities) return b.opportunities - a.opportunities;
-      return (a.domain ?? "").localeCompare(b.domain ?? "");
-    });
-    return rows;
-  }, [report.data]);
-
-  /* The counters of the project - the sum of the rows of the report. */
-  const totals = React.useMemo(() => {
-    const sum = { opportunities: 0, submitted: 0, verified: 0, failed: 0, pending: 0 };
-    for (const row of reportRows) {
-      sum.opportunities += row.opportunities;
-      sum.submitted += row.submitted;
-      sum.verified += row.verified;
-      sum.failed += row.failed;
-      sum.pending += row.pending;
-    }
-    return sum;
-  }, [reportRows]);
-
-  const reportUnavailable = Boolean(report.error) && isNotFoundError(report.error);
 
   return (
     <div className="space-y-4">
@@ -117,207 +100,134 @@ export default function ProjectDetailPage() {
         error={project.error}
         data={data}
         onRetry={project.reload}
-        skeleton={<CardSkeleton count={4} />}
+        skeleton={<CardSkeleton count={3} />}
       >
         {data ? (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricTile
-                label="Opportunities"
-                value={formatNumber(data.counts?.opportunities)}
-              />
-              <MetricTile label="Approved" value={formatNumber(data.counts?.approved)} />
-              <MetricTile label="Queued" value={formatNumber(data.counts?.queued)} />
-              <MetricTile label="Running" value={formatNumber(data.counts?.running)} />
-              <MetricTile label="Completed" value={formatNumber(data.counts?.completed)} />
-              <MetricTile label="Failed" value={formatNumber(data.counts?.failed)} />
-              <MetricTile label="Verified live" value={formatNumber(data.counts?.verified_live)} />
-              <MetricTile label="Pending manual" value={formatNumber(data.counts?.pending_manual)} />
-            </div>
+            <CampaignPanel
+              projectId={projectId}
+              onChanged={project.reload}
+              onPickFromList={() => setAddOpen(true)}
+              onOpenReport={() => router.push(`/reports?project_id=${projectId}`)}
+              reloadToken={campaignReload}
+            />
 
-            <Card>
-              <CardHeader
-                title="Project statistics"
-                description="Live counters for this project"
-              />
-              <CardBody>
-                {metrics.loading && !metrics.data ? (
-                  <p className="text-xs text-content-subtle">Loading metrics…</p>
-                ) : metrics.error ? (
-                  <ErrorPanel error={metrics.error} onRetry={metrics.reload} />
-                ) : metrics.data ? (
-                  <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
-                    <div>
-                      <dt className="text-content-muted">Generated at</dt>
-                      <dd className="text-content">{formatDateTime(metrics.data.generated_at)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-content-muted">Awaiting retry</dt>
-                      <dd className="text-content">{formatNumber(metrics.data.awaiting_retry)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-content-muted">Requiring verification</dt>
-                      <dd className="text-content">
-                        {formatNumber(metrics.data.requiring_verification)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-content-muted">Published</dt>
-                      <dd className="text-content">{formatNumber(metrics.data.published)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-content-muted">Pending manual</dt>
-                      <dd className="text-content">{formatNumber(metrics.data.pending_manual)}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-content-muted">Cloud workers</dt>
-                      <dd className="text-content">{formatNumber(metrics.data.cloud_workers)}</dd>
-                    </div>
-                  </dl>
-                ) : (
-                  <p className="text-xs text-content-subtle">No statistics available.</p>
-                )}
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader
-                title="Report & results"
-                description="What happened in this project - the totals of every website"
-                action={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => router.push(`/reports?project_id=${projectId}`)}
-                  >
-                    Open the full report
-                  </Button>
-                }
-              />
-              <CardBody className="space-y-4">
-                {report.loading && !report.data ? (
-                  <div
-                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
-                    aria-busy="true"
-                    aria-live="polite"
-                  >
-                    <span className="sr-only">Loading the report…</span>
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <Skeleton key={index} className="h-14 w-full" />
-                    ))}
-                  </div>
-                ) : report.error ? (
-                  reportUnavailable ? (
-                    <Alert
-                      tone="neutral"
-                      title="The per website statistics are not available yet"
-                      action={
-                        <Button variant="outline" size="sm" onClick={report.reload}>
-                          Try again
-                        </Button>
-                      }
-                    >
-                      The backend answered 404 for{" "}
-                      <code className="font-mono text-[11px]">GET /api/v1/websites/stats</code>.
-                      The report of the project can not be shown until the endpoint exists - the
-                      counters above stay correct.
-                    </Alert>
-                  ) : (
-                    <ErrorPanel
-                      error={report.error}
-                      onRetry={report.reload}
-                      title="The report could not be loaded"
-                    />
-                  )
-                ) : (
-                  <>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                      <MetricTile
-                        label="Opportunities"
-                        value={formatNumber(totals.opportunities)}
-                      />
-                      <MetricTile label="Submitted" value={formatNumber(totals.submitted)} />
-                      <MetricTile label="Verified" value={formatNumber(totals.verified)} />
-                      <MetricTile label="Failed" value={formatNumber(totals.failed)} />
-                      <MetricTile label="Pending" value={formatNumber(totals.pending)} />
-                    </div>
-
-                    <p className="text-xs text-content-muted">
-                      Every website of this project is listed below with its own counters -
-                      one table, always the same numbers. The full report adds the exports.
-                    </p>
-                  </>
-                )}
-
-                <p className="border-t border-line pt-3 text-xs text-content-muted">
-                  Verified links are never submitted again. Use Opportunity import to bring a
-                  report back in - verified rows are skipped, failed rows are retried.
-                </p>
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader
-                title="Add from website list"
-                description="Pick the websites of the central list for this project"
-              />
-              <CardBody>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="max-w-xl text-xs text-content-muted">
-                    The central list holds every website you know - added by hand or imported
-                    from a spreadsheet. Choose the sites this project should work on, filter
-                    them by category or niche and link them in one step. The anchor text and
-                    the target landing page of the project are filled in and stay editable.
-                  </p>
-                  <Button size="sm" onClick={() => setAddOpen(true)}>
-                    Add from website list
-                  </Button>
-                </div>
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader
-                title="Auto pilot"
-                description="Automatic submission for the websites of this project"
-              />
-              <CardBody>
-                <AutoPilotPanel projectId={projectId} projectName={data.name} />
-              </CardBody>
-            </Card>
-
-            <div className="space-y-2">
-              <h2 className="text-sm font-semibold text-content">Websites of this project</h2>
-              <p className="text-xs text-content-muted">
-                The websites of the central list that this project works on - with the
-                counters of the submissions. Mark a site that stopped working here, it keeps
-                its place in the central list.
-              </p>
-              <WebsiteListPanel
-                projectId={projectId}
-                showProjectFilter={false}
-                onChanged={project.reload}
-              />
-            </div>
-
-            <Card>
-              <CardHeader
-                title="Execution settings"
-                description="Concurrency, retries, schedule and verification cadence"
-              />
-              <CardBody>
-                {settings.loading && !settings.data ? (
-                  <p className="text-xs text-content-subtle">Loading settings…</p>
-                ) : settings.error ? (
-                  <ErrorPanel error={settings.error} onRetry={settings.reload} />
-                ) : (
-                  <ProjectSettingsForm
-                    projectId={projectId}
-                    settings={settings.data ?? data.settings ?? null}
+            <details className="rounded-lg border border-line bg-surface">
+              <summary className="cursor-pointer list-none px-4 py-3">
+                <span className="text-sm font-semibold text-content">
+                  Advanced: website fields, auto pilot and execution settings
+                </span>
+                <span className="ml-2 text-xs font-normal text-content-muted">
+                  Optional - the campaign above works without it.
+                </span>
+              </summary>
+              <div className="space-y-4 border-t border-line p-4">
+                <Card>
+                  <CardHeader
+                    title="Auto pilot"
+                    description="Queue the approved websites of this project automatically"
                   />
-                )}
-              </CardBody>
-            </Card>
+                  <CardBody>
+                    <AutoPilotPanel projectId={projectId} projectName={data.name} />
+                  </CardBody>
+                </Card>
+
+                <div className="space-y-2">
+                  <h2 className="text-sm font-semibold text-content">
+                    Websites of this project - every field
+                  </h2>
+                  <p className="text-xs text-content-muted">
+                    The websites of the central list that this project works on. Use this
+                    table to edit the category, the notes and the status of a site or to
+                    delete it. Deleting a site moves it to the recycle bin.
+                  </p>
+                  <WebsiteListPanel
+                    projectId={projectId}
+                    showProjectFilter={false}
+                    onChanged={project.reload}
+                  />
+                </div>
+
+                <Card>
+                  <CardHeader
+                    title="Execution settings"
+                    description="Concurrency, retries, schedule and verification cadence"
+                  />
+                  <CardBody>
+                    {settings.loading && !settings.data ? (
+                      <p className="text-xs text-content-subtle">Loading settings…</p>
+                    ) : settings.error ? (
+                      <ErrorPanel error={settings.error} onRetry={settings.reload} />
+                    ) : (
+                      <ProjectSettingsForm
+                        projectId={projectId}
+                        settings={settings.data ?? data.settings ?? null}
+                      />
+                    )}
+                  </CardBody>
+                </Card>
+
+                <Card>
+                  <CardHeader
+                    title="Project statistics"
+                    description="The counters of the project over every website"
+                  />
+                  <CardBody>
+                    {metrics.loading && !metrics.data ? (
+                      <p className="text-xs text-content-subtle">Loading metrics…</p>
+                    ) : metrics.error ? (
+                      <ErrorPanel error={metrics.error} onRetry={metrics.reload} />
+                    ) : metrics.data ? (
+                      <dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-3">
+                        <div>
+                          <dt className="text-content-muted">Generated at</dt>
+                          <dd className="text-content">
+                            {formatDateTime(metrics.data.generated_at)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-content-muted">Awaiting retry</dt>
+                          <dd className="text-content">
+                            {formatNumber(metrics.data.awaiting_retry)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-content-muted">Requiring verification</dt>
+                          <dd className="text-content">
+                            {formatNumber(metrics.data.requiring_verification)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-content-muted">Published</dt>
+                          <dd className="text-content">
+                            {formatNumber(metrics.data.published)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-content-muted">Pending manual</dt>
+                          <dd className="text-content">
+                            {formatNumber(metrics.data.pending_manual)}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-content-muted">Cloud workers</dt>
+                          <dd className="text-content">
+                            {formatNumber(metrics.data.cloud_workers)}
+                          </dd>
+                        </div>
+                      </dl>
+                    ) : (
+                      <p className="text-xs text-content-subtle">No statistics available.</p>
+                    )}
+                  </CardBody>
+                </Card>
+
+                <p className="text-xs text-content-muted">
+                  Verified links are never submitted again. Use Opportunity import to bring
+                  a report back in - verified rows are skipped, failed rows are retried.
+                </p>
+              </div>
+            </details>
           </>
         ) : null}
       </AsyncSection>
@@ -326,7 +236,10 @@ export default function ProjectDetailPage() {
         projectId={projectId}
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        onChanged={project.reload}
+        onChanged={() => {
+          project.reload();
+          setCampaignReload((value) => value + 1);
+        }}
       />
     </div>
   );
