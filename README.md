@@ -266,6 +266,8 @@ auto-backlinker/
 ├── scripts/verify_all.sh     runs every check of the monorepo
 ├── docs/
 │   ├── API.md                endpoint reference
+│   ├── CAMPAIGN.md           the project page: add, start, watch (guide)
+│   ├── FEATURES.md           web / desktop parity and the workflow
 │   └── ARCHITECTURE.md       design notes
 ├── Makefile                  convenience targets (install / dev / test / verify)
 ├── .env.example

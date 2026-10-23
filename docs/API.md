@@ -108,11 +108,32 @@ countries, excluded domains, monthly target and campaign goals.
 | POST | `/api/v1/projects` | Create a project with its settings and landing pages. | yes |
 | GET | `/api/v1/projects/{project_id}` | One project including its settings and counts. | yes |
 | PATCH | `/api/v1/projects/{project_id}` | Update name, description, target website, … | yes |
-| DELETE | `/api/v1/projects/{project_id}` | Delete a project (cascades to its opportunities and tasks). | yes |
+| DELETE | `/api/v1/projects/{project_id}` | Move a project to the recycle bin (its opportunities, tasks and records stay). | yes |
 | GET | `/api/v1/projects/{project_id}/settings` | Concurrency, rate limits, retries, verification interval, approval policy, execution environment. | yes |
 | PUT | `/api/v1/projects/{project_id}/settings` | Replace the settings. | yes |
 | GET | `/api/v1/projects/{project_id}/campaigns` | Campaigns of the project. | yes |
 | POST | `/api/v1/projects/{project_id}/campaigns` | Create a campaign. | yes |
+
+---
+
+## Campaign cockpit — `/api/v1/projects/{project_id}/campaign`
+
+The one screen of a project. A campaign is a **view** over the existing
+websites, opportunities, tasks and backlink records - it is not a second source
+of truth.
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/projects/{project_id}/campaign` | Every website of the project with `details_percent`, `status`, `last_update` and the counters (`done`, `verified`, `submitted`, `in_progress`, `waiting_manual`, `needs_details`, `failed`, `remaining`, `percent`). | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/websites` | Body `{"text": "a.example/x, b.example/y"}` (or `{"urls": [...]}`). Adds every URL to the central list once and links it to the project. Answers every URL with `added`, `linked`, `existing`, `deleted` or `invalid`. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/import` | Multipart `file` (XLSX/CSV). Imports into the central list and links the imported rows to the project. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/start` | Fills the details from the business profile, sets the project `ACTIVE` and queues every website with complete details. Returns `queued`, `already_queued`, `needs_details` (with the missing labels), `done`, `excluded`. Never queues a half filled row and never duplicates a finished task. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/{opportunity_id}/submit` | Body `{"published_url"?, "anchor_text"?, "verify"?}`. Records a manual submission, completes the waiting task, writes the backlink record and (by default) queues the verification. The record stays `SUBMITTED` - never `VERIFIED` without a real check. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/{opportunity_id}/verify` | Queue a verification of the backlink of one row. | yes |
+
+Row statuses: `NEEDS_DETAILS`, `READY`, `QUEUED`, `SUBMITTING`,
+`WAITING_MANUAL`, `SUBMITTED`, `VERIFIED`, `FAILED`, `VERIFICATION_FAILED`,
+`EXCLUDED`.
 
 ---
 
