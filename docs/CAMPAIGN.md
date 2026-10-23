@@ -89,7 +89,7 @@ one website out of this project and cancels its open work - the website stays in
 
 | Status | What it means | What to do |
 | ------ | ------------- | ---------- |
-| **Details needed** | a value the site asks for is still empty | press **Fill details** (or fix the business profile) |
+| **Details needed** | a value the site asks for is still empty | press **Fill details** (or fix the project details) |
 | **Ready to start** | complete, waiting for the Start button | press **Start backlinks** |
 | **Queued** | a task waits for the worker | wait - no action needed |
 | **Submitting…** | the worker is filling the form right now | wait |
@@ -102,10 +102,10 @@ one website out of this project and cancels its open work - the website stays in
 | **Excluded** | the row is no longer part of this project | add it again with **Choose websites** if that was wrong |
 
 **Data ready** counts the fields the website asks for - not the fields of the
-profile. A site can ask for a name, a website and a description; if the profile
-supplies all three the row is at 100 % and **ready**. The values are written to
-the website when you press **Start backlinks** - a field the profile cannot
-supply stays missing and blocks that row.
+project. A site can ask for a name, a website and a description; if the project
+details supply all three the row is at 100 % and **ready**. The values are
+written to the website when you press **Start backlinks** - a field the project
+details cannot supply stays missing and blocks that row.
 
 ---
 
@@ -125,7 +125,7 @@ link verified on its own - only a real check can do that.
 
 ---
 
-## Advanced (collapsed)
+## More tools (collapsed)
 
 The section below the work holds everything that is needed only once in a while,
 so the page stays readable:
@@ -137,7 +137,7 @@ so the page stays readable:
 * the landing pages and the project switcher (desktop).
 
 Nothing was removed - it is one click away. The run speed is in the Start/Stop
-bar, so changing it does not need the advanced section.
+bar, so changing it does not need the More tools section.
 
 ---
 
