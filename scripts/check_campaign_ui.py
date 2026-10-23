@@ -119,7 +119,7 @@ def main() -> int:
         page.wait_for_timeout(2500)
         table = page.locator("table").first.inner_text()
         percent_ok = "%" in table
-        print(f"[{'PASS' if percent_ok else 'FAIL'}] the table shows the data filled")
+        print(f"[{'PASS' if percent_ok else 'FAIL'}] the table shows the data ready")
         if not percent_ok:
             failures.append("no percentage in the table")
 

@@ -96,6 +96,16 @@ def test_start_fills_details_and_queues_the_ready_rows(
     project = _project(authenticated_client, profile_id=profile["id"])
     _add(authenticated_client, project["id"], "https://one.example/add, two.example/add")
 
+    # Before the first Start the values are not written yet, but the profile
+    # can supply them - so the rows are ready, not blocked.
+    before = authenticated_client.get(
+        f"{API}/projects/{project['id']}/campaign"
+    ).json()
+    assert {row["status"] for row in before["rows"]} == {"READY"}
+    assert all(row["details_percent"] == 100 for row in before["rows"])
+    assert all(row["missing"] == [] for row in before["rows"])
+    assert before["summary"]["needs_details"] == 0
+
     started = authenticated_client.post(
         f"{API}/projects/{project['id']}/campaign/start"
     )

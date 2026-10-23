@@ -450,7 +450,7 @@ export function CampaignPanel({
                   <thead>
                     <tr>
                       <Th>Website</Th>
-                      <Th>Data filled</Th>
+                      <Th>Data ready</Th>
                       <Th>Status</Th>
                       <Th>Last update</Th>
                       <Th className="text-right">Actions</Th>
@@ -494,7 +494,7 @@ export function CampaignPanel({
                                   {row.missing.length} missing
                                 </span>
                               ) : (
-                                <span className="text-success">complete</span>
+                                <span className="text-success">ready</span>
                               )}
                             </div>
                             <ProgressBar value={row.details_percent / 100} />
@@ -585,11 +585,12 @@ export function CampaignPanel({
               )}
 
               <p className="text-[11px] text-content-muted">
-                <strong className="font-semibold text-content">Data filled</strong>{" "}
-                counts the values the website asks for (name, website, description, …) -
-                filled from the business profile of the project. A site without
-                complete details is never submitted; it asks for the missing values
-                instead. Sites without an automation stay at{" "}
+                <strong className="font-semibold text-content">Data ready</strong> counts
+                the values the website asks for (name, website, description, …) that are
+                already filled or that the business profile supplies.{" "}
+                <strong className="font-semibold text-content">Start backlinks</strong>{" "}
+                writes the profile values; a site is never sent half filled. Sites without
+                an automation stay at{" "}
                 <span className="font-medium text-content">&quot;Submit by hand&quot;</span>
                 : the details are ready, you submit them and press{" "}
                 <span className="font-medium text-content">Mark submitted</span>.

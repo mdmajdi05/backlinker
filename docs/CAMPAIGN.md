@@ -60,7 +60,7 @@ The table refreshes itself every 3 seconds while a task is running and every
 | Column | Meaning |
 | ------ | ------- |
 | Website | name, domain and category |
-| Data filled | how many values the site asks for are filled (%) |
+| Data ready | how many values the site asks for are filled or supplied by the business profile (%) - Start writes the profile values |
 | Status | see the glossary below |
 | Last update | when the row last changed |
 | Actions | what makes sense for this row |
@@ -88,9 +88,11 @@ Above the table:
 | **Failed** | the submission itself failed | **Retry** |
 | **Excluded** | the row is removed from the work of this project | change it on the **Opportunities** page if that was wrong |
 
-**Data filled** counts the fields the website asks for - not the fields of the
-profile. A site can ask for a name, a website and a description; if all three
-are filled the row is at 100 %.
+**Data ready** counts the fields the website asks for - not the fields of the
+profile. A site can ask for a name, a website and a description; if the profile
+supplies all three the row is at 100 % and **ready**. The values are written to
+the website when you press **Start backlinks** - a field the profile cannot
+supply stays missing and blocks that row.
 
 ---
 
@@ -130,8 +132,10 @@ Nothing was removed - it is one click away.
 
 **Start dabane par kya hota hai?**
 Profile se details bhar jati hain, project Active hota hai, aur jitni sites ki
-details poori hain wo queue ho jati hain. Adhoori details wali site queue nahi
-hoti - uska naam aur missing fields dialog me dikhte hain.
+details poori hain wo queue ho jati hain. Pehle se table me "Data ready 100%"
+dikhta hai - matlab profile ke paas values hain, Start unhe likhta hai. Jo field
+profile me hi nahi hai (jaise State), wo row ko rokta hai aur dialog me naam ke
+saath dikhta hai.
 
 **"Submit by hand" kyun aa raha hai?**
 Us directory ke liye koi automation nahi hai. Details ready hain - site kholo,

@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.base import utcnow
-from app.db.models import BacklinkRecord, Opportunity, Project, SiteDetails, Task, Website
+from app.db.models import BacklinkRecord, Opportunity, Project, Task, Website
 from app.services import opportunities as opportunity_service
 from app.services import queue as queue_service
 from app.services import site_details as details_service
@@ -500,12 +500,6 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         .scalars()
         .all()
     )
-    details_rows = (
-        db.execute(select(SiteDetails).where(SiteDetails.project_id == project.id))
-        .scalars()
-        .all()
-    )
-    details_by_opportunity = {row.opportunity_id: row for row in details_rows}
     tasks = _latest_tasks(db, project.id)
     records = _latest_records(db, project.id)
 
@@ -528,14 +522,20 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         website = db.get(Website, opportunity.website_id)
         if website is None:
             continue
-        details = details_by_opportunity.get(opportunity.id)
         task = tasks.get(opportunity.id)
         record = records.get(opportunity.id)
-        probe = details_service.required_details(db, opportunity, details)
-        required = probe["required"]
-        missing = probe["missing"]
-        details_percent = _percent(len(required) - len(missing), len(required))
-        status = _row_status(opportunity, probe["complete"], task, record)
+        # The gap report separates three groups: values that are stored, values
+        # the business profile can supply on Start, and values nobody can
+        # supply.  Only the last group blocks the row - a row that Start can
+        # complete is "ready", not "needs details".
+        gap = details_service.gap_report(db, opportunity)
+        required = gap["required"]
+        derivable = gap["derivable"]
+        blocked = gap["not_derivable"]
+        details_percent = _percent(
+            len(gap["filled"]) + len(derivable), len(required)
+        )
+        status = _row_status(opportunity, not blocked, task, record)
 
         last_update = max(
             [
@@ -583,8 +583,8 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "category": website.category,
                 "status": status,
                 "details_percent": details_percent,
-                "details_complete": probe["complete"],
-                "missing": [probe["labels"].get(name, name) for name in missing],
+                "details_complete": not gap["missing"],
+                "missing": [item["label"] for item in blocked],
                 "task_id": task.id if task else None,
                 "task_status": task.status if task else None,
                 "backlink_id": record.id if record else None,

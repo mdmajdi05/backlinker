@@ -124,7 +124,7 @@ of truth.
 
 | Method | Path | Purpose | Auth |
 | ------ | ---- | ------- | ---- |
-| GET | `/api/v1/projects/{project_id}/campaign` | Every website of the project with `details_percent`, `status`, `last_update` and the counters (`done`, `verified`, `submitted`, `in_progress`, `waiting_manual`, `needs_details`, `failed`, `remaining`, `percent`). | yes |
+| GET | `/api/v1/projects/{project_id}/campaign` | Every website of the project with `details_percent` (stored values plus the values the business profile can supply on Start), `status`, `last_update` and the counters (`done`, `verified`, `submitted`, `in_progress`, `waiting_manual`, `needs_details`, `failed`, `remaining`, `percent`). | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/websites` | Body `{"text": "a.example/x, b.example/y"}` (or `{"urls": [...]}`). Adds every URL to the central list once and links it to the project. Answers every URL with `added`, `linked`, `existing`, `deleted` or `invalid`. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/import` | Multipart `file` (XLSX/CSV). Imports into the central list and links the imported rows to the project. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/start` | Fills the details from the business profile, sets the project `ACTIVE` and queues every website with complete details. Returns `queued`, `already_queued`, `needs_details` (with the missing labels), `done`, `excluded`. Never queues a half filled row and never duplicates a finished task. | yes |
