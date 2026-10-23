@@ -49,7 +49,7 @@ export function ProjectsPage() {
   const [description, setDescription] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
-  // The facts a directory asks for - stored in the business profile.
+  // The facts a directory asks for - stored for this project only.
   const [bDetails, setBDetails] = React.useState<BacklinkDetailsUpdate>({});
   const [categoriesText, setCategoriesText] = React.useState("");
   const [anchorsText, setAnchorsText] = React.useState("");
@@ -358,7 +358,7 @@ export function ProjectsPage() {
         open={creating}
         onClose={() => setCreating(false)}
         title="New project"
-        description="A project groups opportunities, tasks and verification for one website."
+        description="A project keeps its own details, backlink websites and report for one website."
         footer={
           <>
             <Button variant="ghost" onClick={() => setCreating(false)}>
@@ -404,11 +404,11 @@ export function ProjectsPage() {
           <div className="rounded-md border border-line p-3">
             <div className="mb-2">
               <p className="text-xs font-semibold text-content">
-                Backlink details (optional)
+                Company details (optional)
               </p>
               <p className="text-[11px] text-content-subtle">
                 A directory asks for these facts when it publishes a backlink.
-                They are stored once in a business profile for this project, so
+                They are stored for this project only, so
                 every website reuses them - you can change them later in the
                 project.
               </p>

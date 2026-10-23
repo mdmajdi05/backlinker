@@ -91,7 +91,7 @@ export default function VerificationPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Verification"
+        title="All backlinks"
         description="Backlink records stored by the backend with their verification history."
         actions={
           <>

@@ -350,7 +350,6 @@ function SettingsForm({
 
 export function ProjectDetailPage({ projectId }: { projectId: string }) {
   const toast = useToast();
-  const [switching, setSwitching] = React.useState(false);
   const [choosingWebsites, setChoosingWebsites] = React.useState(false);
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
@@ -366,6 +365,10 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
   );
   const settings = useAsync(
     () => api.projects.settings(apiClient, projectId),
+    [projectId],
+  );
+  const projectDetails = useAsync(
+    () => api.projects.details(apiClient, projectId),
     [projectId],
   );
   const metrics = useAsync(
@@ -458,25 +461,6 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
     );
   }, [reportStats.data]);
 
-  async function toggleStatus() {
-    if (!data) return;
-    const next = data.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
-    setSwitching(true);
-    try {
-      await api.projects.update(apiClient, data.id, { status: next });
-      toast.push(`Project ${next === "ACTIVE" ? "resumed" : "paused"}`, "success");
-      void sendNativeNotification(
-        "Auto Backlinker",
-        `The project ${data.name} was ${next === "ACTIVE" ? "resumed" : "paused"}.`,
-      );
-      project.reload();
-    } catch (err) {
-      toast.push(errorText(err, "Could not update the project"), "error");
-    } finally {
-      setSwitching(false);
-    }
-  }
-
   async function deleteProject() {
     if (!data) return;
     setDeletingBusy(true);
@@ -535,16 +519,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
               disabled={!data}
               onClick={() => setEditing(true)}
             >
-              Edit project
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              loading={switching}
-              disabled={!data}
-              onClick={toggleStatus}
-            >
-              {data?.status === "ACTIVE" ? "Pause" : "Resume"}
+              Edit details
             </Button>
             <Button
               size="sm"
@@ -590,6 +565,71 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
+      <Card>
+        <CardHeader
+          title="1. Project details"
+          description="This project keeps its own company details. Every website below reuses them."
+          action={
+            <Button size="sm" variant="outline" onClick={() => setEditing(true)} disabled={!data}>
+              Edit details
+            </Button>
+          }
+        />
+        <CardBody>
+          {projectDetails.error ? (
+            <Alert tone="warning" title="The project details could not be loaded">
+              {projectDetails.error}
+            </Alert>
+          ) : null}
+          {projectDetails.data ? (
+            <div className="flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+                {[
+                  ["Company", projectDetails.data.company_name],
+                  ["Website", projectDetails.data.website || data?.target_website || ""],
+                  ["E-mail", projectDetails.data.email],
+                  ["Phone", projectDetails.data.phone],
+                  ["City", projectDetails.data.city],
+                  ["State / region", projectDetails.data.state],
+                  ["Country", projectDetails.data.country],
+                  ["Anchors", projectDetails.data.anchors.join(", ")],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-md border border-line px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wider text-content-subtle">
+                      {label}
+                    </p>
+                    <p className="truncate text-content" title={value || "Not filled"}>
+                      {value || <span className="text-warning">Not filled</span>}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {projectDetails.data.required.length > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="text-content-muted">
+                    {projectDetails.data.filled.length} of{" "}
+                    {projectDetails.data.required.length} required values are ready.
+                  </span>
+                  {projectDetails.data.missing.length > 0 ? (
+                    <span className="text-warning">
+                      Missing: {projectDetails.data.missing.map(titleCase).join(", ")}
+                    </span>
+                  ) : (
+                    <span className="text-success">Every required value is ready.</span>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-content-muted">
+                  Assign websites below and this card shows which details they ask for.
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-content-subtle">Loading project details…</p>
+          )}
+        </CardBody>
+      </Card>
+
       <CampaignPanel
         projectId={projectId}
         onChanged={() => {
@@ -606,7 +646,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
       <details className="rounded-lg border border-line bg-surface">
         <summary className="cursor-pointer list-none px-4 py-3">
           <span className="text-sm font-semibold text-content">
-            Advanced: counts, report, auto pilot and execution settings
+            More tools (optional): counts, report, auto pilot and settings
           </span>
           <span className="ml-2 text-xs font-normal text-content-muted">
             Optional - the campaign above works without it.
@@ -615,7 +655,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         <div className="flex flex-col gap-4 border-t border-line p-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
         <MetricTile
-          label="Opportunities"
+          label="Websites"
           value={formatNumber(counts?.opportunities)}
         />
         <MetricTile label="Approved" value={formatNumber(counts?.approved)} />
@@ -713,7 +753,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
             <>
               <div className="grid grid-cols-2 gap-3 border-b border-line p-4 md:grid-cols-5">
                 <MetricTile
-                  label="Opportunities"
+                  label="Websites"
                   value={formatNumber(reportTotals.opportunities)}
                 />
                 <MetricTile
@@ -1056,6 +1096,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
         onClose={() => setEditing(false)}
         onSaved={() => {
           project.reload();
+          projectDetails.reload();
           websites.reload();
           reportStats.reload();
         }}

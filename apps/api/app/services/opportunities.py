@@ -123,6 +123,13 @@ def link_to_project(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.deleted_at is not None:
+            # The website was removed from the project before - adding it
+            # again restores the old row instead of hiding a duplicate.
+            existing.deleted_at = None
+            existing.status = "NEEDS_REVIEW"
+            db.flush()
+            return existing, True
         return existing, False
     opportunity = Opportunity(
         project_id=project.id,

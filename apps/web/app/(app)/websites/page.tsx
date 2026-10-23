@@ -9,7 +9,7 @@ export default function WebsitesPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Websites"
+        title="Backlink websites"
         description="The central list of the websites where your projects get backlinks. It is filled by hand or by an Excel import and every project picks the sites it needs from it."
       />
 

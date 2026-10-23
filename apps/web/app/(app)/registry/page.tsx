@@ -105,7 +105,7 @@ export default function RegistryPage() {
       return;
     }
     if (!addForm.project_id) {
-      setAddError("Choose the project this opportunity belongs to.");
+      setAddError("Choose the project this website belongs to.");
       return;
     }
     setAdding(true);
@@ -227,7 +227,7 @@ export default function RegistryPage() {
     );
     if (outcome.ok && outcome.data) {
       const affected = outcome.data.affected;
-      toast.push(`${affected} opportunit${affected === 1 ? "y" : "ies"} updated`, "success");
+      toast.push(`${affected} website${affected === 1 ? "" : "s"} updated`, "success");
       setSelected([]);
       setConfirmAction(null);
       opportunities.reload();
@@ -236,7 +236,7 @@ export default function RegistryPage() {
 
   const bulkDisabledReason =
     selected.length === 0
-      ? "Select at least one opportunity first."
+      ? "Select at least one website first."
       : confirmAction === "add_to_project" && !bulkProjectId
         ? "Choose the target project for this bulk action."
         : null;
@@ -244,7 +244,7 @@ export default function RegistryPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Opportunities"
+        title="Review websites"
         description="Every website you can get a backlink from - its state, score and submission readiness."
         actions={
           <div className="flex items-center gap-2">
@@ -257,7 +257,7 @@ export default function RegistryPage() {
                 setAddOpen(true);
               }}
             >
-              Add opportunity
+              Add website
             </Button>
             <Button variant="outline" size="sm" onClick={opportunities.reload} loading={opportunities.refreshing}>
               Refresh
@@ -268,7 +268,7 @@ export default function RegistryPage() {
 
       {selectedAutoPilot?.state === "ready" && selectedAutoPilot.data?.enabled ? (
         <Alert tone="accent" title="Automatic submission is on">
-          Approving an opportunity of{" "}
+          Approving a website of{" "}
           <span className="font-semibold text-content">
             {selectedProject?.name ?? "this project"}
           </span>{" "}
@@ -279,7 +279,7 @@ export default function RegistryPage() {
 
       {selectedAutoPilot?.state === "ready" && !selectedAutoPilot.data?.enabled ? (
         <Alert tone="neutral" title="Automatic submission is off">
-          Approving an opportunity of{" "}
+          Approving a website of{" "}
           <span className="font-semibold text-content">
             {selectedProject?.name ?? "this project"}
           </span>{" "}
@@ -475,7 +475,7 @@ export default function RegistryPage() {
             data={opportunities.data}
             onRetry={opportunities.reload}
             isEmpty={rows.length === 0}
-            emptyTitle="No opportunities match these filters"
+            emptyTitle="No websites match these filters"
             emptyDescription="Adjust the filters or run a discovery to populate the registry."
             skeleton={<TableSkeleton rows={8} columns={9} />}
           >
@@ -485,7 +485,7 @@ export default function RegistryPage() {
                   <Th className="w-10">
                     <input
                       type="checkbox"
-                      aria-label="Select all opportunities on this page"
+                      aria-label="Select all websites on this page"
                       checked={allSelected}
                       onChange={toggleAll}
                     />
@@ -582,7 +582,7 @@ export default function RegistryPage() {
       <Dialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add an opportunity"
+        title="Add a website"
         description="The page on which the backlink should be placed - for example a directory form."
         width="lg"
         footer={
@@ -591,7 +591,7 @@ export default function RegistryPage() {
               Cancel
             </Button>
             <Button loading={adding} onClick={() => void submitManualWebsite()}>
-              Add opportunity
+              Add website
             </Button>
           </>
         }
@@ -604,7 +604,7 @@ export default function RegistryPage() {
           ) : null}
 
           <Field
-            label="Opportunity URL"
+            label="Submission URL"
             required
             hint="The exact page that accepts the listing - for example https://example.com/add-your-business"
           >
@@ -618,7 +618,7 @@ export default function RegistryPage() {
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Name" hint="Shown in the registry">
+            <Field label="Name" hint="Shown in the list">
               <Input
                 value={addForm.name}
                 onChange={(event) => setAddForm((prev) => ({ ...prev, name: event.target.value }))}
@@ -639,7 +639,7 @@ export default function RegistryPage() {
             </Field>
           </div>
 
-          <Field label="Project" required hint="The campaign this opportunity belongs to">
+          <Field label="Project" required hint="The project this website belongs to">
             <Select
               value={addForm.project_id}
               onChange={(event) => setAddForm((prev) => ({ ...prev, project_id: event.target.value }))}
@@ -691,20 +691,20 @@ export default function RegistryPage() {
         open={confirmAction !== null}
         title={
           confirmAction === "delete"
-            ? "Delete opportunities?"
+            ? "Delete websites?"
             : confirmAction === "approve"
-              ? "Approve opportunities?"
+              ? "Approve websites?"
               : confirmAction === "reject"
-                ? "Reject opportunities?"
+                ? "Reject websites?"
                 : confirmAction === "exclude"
-                  ? "Exclude opportunities?"
+                  ? "Exclude websites?"
                   : confirmAction === "queue"
-                    ? "Add opportunities to the queue?"
-                    : "Add opportunities to a project?"
+                    ? "Add websites to the queue?"
+                    : "Add websites to a project?"
         }
         description={
           confirmAction
-            ? `${selected.length} opportunit${selected.length === 1 ? "y" : "ies"} will be processed by the backend.`
+            ? `${selected.length} website(s) will be processed by the backend.`
             : undefined
         }
         confirmLabel={

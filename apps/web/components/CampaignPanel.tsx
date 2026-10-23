@@ -20,6 +20,7 @@ import {
   Input,
   MetricTile,
   ProgressBar,
+  Select,
   Skeleton,
   Table,
   Td,
@@ -41,6 +42,7 @@ const STATUS_LABELS: Record<CampaignRowStatus, string> = {
   READY: "Ready to start",
   QUEUED: "Queued",
   SUBMITTING: "Submitting…",
+  PAUSED: "Stopped",
   WAITING_MANUAL: "Submit by hand",
   SUBMITTED: "Submitted",
   VERIFIED: "Verified",
@@ -55,6 +57,7 @@ const STATUS_TONES: Record<CampaignRowStatus, BadgeTone> = {
   READY: "accent",
   QUEUED: "info",
   SUBMITTING: "info",
+  PAUSED: "neutral",
   WAITING_MANUAL: "warning",
   SUBMITTED: "accent",
   VERIFIED: "success",
@@ -87,6 +90,10 @@ export function CampaignPanel({
     () => api.campaign.get(apiClient, projectId),
     [projectId],
   );
+  const settings = useResource(
+    () => api.projects.settings(apiClient, projectId),
+    [projectId],
+  );
 
   const [text, setText] = React.useState("");
   const [addResult, setAddResult] = React.useState<CampaignAddResult | null>(null);
@@ -97,6 +104,10 @@ export function CampaignPanel({
   const [submitUrl, setSubmitUrl] = React.useState("");
   const [submitAnchor, setSubmitAnchor] = React.useState("");
   const [submitVerify, setSubmitVerify] = React.useState(true);
+  const [stopOpen, setStopOpen] = React.useState(false);
+  const [removeRow, setRemoveRow] = React.useState<CampaignRow | null>(null);
+  const [categoryFilter, setCategoryFilter] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("");
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   const addAction = useAction();
@@ -104,11 +115,29 @@ export function CampaignPanel({
   const startAction = useAction();
   const submitAction = useAction();
   const rowAction = useAction();
+  const controlAction = useAction();
+  const downloadAction = useAction();
+  const settingsAction = useAction();
 
   const data = campaign.data;
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
   const summary = data?.summary;
   const live = rows.some((row) => LIVE_STATUSES.includes(row.status));
+  const paused = data?.project_status === "PAUSED";
+  const pausedCount = summary?.paused ?? 0;
+  const categories = React.useMemo(
+    () => Array.from(new Set(rows.map((row) => row.category).filter(Boolean))).sort(),
+    [rows],
+  );
+  const visibleRows = React.useMemo(
+    () =>
+      rows.filter(
+        (row) =>
+          (!categoryFilter || row.category === categoryFilter) &&
+          (!statusFilter || row.status === statusFilter),
+      ),
+    [rows, categoryFilter, statusFilter],
+  );
 
   /* The table is alive while a task is on its way; when nothing runs a slow
      refresh is enough to notice a change made in another tab. */
@@ -184,6 +213,97 @@ export function CampaignPanel({
     refresh();
   };
 
+  const stop = async () => {
+    const outcome = await controlAction.run(() =>
+      api.campaign.stop(apiClient, projectId),
+    );
+    if (!outcome.ok || !outcome.data) {
+      toast.push(errorMessage(outcome.error), "error");
+      return;
+    }
+    setStopOpen(false);
+    toast.push(outcome.data.message || "Work stopped", "success");
+    refresh();
+  };
+
+  const removeFromProject = async () => {
+    if (!removeRow) return;
+    const outcome = await controlAction.run(() =>
+      api.campaign.remove(apiClient, projectId, removeRow.opportunity_id),
+    );
+    if (!outcome.ok) {
+      toast.push(errorMessage(outcome.error), "error");
+      return;
+    }
+    toast.push(
+      `${removeRow.name} removed from this project - it stays in Backlink websites`,
+      "success",
+    );
+    setRemoveRow(null);
+    refresh();
+  };
+
+  const restartFailed = async () => {
+    const outcome = await controlAction.run(() =>
+      api.campaign.restartFailed(apiClient, projectId),
+    );
+    if (!outcome.ok || !outcome.data) {
+      toast.push(errorMessage(outcome.error), "error");
+      return;
+    }
+    const count = outcome.data.retried + outcome.data.verifications;
+    toast.push(
+      count > 0
+        ? `${count} failed row(s) queued again`
+        : "There is no failed row to restart",
+      count > 0 ? "success" : "info",
+    );
+    refresh();
+  };
+
+  const downloadReport = async () => {
+    const outcome = await downloadAction.run(() =>
+      api.campaign.downloadReport(apiClient, projectId),
+    );
+    if (outcome.ok) {
+      toast.push("Report downloaded", "success");
+    } else {
+      toast.push(errorMessage(outcome.error), "error");
+    }
+  };
+
+  /** Three simple speed presets instead of a wall of execution numbers. */
+  const changeSpeed = async (value: string) => {
+    const current = settings.data;
+    if (!current) {
+      toast.push("The project settings could not be loaded", "error");
+      return;
+    }
+    const preset =
+      value === "slow"
+        ? { max_concurrency: 1, request_rate_per_minute: 20 }
+        : value === "fast"
+          ? { max_concurrency: 6, request_rate_per_minute: 120 }
+          : { max_concurrency: 3, request_rate_per_minute: 60 };
+    const outcome = await settingsAction.run(() =>
+      api.projects.updateSettings(apiClient, projectId, { ...current, ...preset }),
+    );
+    if (outcome.ok) {
+      toast.push(`Speed set to ${value}`, "success");
+      settings.reload();
+    } else {
+      toast.push(errorMessage(outcome.error), "error");
+    }
+  };
+
+  const speedValue = settings.data
+    ? settings.data.max_concurrency >= 6
+      ? "fast"
+      : settings.data.max_concurrency <= 1
+        ? "slow"
+        : "normal"
+    : "normal";
+
   const retryRow = async (row: CampaignRow) => {
     if (!row.task_id) return;
     const outcome = await rowAction.run(() =>
@@ -248,22 +368,24 @@ export function CampaignPanel({
   return (
     <Card>
       <CardHeader
-        title="Backlink campaign"
-        description="Everything for this project on one screen: add websites, press Start and watch every row."
+        title="Backlink work"
+        description="Step 1: add websites. Step 2: press Start. Step 3: follow every result in the table."
         action={
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void downloadReport()}
+              loading={downloadAction.pending}
+              disabled={rows.length === 0}
+            >
+              Download report
+            </Button>
             {onOpenReport ? (
               <Button variant="outline" size="sm" onClick={onOpenReport}>
-                Full report
+                Report page
               </Button>
             ) : null}
-            <Button
-              onClick={() => setStartOpen(true)}
-              loading={startAction.pending}
-              disabled={!summary || summary.total === 0}
-            >
-              Start backlinks
-            </Button>
           </div>
         }
       />
@@ -316,8 +438,8 @@ export function CampaignPanel({
                 />
                 <MetricTile
                   label="In progress"
-                  value={summary.in_progress + summary.waiting_manual}
-                  hint={`${summary.in_progress} running · ${summary.waiting_manual} manual`}
+                  value={summary.in_progress + summary.waiting_manual + pausedCount}
+                  hint={`${summary.in_progress} running · ${summary.waiting_manual} manual · ${pausedCount} stopped`}
                   tone="info"
                 />
                 <MetricTile
@@ -333,10 +455,95 @@ export function CampaignPanel({
               </div>
             </div>
 
+            {/* ------------------------------------------------- run bar */}
+            <div className="rounded-lg border border-accent/35 bg-accent-soft/30 p-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-accent">
+                Step 2 - Start and stop the work
+              </p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      live
+                        ? "h-2 w-2 animate-pulse rounded-full bg-success"
+                        : paused
+                          ? "h-2 w-2 rounded-full bg-warning"
+                          : "h-2 w-2 rounded-full bg-line-strong"
+                    }
+                    aria-hidden
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-content">
+                      {live
+                        ? "Working now"
+                        : paused
+                          ? "Stopped"
+                          : summary.in_progress > 0
+                            ? "Queued"
+                            : "Ready when you are"}
+                    </p>
+                    <p className="text-[11px] text-content-muted">
+                      {live
+                        ? `${summary.in_progress} website(s) in progress`
+                        : paused
+                          ? `${pausedCount} website(s) paused - Start resumes them`
+                          : `${summary.not_started} ready · ${summary.needs_details} need details`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-[11px] text-content-muted">
+                    Speed
+                    <Select
+                      aria-label="Run speed"
+                      className="h-8 w-28 text-xs"
+                      value={speedValue}
+                      disabled={settingsAction.pending || !settings.data}
+                      onChange={(event) => void changeSpeed(event.target.value)}
+                    >
+                      <option value="slow">Slow</option>
+                      <option value="normal">Normal</option>
+                      <option value="fast">Fast</option>
+                    </Select>
+                  </label>
+                  <Button
+                    onClick={() => setStartOpen(true)}
+                    loading={startAction.pending}
+                    disabled={!summary || summary.total === 0}
+                  >
+                    {paused ? "Resume backlinks" : "Start backlinks"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setStopOpen(true)}
+                    loading={controlAction.pending}
+                    disabled={paused || !summary || summary.total === 0}
+                  >
+                    Stop
+                  </Button>
+                </div>
+              </div>
+              {summary.failed > 0 ? (
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-accent/20 pt-2">
+                  <p className="text-[11px] text-danger">
+                    {summary.failed} row(s) failed. Restart them without touching the rest.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void restartFailed()}
+                    loading={controlAction.pending}
+                  >
+                    Restart failed
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
             {/* ------------------------------------------------- add box */}
             <div className="space-y-2 rounded-lg border border-line bg-surface-raised/40 p-3">
               <Field
-                label="Add websites"
+                label="Step 1 - Add websites"
                 hint="Paste one or many URLs - separated by a comma, a space or a new line. Each site is added to the central list once and linked to this project."
               >
                 <Textarea
@@ -371,7 +578,7 @@ export function CampaignPanel({
                 </Button>
                 {onPickFromList ? (
                   <Button size="sm" variant="outline" onClick={onPickFromList}>
-                    Pick from list
+                    Choose websites
                   </Button>
                 ) : null}
                 <span className="text-[11px] text-content-subtle">
@@ -433,11 +640,57 @@ export function CampaignPanel({
               ) : null}
             </div>
 
+            {/* ------------------------------------------------ filters */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-content-subtle">
+                  Step 3 - Assigned websites and report
+                </span>
+                <Select
+                  aria-label="Filter by category"
+                  className="h-8 w-44 text-xs"
+                  value={categoryFilter}
+                  onChange={(event) => setCategoryFilter(event.target.value)}
+                >
+                  <option value="">All categories</option>
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {humanize(category)}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  aria-label="Filter by status"
+                  className="h-8 w-40 text-xs"
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                >
+                  <option value="">All statuses</option>
+                  {(Object.keys(STATUS_LABELS) as CampaignRowStatus[]).map((status) => (
+                    <option key={status} value={status}>
+                      {STATUS_LABELS[status]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <span className="text-[11px] text-content-muted">
+                {visibleRows.length} of {rows.length} website(s)
+              </span>
+            </div>
+
             {/* --------------------------------------------------- table */}
-            {rows.length === 0 ? (
-              <Alert tone="neutral" title="No websites in this project yet">
-                Paste the URLs above or import a spreadsheet. The central list is not
-                touched by other projects - every project picks its own websites.
+            {visibleRows.length === 0 ? (
+              <Alert
+                tone="neutral"
+                title={
+                  rows.length === 0
+                    ? "No websites in this project yet"
+                    : "No website matches these filters"
+                }
+              >
+                {rows.length === 0
+                  ? "Paste the URLs above, import a spreadsheet or pick from Backlink websites. A website can be used by many projects - removing it here never deletes it from the list."
+                  : "Choose another category or status to see the other websites."}
               </Alert>
             ) : (
               <Table>
@@ -451,7 +704,7 @@ export function CampaignPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {visibleRows.map((row) => (
                     <tr key={row.opportunity_id}>
                       <Td>
                         <div className="min-w-0">
@@ -489,6 +742,14 @@ export function CampaignPanel({
                             )}
                           </div>
                           <ProgressBar value={row.details_percent / 100} />
+                          {row.missing.length > 0 ? (
+                            <p
+                              className="truncate text-[10px] text-warning"
+                              title={`Missing: ${row.missing.join(", ")}`}
+                            >
+                              Missing: {row.missing.join(", ")}
+                            </p>
+                          ) : null}
                         </div>
                       </Td>
                       <Td>
@@ -567,6 +828,14 @@ export function CampaignPanel({
                               Details
                             </Button>
                           ) : null}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setRemoveRow(row)}
+                            title="Remove this website from the project (it stays in Backlink websites)"
+                          >
+                            Remove
+                          </Button>
                         </div>
                       </Td>
                     </tr>
@@ -577,17 +846,69 @@ export function CampaignPanel({
 
             <p className="text-[11px] text-content-muted">
               <strong className="font-semibold text-content">Data ready</strong> counts the
-              values the website asks for (name, website, description, …) that are already
-              filled or that the business profile supplies. <strong className="font-semibold text-content">Start backlinks</strong> writes the
-              profile values; a site is never sent half filled. Sites without an automation
-              stay at{" "}
+              values the website asks for that are already filled or that the project
+              details supply. <strong className="font-semibold text-content">Start backlinks</strong>{" "}
+              fills them; a site is never sent half filled. Manually edited values are
+              never overwritten. Sites without an automation stay at{" "}
               <span className="font-medium text-content">&quot;Submit by hand&quot;</span>:
-              the details are ready, you submit them and press{" "}
-              <span className="font-medium text-content">Mark submitted</span>.
+              you submit them, then press{" "}
+              <span className="font-medium text-content">Mark submitted</span>.{" "}
+              <strong className="font-semibold text-content">Stop</strong> pauses the
+              queued work and Start resumes it.
             </p>
           </>
         ) : null}
       </CardBody>
+
+      {/* ------------------------------------------------- stop dialog */}
+      <Dialog
+        open={stopOpen}
+        onClose={() => setStopOpen(false)}
+        title="Stop the backlink work?"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setStopOpen(false)}>
+              Keep running
+            </Button>
+            <Button variant="danger" onClick={() => void stop()} loading={controlAction.pending}>
+              Stop
+            </Button>
+          </>
+        }
+      >
+        <p className="text-xs text-content-muted">
+          Queued websites are paused and nothing is deleted. A task that is already
+          running stops at the next safe step. Press <strong className="text-content">Resume
+          backlinks</strong> to continue exactly where it stopped.
+        </p>
+      </Dialog>
+
+      {/* ----------------------------------------------- remove dialog */}
+      <Dialog
+        open={removeRow !== null}
+        onClose={() => setRemoveRow(null)}
+        title={removeRow ? `Remove ${removeRow.name}?` : "Remove website"}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setRemoveRow(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => void removeFromProject()}
+              loading={controlAction.pending}
+            >
+              Remove from project
+            </Button>
+          </>
+        }
+      >
+        <p className="text-xs text-content-muted">
+          The website leaves this project and its open work is cancelled. It stays in{" "}
+          <strong className="text-content">Backlink websites</strong>, so other projects
+          keep it and you can add it back at any time.
+        </p>
+      </Dialog>
 
       {/* ------------------------------------------------ start dialog */}
       <Dialog
@@ -608,8 +929,8 @@ export function CampaignPanel({
       >
         <ol className="list-decimal space-y-2 pl-4 text-xs text-content-muted">
           <li>
-            The details of every website are filled from the business profile of the
-            project. Manually edited values stay untouched.
+            The details of every website are filled from the project details. Manually
+            edited values stay untouched.
           </li>
           <li>
             Every website with complete details is queued. The project is set to{" "}
@@ -657,8 +978,8 @@ export function CampaignPanel({
                   ))}
                 </ul>
                 <p className="mt-2">
-                  Fill the missing values in the business profile (Settings) or per row via
-                  &quot;Fill details&quot;, then press Start again.
+                  Edit the project details above or use &quot;Fill details&quot; on the row,
+                  then press Start again.
                 </p>
               </Alert>
             ) : (

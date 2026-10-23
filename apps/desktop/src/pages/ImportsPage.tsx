@@ -116,7 +116,7 @@ export function ImportsPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Imports"
+        title="Import old report"
         description="Import opportunities from an Excel or CSV file stored on this machine."
       />
 

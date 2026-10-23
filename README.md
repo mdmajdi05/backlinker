@@ -44,8 +44,8 @@ The product is built around three rules:
 
 | Area | What works |
 | ---- | ---------- |
-| **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. Manual directories can be marked submitted and verified from the same row. |
-| **Opportunities** | Every website you can get a backlink from, per-project opportunities, dedup by domain + normalised URL, exclusions, duplicate merging, bulk approve / reject / exclude / queue actions. |
+| **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, assign websites from a category-filtered list, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. **Stop** pauses and Start resumes the same work; **Remove** takes a website out of the project without deleting it; **Download report** exports the table as CSV and **Restart failed** requeues only the failed rows. Manual directories can be marked submitted and verified from the same row. |
+| **Review websites** | A secondary review screen for discovery results: approve, exclude, add to a project or queue, merge duplicates and edit website fields. The normal flow does not need it - the project page assigns websites directly. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. |
 | **Queue** | Durable, database backed queue with idempotency keys, atomic claiming (conditional `UPDATE`), leases, exponential backoff with jitter, priority reordering, bulk control, cancel / retry / requeue, append-only attempt history. |
 | **Adapters** | Five shipped adapters: `generic_manual`, `http_form`, `playwright_form`, `email_outreach`, `json_api`. Each declares the categories, methods, required config, success signals and retryable errors it supports. |
@@ -244,10 +244,9 @@ auto-backlinker/
 │   │   ├── pyproject.toml    ruff + pytest configuration
 │   │   └── requirements.txt
 │   ├── web/                  PRODUCT 1 - the browser client (Next.js 15)
-│   │   └── app/(app)/        Overview, Projects, Discovery, Opportunities,
-│   │                         Websites, Queue, Automation, Verification,
-│   │                         Reports, Imports, Devices, Activity,
-│   │                         Recycle bin, Settings
+│   │   └── app/(app)/        Dashboard, My projects, Backlink websites,
+│   │                         Task queue, Reports, Recycle bin, Settings,
+│   │                         More tools
 │   ├── desktop/              PRODUCT 2 - the desktop software (Tauri 2)
 │   │   ├── src/              the same screens, desktop conventions
 │   │   ├── src-tauri/        Rust shell, sidecar supervisor, bundler config

@@ -165,8 +165,8 @@ export function AddToProjectDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title="Add from the website list"
-      description="Pick the websites of the central list for this project."
+      title="Assign backlink websites"
+      description="Filter the central list by category and pick the websites for this project."
       width="xl"
       footer={
         <>

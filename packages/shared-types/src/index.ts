@@ -985,6 +985,7 @@ export type CampaignRowStatus =
   | "READY"
   | "QUEUED"
   | "SUBMITTING"
+  | "PAUSED"
   | "WAITING_MANUAL"
   | "SUBMITTED"
   | "VERIFIED"
@@ -1023,6 +1024,8 @@ export interface CampaignSummary {
   waiting_manual: number;
   needs_details: number;
   not_started: number;
+  /** Websites paused with the Stop button. */
+  paused: number;
   failed: number;
   excluded: number;
   remaining: number;
@@ -1072,6 +1075,19 @@ export interface CampaignSubmitResult {
   verification_status: string;
   verify_task_id: string | null;
   opportunity_id: string;
+}
+
+export interface CampaignStopResult {
+  project_status: string;
+  paused: number;
+  stopping: number;
+  message: string;
+}
+
+export interface CampaignRestartResult {
+  retried: number;
+  verifications: number;
+  project_status: string;
 }
 
 /** A recurring job (discovery or verification) of the scheduler. */
@@ -1306,6 +1322,8 @@ export interface ProjectCreate {
     url: string;
     kind?: TargetWebsite["kind"];
   }>;
+  /** Company facts stored in the project's own profile. */
+  details?: BacklinkDetailsUpdate;
 }
 
 export interface DiscoveryRequest {

@@ -423,16 +423,16 @@ def serve_frontend(port: int) -> subprocess.Popen:
 # --------------------------------------------------------------------------
 
 ROUTES = [
-    ("overview", "Overview"),
+    ("overview", "Dashboard"),
     ("projects", "Projects"),
-    ("discovery", "Discovery"),
-    ("registry", "Opportunities"),
-    ("websites", "Websites"),
-    ("queue", "Queue"),
+    ("discovery", "Find new websites"),
+    ("registry", "Review websites"),
+    ("websites", "Backlink websites"),
+    ("queue", "Task queue"),
     ("automation", "Automation"),
-    ("verification", "Verification"),
+    ("verification", "All backlinks"),
     ("reports", "Reports"),
-    ("imports", "Opportunity import"),
+    ("imports", "Import old report"),
     ("integrations", "Integrations"),
     ("devices", "Devices"),
     ("activity", "Activity"),

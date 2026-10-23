@@ -108,7 +108,7 @@ def test_the_report_lists_the_fields_the_websites_ask_for(authenticated_client) 
     assert "email" in payload["missing"]
 
 
-def test_a_shared_profile_is_named_as_shared(authenticated_client) -> None:
+def test_a_shared_profile_is_copied_before_it_is_changed(authenticated_client) -> None:
     profile = authenticated_client.post(
         f"{API}/profiles",
         json={"name": "Shared profile", "primary_website": "https://shared.example"},
@@ -117,21 +117,30 @@ def test_a_shared_profile_is_named_as_shared(authenticated_client) -> None:
     profile_id = profile.json()["id"]
 
     first = _project(authenticated_client, name="First", business_profile_id=profile_id)
-    _project(authenticated_client, name="Second", business_profile_id=profile_id)
+    second = _project(authenticated_client, name="Second", business_profile_id=profile_id)
 
     payload = authenticated_client.get(f"{API}/projects/{first['id']}/backlink-details").json()
 
     assert payload["shared_with_projects"] == 2
     assert any("shared" in note.lower() for note in payload["notes"])
 
-    # Writing through one project is visible in the other - there is one truth.
+    # Writing through one project gives it its own copy - the details of the
+    # other project (and the shared profile) stay exactly as they were.
     authenticated_client.put(
         f"{API}/projects/{first['id']}/backlink-details",
-        json={"company_name": "Renamed everywhere"},
+        json={"company_name": "Renamed for the first project"},
     )
-    other = authenticated_client.get(f"{API}/projects/{first['id']}/backlink-details").json()
-    assert other["company_name"] == "Renamed everywhere"
-    assert authenticated_client.get(f"{API}/profiles/{profile_id}").json()["name"] == "Renamed everywhere"
+    first_after = authenticated_client.get(
+        f"{API}/projects/{first['id']}/backlink-details"
+    ).json()
+    second_after = authenticated_client.get(
+        f"{API}/projects/{second['id']}/backlink-details"
+    ).json()
+    assert first_after["company_name"] == "Renamed for the first project"
+    assert first_after["profile_id"] != profile_id
+    assert second_after["company_name"] == "Shared profile"
+    assert second_after["profile_id"] == profile_id
+    assert authenticated_client.get(f"{API}/profiles/{profile_id}").json()["name"] == "Shared profile"
 
 
 def test_the_gap_report_can_derive_the_address_from_the_profile(authenticated_client) -> None:

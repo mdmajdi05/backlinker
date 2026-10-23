@@ -126,7 +126,6 @@ export function ProjectEditDialog({
   const action = useAction();
   const projectId = project?.id ?? "";
 
-  const profiles = useResource(() => api.profiles.list(apiClient), []);
   const detail = useResource(
     () => api.projects.get(apiClient, projectId),
     [projectId],
@@ -355,8 +354,8 @@ export function ProjectEditDialog({
     <Dialog
       open={open && Boolean(project)}
       onClose={onClose}
-      title="Edit project"
-      description="Only the fields you change are sent to the backend."
+      title="Project details"
+      description="Change what this project needs - nothing is sent until you save."
       width="lg"
       footer={
         <>
@@ -442,29 +441,10 @@ export function ProjectEditDialog({
               />
             </Field>
 
-            <Field
-              label="Business profile"
-              hint="The profile provides the anchors and the descriptions of the submission."
-            >
-              <Select
-                value={profileId}
-                onChange={(event) => setProfileId(event.target.value)}
-                disabled={action.pending}
-              >
-                <option value="">No profile selected</option>
-                {(profiles.data ?? []).map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {profiles.loading ? (
-              <p className="text-xs text-content-subtle">Loading business profiles…</p>
-            ) : null}
-            {profiles.error ? (
-              <p className="text-xs text-danger">{errorMessage(profiles.error)}</p>
-            ) : null}
+            <p className="rounded-md border border-line bg-surface-sunken px-3 py-2 text-[11px] text-content-muted">
+              The company details below belong to this project only. Every website of the
+              project reuses them.
+            </p>
           </>
         )}
 
@@ -601,10 +581,10 @@ export function ProjectEditDialog({
 
         <section className="space-y-2 border-t border-line pt-3">
           <div>
-            <h3 className="text-sm font-semibold text-content">Backlink details</h3>
+            <h3 className="text-sm font-semibold text-content">Company details</h3>
             <p className="text-xs text-content-muted">
-              The facts a directory asks for when it publishes a backlink. They are stored once in
-              the business profile, so every website of this project reuses them.
+              The facts a backlink website asks for when it publishes a link. They are saved
+              for this project and reused by every website of the project.
             </p>
           </div>
 

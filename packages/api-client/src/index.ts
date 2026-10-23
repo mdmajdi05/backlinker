@@ -24,6 +24,8 @@ import type {
   Campaign,
   CampaignAddResult,
   CampaignStartResult,
+  CampaignStopResult,
+  CampaignRestartResult,
   CampaignSubmitResult,
   CampaignView,
   DashboardMetrics,
@@ -595,6 +597,25 @@ export const api = {
       >(`/api/v1/projects/${projectId}/campaign/import`, file),
     start: (c: ApiClient, projectId: string) =>
       c.post<CampaignStartResult>(`/api/v1/projects/${projectId}/campaign/start`),
+    /** Pause the whole project; Start resumes the same work. */
+    stop: (c: ApiClient, projectId: string) =>
+      c.post<CampaignStopResult>(`/api/v1/projects/${projectId}/campaign/stop`),
+    /** Remove one website from the project - the website stays in the list. */
+    remove: (c: ApiClient, projectId: string, opportunityId: string) =>
+      c.delete<void>(
+        `/api/v1/projects/${projectId}/campaign/${opportunityId}`,
+      ),
+    /** Queue failed submissions and verifications again. */
+    restartFailed: (c: ApiClient, projectId: string) =>
+      c.post<CampaignRestartResult>(
+        `/api/v1/projects/${projectId}/campaign/restart-failed`,
+      ),
+    /** Download the live table as a CSV report. */
+    downloadReport: (c: ApiClient, projectId: string) =>
+      c.download(
+        `/api/v1/projects/${projectId}/campaign/report.csv`,
+        `backlinks-${projectId}.csv`,
+      ),
     /** Record a submission the operator made by hand. */
     markSubmitted: (
       c: ApiClient,

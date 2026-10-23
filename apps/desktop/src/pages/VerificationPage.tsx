@@ -66,7 +66,7 @@ export function VerificationPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Verification"
+        title="All backlinks"
         description="Backlink records and the verification history of every link."
         actions={
           <Button loading={running} onClick={runVerification}>

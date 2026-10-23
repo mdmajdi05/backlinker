@@ -1,40 +1,41 @@
-/** Primary application navigation, in the order required by the product spec. */
+/** Primary application navigation, in the order of the daily workflow. */
 export interface NavItem {
   href: string;
   label: string;
   icon: string;
-  group: "workspace" | "operations" | "system";
+  group: "workspace" | "operations" | "system" | "advanced";
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  // Workspace: your projects, the sites they work on and where they come from.
-  { href: "/", label: "Overview", icon: "◧", group: "workspace" },
-  { href: "/projects", label: "Projects", icon: "▤", group: "workspace" },
-  { href: "/discovery", label: "Discovery", icon: "◎", group: "workspace" },
-  { href: "/registry", label: "Opportunities", icon: "▦", group: "workspace" },
-  { href: "/websites", label: "Websites", icon: "▥", group: "workspace" },
-  // Operations: what the system does with them.
-  { href: "/queue", label: "Queue", icon: "≣", group: "operations" },
-  { href: "/automation", label: "Automation", icon: "◈", group: "operations" },
-  { href: "/verification", label: "Verification", icon: "✓", group: "operations" },
+  // The daily workflow: a project, its websites, the work and the result.
+  { href: "/", label: "Dashboard", icon: "◧", group: "workspace" },
+  { href: "/projects", label: "My projects", icon: "▤", group: "workspace" },
+  { href: "/websites", label: "Backlink websites", icon: "▥", group: "workspace" },
+  { href: "/queue", label: "Task queue", icon: "≣", group: "operations" },
   { href: "/reports", label: "Reports", icon: "▧", group: "operations" },
-  { href: "/imports", label: "Opportunity import", icon: "↥", group: "operations" },
-  // System: the workspace itself.
-  { href: "/devices", label: "Devices", icon: "⌸", group: "system" },
-  { href: "/activity", label: "Activity", icon: "≡", group: "system" },
+  // The workspace itself.
   { href: "/recycle-bin", label: "Recycle bin", icon: "⌫", group: "system" },
   { href: "/settings", label: "Settings", icon: "⚙", group: "system" },
+  // Everything that is useful once in a while, kept out of the daily way.
+  { href: "/discovery", label: "Find new websites", icon: "◎", group: "advanced" },
+  { href: "/registry", label: "Review websites", icon: "▦", group: "advanced" },
+  { href: "/verification", label: "All backlinks", icon: "✓", group: "advanced" },
+  { href: "/automation", label: "Automation rules", icon: "◈", group: "advanced" },
+  { href: "/imports", label: "Import old report", icon: "↥", group: "advanced" },
+  { href: "/devices", label: "Devices", icon: "⌸", group: "advanced" },
+  { href: "/activity", label: "Activity log", icon: "≡", group: "advanced" },
 ];
 
 export const NAV_GROUPS: Array<{ id: NavItem["group"]; label: string }> = [
   { id: "workspace", label: "Workspace" },
-  { id: "operations", label: "Operations" },
+  { id: "operations", label: "Work" },
   { id: "system", label: "System" },
+  { id: "advanced", label: "More tools" },
 ];
 
 /** Resolves the page title for a pathname. */
 export function navTitleFor(pathname: string): string {
-  if (pathname === "/") return "Overview";
+  if (pathname === "/") return "Dashboard";
   const match = NAV_ITEMS.find((item) => item.href !== "/" && pathname.startsWith(item.href));
-  return match?.label ?? "Overview";
+  return match?.label ?? "Auto Backlinker";
 }

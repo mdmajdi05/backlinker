@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { Project, ProjectCounts } from "@autobacklinker/shared-types";
 import {
@@ -32,6 +33,7 @@ const PAGE_SIZE = 20;
 
 export default function ProjectsPage() {
   const toast = useToast();
+  const router = useRouter();
   const deleteAction = useAction();
   const [page, setPage] = React.useState(1);
   const [wizardOpen, setWizardOpen] = React.useState(false);
@@ -87,8 +89,8 @@ export default function ProjectsPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Projects"
-        description="Every campaign that targets a website and owns its own execution settings."
+        title="My projects"
+        description="Open a project to add its backlink websites, press Start and see the report."
         actions={
           <Button size="sm" onClick={() => setWizardOpen(true)}>
             New project
@@ -105,7 +107,7 @@ export default function ProjectsPage() {
             onRetry={projects.reload}
             isEmpty={rows.length === 0}
             emptyTitle="No projects yet"
-            emptyDescription="A project owns the target website, the landing pages and the execution settings of a campaign. Create the first one to start discovering backlink opportunities."
+            emptyDescription="A project owns its website details, its backlink websites and its report. Create the first one to start."
             emptyAction={
               <Button size="sm" onClick={() => setWizardOpen(true)}>
                 Create project
@@ -119,7 +121,7 @@ export default function ProjectsPage() {
                   <Th>Name</Th>
                   <Th>Target website</Th>
                   <Th>Status</Th>
-                  <Th className="text-right">Opportunities</Th>
+                  <Th className="text-right">Websites</Th>
                   <Th className="text-right">Queued</Th>
                   <Th className="text-right">Verified</Th>
                   <Th className="text-right">Failed</Th>
@@ -240,16 +242,16 @@ export default function ProjectsPage() {
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
         title="Create project"
-        description="Configure the campaign, its landing pages and execution limits."
+        description="Three steps: the project, its company details and optional landing pages."
         width="lg"
       >
         <ProjectWizard
-          defaultProfileId={null}
           onCancel={() => setWizardOpen(false)}
           onCreated={(project) => {
             setWizardOpen(false);
             projects.reload();
             toast.push(`Project "${project.name}" created`, "success");
+            router.push(`/projects/${project.id}`);
           }}
         />
       </Dialog>

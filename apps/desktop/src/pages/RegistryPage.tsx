@@ -134,7 +134,7 @@ export function RegistryPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Opportunities"
+        title="Review websites"
         description="Every website you can get a backlink from - its review and execution state."
       />
 

@@ -118,13 +118,13 @@ export default function DiscoveryPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Discovery"
-        description="Find new websites with a provider search, then review them in Opportunities."
+        title="Find new websites"
+        description="Find new websites with a provider search, then review them under Review websites."
         actions={
           <div className="flex items-center gap-2">
             <Link href="/registry">
               <Button variant="primary" size="sm">
-                Open Opportunities
+                Review websites
               </Button>
             </Link>
             <Button variant="outline" size="sm" onClick={runs.reload} loading={runs.refreshing}>
@@ -313,7 +313,7 @@ export default function DiscoveryPage() {
                     </Td>
                     <Td>
                       <Button size="sm" variant="ghost" onClick={() => setSelectedRun(run)}>
-                        Opportunities
+                        Results
                       </Button>
                     </Td>
                   </tr>

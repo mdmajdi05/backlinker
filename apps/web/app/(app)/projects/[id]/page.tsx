@@ -4,8 +4,9 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
-import type { Project } from "@autobacklinker/shared-types";
+import type { BacklinkDetails, Project } from "@autobacklinker/shared-types";
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -14,16 +15,16 @@ import {
   MetricTile,
   StatusBadge,
 } from "@autobacklinker/ui";
-import { apiClient } from "@/lib/api";
+import { apiClient, errorMessage } from "@/lib/api";
 import { useResource } from "@/lib/hooks";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatDateTime, formatNumber, humanize } from "@/lib/format";
 import { PageHeader } from "@/components/PageHeader";
 import { AsyncSection, CardSkeleton, ErrorPanel } from "@/components/States";
-import { ProjectSettingsForm } from "@/components/ProjectSettingsForm";
 import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 import { AddToProjectDialog } from "@/components/AddToProjectDialog";
 import { WebsiteListPanel } from "@/components/WebsiteListPanel";
 import { CampaignPanel } from "@/components/CampaignPanel";
+import { ProjectEditDialog } from "@/components/ProjectEditDialog";
 
 /**
  * One project, one screen.
@@ -39,13 +40,14 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const projectId = params.id;
   const [addOpen, setAddOpen] = React.useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
   /* Bumped after the website picker added rows, so the campaign shows them
      immediately instead of waiting for its next refresh. */
   const [campaignReload, setCampaignReload] = React.useState(0);
 
   const project = useResource(() => api.projects.get(apiClient, projectId), [projectId]);
-  const settings = useResource(
-    () => api.projects.settings(apiClient, projectId),
+  const details = useResource(
+    () => api.projects.details(apiClient, projectId),
     [projectId],
   );
   const metrics = useResource(
@@ -104,6 +106,79 @@ export default function ProjectDetailPage() {
       >
         {data ? (
           <>
+            <Card>
+              <CardHeader
+                title="1. Project details"
+                description="This project keeps its own company details. Every website below reuses them - nothing is asked twice."
+                action={
+                  <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
+                    Edit details
+                  </Button>
+                }
+              />
+              <CardBody className="space-y-3">
+                {details.error ? (
+                  <Alert tone="warning" title="The project details could not be loaded">
+                    {errorMessage(details.error)}
+                  </Alert>
+                ) : null}
+                {details.data ? (
+                  <>
+                    <dl className="grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                      {[
+                        ["Company", details.data.company_name],
+                        ["Website", details.data.website || data.target_website],
+                        ["E-mail", details.data.email],
+                        ["Phone", details.data.phone],
+                        ["City", details.data.city],
+                        ["State / region", details.data.state],
+                        ["Country", details.data.country],
+                        ["Anchors", details.data.anchors.join(", ")],
+                      ].map(([label, value]) => (
+                        <div key={label} className="rounded-md border border-line px-3 py-2">
+                          <dt className="text-[10px] uppercase tracking-wider text-content-subtle">
+                            {label}
+                          </dt>
+                          <dd className="truncate text-content" title={value || "Not filled"}>
+                            {value || <span className="text-warning">Not filled</span>}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                    {details.data.required.length > 0 ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[11px] text-content-muted">
+                          {details.data.filled.length} of {details.data.required.length} values
+                          the selected websites ask for are ready.
+                        </p>
+                        {details.data.missing.length > 0 ? (
+                          <p className="text-[11px] text-warning">
+                            Missing: {details.data.missing.map(humanize).join(", ")}
+                          </p>
+                        ) : (
+                          <p className="text-[11px] text-success">
+                            Every required value is ready.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-content-muted">
+                        Add websites below and this card shows exactly which details they ask
+                        for.
+                      </p>
+                    )}
+                    {details.data.notes.map((note) => (
+                      <p key={note} className="text-[11px] text-content-subtle">
+                        {note}
+                      </p>
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-xs text-content-subtle">Loading project details…</p>
+                )}
+              </CardBody>
+            </Card>
+
             <CampaignPanel
               projectId={projectId}
               onChanged={project.reload}
@@ -115,7 +190,7 @@ export default function ProjectDetailPage() {
             <details className="rounded-lg border border-line bg-surface">
               <summary className="cursor-pointer list-none px-4 py-3">
                 <span className="text-sm font-semibold text-content">
-                  Advanced: website fields, auto pilot and execution settings
+                  More tools (optional): auto pilot, website fields and statistics
                 </span>
                 <span className="ml-2 text-xs font-normal text-content-muted">
                   Optional - the campaign above works without it.
@@ -147,25 +222,6 @@ export default function ProjectDetailPage() {
                     onChanged={project.reload}
                   />
                 </div>
-
-                <Card>
-                  <CardHeader
-                    title="Execution settings"
-                    description="Concurrency, retries, schedule and verification cadence"
-                  />
-                  <CardBody>
-                    {settings.loading && !settings.data ? (
-                      <p className="text-xs text-content-subtle">Loading settings…</p>
-                    ) : settings.error ? (
-                      <ErrorPanel error={settings.error} onRetry={settings.reload} />
-                    ) : (
-                      <ProjectSettingsForm
-                        projectId={projectId}
-                        settings={settings.data ?? data.settings ?? null}
-                      />
-                    )}
-                  </CardBody>
-                </Card>
 
                 <Card>
                   <CardHeader
@@ -223,7 +279,8 @@ export default function ProjectDetailPage() {
                 </Card>
 
                 <p className="text-xs text-content-muted">
-                  Verified links are never submitted again. Use Opportunity import to bring
+                  Verified links are never submitted again. Use{" "}
+                  <span className="font-medium text-content">Import old report</span> to bring
                   a report back in - verified rows are skipped, failed rows are retried.
                 </p>
               </div>
@@ -231,6 +288,16 @@ export default function ProjectDetailPage() {
           </>
         ) : null}
       </AsyncSection>
+
+      <ProjectEditDialog
+        open={editOpen}
+        project={data}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          project.reload();
+          details.reload();
+        }}
+      />
 
       <AddToProjectDialog
         projectId={projectId}

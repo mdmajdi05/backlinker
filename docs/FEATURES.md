@@ -26,27 +26,16 @@ blocked - 41 checks, 0 external requests.
 ## The workflow of a backlink campaign
 
 ```
-1. Business profile      what the business is, once, reused by every project
-2. Project               the target website + the landing page that gets the link
-3. Websites              ONE place with every site where a backlink can go
-                         (manual entry or Excel import, editable, deletable,
-                          status: ACTIVE / NOT_WORKING / … - deleting moves a
-                          site to the recycle bin, where it can be restored)
-4. Campaign              the project page: paste one or many URLs or import a
-                         spreadsheet, press "Start backlinks" and watch the live
-                         table (data filled, status, last update).  The websites
-                         are added to the ONE central list and linked to the
-                         project.
-5. Auto pilot            optional: approving a site queues it automatically -
-                          the worker submits in the background, retries, and
-                          never duplicates finished work
-6. Details               the site asks for a name, a description, an address…
-                          the operator fills what is missing, the assistant
-                          derives what it can from the profile and says what
-                          it cannot derive
-7. Verify                link present? anchor right? destination right? rel?
-8. Report                per website: how many submissions worked, how many not
-9. Re-import             verified → skip, failed → retry, pending → queue
+1. Project details       one project per website, with its own company facts
+2. Assign websites       the category-filtered central list, pasted URLs or
+                         Excel/CSV; remove a site without deleting it globally
+3. Start / Stop          Start fills the details and queues every ready site;
+                         Stop pauses, Start resumes; speed is a simple preset
+4. Live report           per website: data ready %, status, last update and the
+                         action that makes sense (Fill details, Mark submitted,
+                         Verify, Retry, Remove)
+5. Export / re-import    Download report (CSV), import an old report and
+                         Restart failed for only the unsuccessful websites
 ```
 
 ### The campaign cockpit (the project page)
@@ -56,13 +45,19 @@ The project page answers three questions on one screen - *which websites*,
 
 | Element | What it does |
 | ------- | ------------ |
+| Project details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and anchors - saved for this project, editable at any time |
 | Add websites | one URL, or many separated by a comma / space / new line; each is added to the central list once and linked to the project |
 | Import Excel / CSV | the same spreadsheet columns as the central list; the imported rows are linked to the project in one step |
-| Pick from list | choose existing websites of the central list |
-| Start backlinks | fills the details from the business profile, sets the project to ACTIVE and queues every website with complete details; a row that misses values is reported, never sent half filled |
-| Live table | website, data filled (%), status (`Queued`, `Submitting`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
+| Choose websites | the central list with a category filter; tick the sites of this project |
+| Assigned websites | category and status filters, missing-field labels and **Remove** (the website stays in the central list) |
+| Start backlinks | fills the details from the project details, sets the project to ACTIVE and queues every website with complete details; a row that misses values is reported, never sent half filled |
+| Stop / Resume | Stop pauses the queued work (nothing is deleted), Start resumes exactly where it stopped; running tasks stop at the next safe step |
+| Speed | Slow / Normal / Fast - one plain choice instead of a wall of execution numbers |
+| Live table | website, data ready (%), missing fields, status (`Queued`, `Submitting`, `Stopped`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
+| Download report | the live table as CSV |
+| Restart failed | queues only the failed submissions and failed verifications again |
 | Mark submitted | for directories without an automation: record the published page, complete the waiting task and queue the verification |
-| Advanced (collapsed) | every website field, auto pilot, execution settings and the project statistics - ready when needed, out of the way when not |
+| More tools (collapsed) | every website field, auto pilot and the project statistics - ready when needed, out of the way when not |
 
 ### Where the work happens
 
@@ -79,24 +74,29 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 
 | Action | What happens |
 | ------ | ------------ |
-| Edit | name, description, target website, business profile, status and the landing pages - only the fields that were sent are changed |
-| Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) and the business profile is untouched |
-| Settings | concurrency, request rate, retries, backoff, verification interval, execution environment |
-| Report | project scoped workbook with the **per website** counters (submitted / verified / failed / pending) and a *Retry failed* action |
-| Backlink details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and the **anchor texts** - asked when the project is created and editable at any time; they are stored in the business profile, so nothing is duplicated |
+| Edit | name, description, target website, status and the landing pages; the company details are saved for this project |
+| Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) |
+| Settings | speed preset (Slow / Normal / Fast) on the project page; concurrency, request rate, retries, backoff, verification interval and execution environment in More tools |
+| Report | CSV download from the project page; the Reports screen generates the full workbook with per-website counters |
+| Company details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and the **anchor texts** - asked when the project is created and editable at any time |
 | Recycle bin | everything that is deleted (projects, websites, business profiles, opportunities) waits here until it is **restored** or **deleted forever** |
+
+New projects always get their **own** company details - there is no shared
+profile to pick. Older projects that still share a profile keep working; the
+first time their details are saved the backend copies the profile, so changing
+one project can never change another.
 
 ## The screens
 
 | Screen | Web | Desktop | Backend endpoint |
 | ------ | --- | ------- | ---------------- |
-| Overview (metrics + live activity) | yes | yes | `/dashboard/metrics`, `/activity` |
-| Projects | yes | yes | `/projects` |
-| Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start` |
+| Dashboard (metrics + live activity) | yes | yes | `/dashboard/metrics`, `/activity` |
+| My projects | yes | yes | `/projects` |
+| Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start`, `.../stop`, `.../report.csv` |
 | Onboarding wizard | yes | yes | `/profiles`, `/projects` |
-| Opportunity discovery | yes | yes | `/discovery/providers`, `/discovery/runs` |
-| Website registry | yes | yes | `/opportunities`, `/opportunities/bulk` |
-| Backlink queue | yes | yes | `/queue`, `/queue/reorder`, `/queue/{id}/control` |
+| Find new websites | yes | yes | `/discovery/providers`, `/discovery/runs` |
+| Review websites | yes | yes | `/opportunities`, `/opportunities/bulk` |
+| Task queue | yes | yes | `/queue`, `/queue/reorder`, `/queue/{id}/control` |
 | Live automation | yes | yes | `/queue`, `/tasks/{id}/attempts`, `/events/stream` |
 | Execution control (pause/resume/stop, resources) | yes | yes | `/worker/*`, `/resources` |
 | Browser isolation + runtime | yes | yes | `/browser/status`, `/browser/install` |

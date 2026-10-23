@@ -119,7 +119,8 @@ def read(db: Session, project: Project) -> dict[str, Any]:
         if shared_with > 1:
             notes.append(
                 f"These details live in the business profile '{profile.name}' and are "
-                f"shared with {shared_with - 1} other project(s)."
+                f"shared with {shared_with - 1} other project(s). Saving them here gives "
+                "this project its own copy - the other project stays untouched."
             )
     else:
         notes.append(
@@ -163,6 +164,53 @@ def _normalise_website(value: str) -> str:
     return value.rstrip("/")
 
 
+def _copy_profile(db: Session, profile: BusinessProfile, user: User) -> BusinessProfile:
+    """Give a project its own copy of a shared profile.
+
+    A project must never change the details of another project behind its
+    back.  The first save of a shared profile therefore copies every value
+    into a new profile and points the project at the copy.
+    """
+    clone = BusinessProfile(
+        owner_id=profile.owner_id or user.id,
+        name=profile.name,
+        primary_website=profile.primary_website,
+        description=profile.description,
+        industry=profile.industry,
+        niche=profile.niche,
+        target_countries=list(profile.target_countries or []),
+        target_regions=list(profile.target_regions or []),
+        contact_email=profile.contact_email,
+        contact_phone=profile.contact_phone,
+        social_profiles=dict(profile.social_profiles or {}),
+        logo_path=profile.logo_path,
+        preferred_language=profile.preferred_language,
+        business_descriptions=list(profile.business_descriptions or []),
+        author_bios=list(profile.author_bios or []),
+        keywords=list(profile.keywords or []),
+        primary_landing_pages=list(profile.primary_landing_pages or []),
+        secondary_landing_pages=list(profile.secondary_landing_pages or []),
+        preferred_anchors=list(profile.preferred_anchors or []),
+        anchor_preferences=dict(profile.anchor_preferences or {}),
+        preferred_categories=list(profile.preferred_categories or []),
+        excluded_domains=list(profile.excluded_domains or []),
+        excluded_categories=list(profile.excluded_categories or []),
+        target_domains=list(profile.target_domains or []),
+        monthly_target=profile.monthly_target,
+        campaign_goals=profile.campaign_goals,
+        address=profile.address,
+        city=profile.city,
+        state=profile.state,
+        country=profile.country,
+        postal_code=profile.postal_code,
+        founded_year=profile.founded_year,
+        employee_count=profile.employee_count,
+    )
+    db.add(clone)
+    db.flush()
+    return clone
+
+
 def write(db: Session, project: Project, user: User, payload: dict[str, Any]) -> dict[str, Any]:
     """Store the details of the project - in its business profile.
 
@@ -183,6 +231,21 @@ def write(db: Session, project: Project, user: User, payload: dict[str, Any]) ->
         db.add(profile)
         db.flush()
         project.business_profile_id = profile.id
+    else:
+        shared = int(
+            db.execute(
+                select(func.count())
+                .select_from(Project)
+                .where(
+                    Project.business_profile_id == profile.id,
+                    Project.deleted_at.is_(None),
+                )
+            ).scalar_one()
+        )
+        if shared > 1:
+            # Never edit the profile another project is still using.
+            profile = _copy_profile(db, profile, user)
+            project.business_profile_id = profile.id
 
     # The stored details of the opportunities copy these values.  Remember the
     # old ones so they can be refreshed - a value typed for one website stays.

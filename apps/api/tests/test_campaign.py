@@ -230,3 +230,108 @@ def test_a_spreadsheet_import_links_the_rows_to_the_project(
         db_session.query(Opportunity).filter_by(project_id=project["id"]).count()
     )
     assert linked == 2
+
+
+def test_stop_pauses_and_start_resumes_the_same_work(
+    authenticated_client, db_session
+) -> None:
+    profile = _profile(authenticated_client)
+    project = _project(authenticated_client, profile_id=profile["id"])
+    _add(authenticated_client, project["id"], "https://pause.example/add")
+
+    started = authenticated_client.post(
+        f"{API}/projects/{project['id']}/campaign/start"
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["queued"] == 1
+
+    stopped = authenticated_client.post(
+        f"{API}/projects/{project['id']}/campaign/stop"
+    )
+    assert stopped.status_code == 200, stopped.text
+    stop_body = stopped.json()
+    assert stop_body["paused"] == 1
+    assert stop_body["project_status"] == "PAUSED"
+
+    paused = authenticated_client.get(f"{API}/projects/{project['id']}/campaign").json()
+    assert paused["project_status"] == "PAUSED"
+    assert paused["summary"]["paused"] == 1
+    assert paused["rows"][0]["status"] == "PAUSED"
+
+    resumed = authenticated_client.post(
+        f"{API}/projects/{project['id']}/campaign/start"
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["queued"] == 1
+    rows = authenticated_client.get(f"{API}/projects/{project['id']}/campaign").json()["rows"]
+    assert rows[0]["status"] == "QUEUED"
+
+    db_session.rollback()
+    task = db_session.query(Task).filter_by(project_id=project["id"], type="SUBMIT").one()
+    assert task.status == "QUEUED"
+
+
+def test_removing_a_website_keeps_it_in_the_central_list(
+    authenticated_client, db_session
+) -> None:
+    profile = _profile(authenticated_client)
+    project = _project(authenticated_client, profile_id=profile["id"])
+    added = _add(authenticated_client, project["id"], "https://remove.example/add")
+    opportunity_id = added["results"][0]["opportunity_id"]
+
+    removed = authenticated_client.delete(
+        f"{API}/projects/{project['id']}/campaign/{opportunity_id}"
+    )
+    assert removed.status_code == 204, removed.text
+    campaign = authenticated_client.get(f"{API}/projects/{project['id']}/campaign").json()
+    assert campaign["summary"]["total"] == 0
+
+    # The website itself is not deleted - it stays available for other projects.
+    websites = authenticated_client.get(f"{API}/websites", params={"page_size": 50}).json()
+    assert "remove.example" in {row["domain"] for row in websites["items"]}
+
+    # Adding it again restores the same row instead of hiding a duplicate.
+    again = _add(authenticated_client, project["id"], "https://remove.example/add")
+    assert again["results"][0]["status"] == "linked"
+    restored = authenticated_client.get(f"{API}/projects/{project['id']}/campaign").json()
+    assert restored["summary"]["total"] == 1
+
+
+def test_restart_failed_queues_the_failed_submission_again(
+    authenticated_client, db_session
+) -> None:
+    profile = _profile(authenticated_client)
+    project = _project(authenticated_client, profile_id=profile["id"])
+    _add(authenticated_client, project["id"], "https://failed.example/add")
+    authenticated_client.post(f"{API}/projects/{project['id']}/campaign/start")
+
+    db_session.rollback()
+    task = db_session.query(Task).filter_by(project_id=project["id"], type="SUBMIT").one()
+    task.status = "FAILED"
+    task.last_error = "The form changed"
+    db_session.commit()
+
+    restarted = authenticated_client.post(
+        f"{API}/projects/{project['id']}/campaign/restart-failed"
+    )
+    assert restarted.status_code == 200, restarted.text
+    assert restarted.json()["retried"] == 1
+
+    db_session.rollback()
+    db_session.refresh(task)
+    assert task.status == "QUEUED"
+
+
+def test_the_campaign_report_downloads_as_csv(authenticated_client) -> None:
+    profile = _profile(authenticated_client)
+    project = _project(authenticated_client, profile_id=profile["id"])
+    _add(authenticated_client, project["id"], "https://report.example/add")
+
+    response = authenticated_client.get(
+        f"{API}/projects/{project['id']}/campaign/report.csv"
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/csv")
+    text = response.text
+    assert "Website" in text.splitlines()[0]
+    assert "report.example" in text

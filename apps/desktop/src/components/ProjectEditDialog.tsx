@@ -470,7 +470,7 @@ export function ProjectEditDialog({
         <div className="grid gap-3 sm:grid-cols-2">
           <Field
             label="Business profile"
-            hint="The company profile the anchors and the descriptions come from."
+            hint="Optional. Leave it empty to keep this project's own details."
           >
             {profiles.loading && !profiles.data ? (
               <Skeleton className="h-9 w-full" />
@@ -665,7 +665,7 @@ export function ProjectEditDialog({
 
         <div className="rounded-md border border-line p-3">
           <div className="mb-2">
-            <p className="text-xs font-semibold text-content">Backlink details</p>
+            <p className="text-xs font-semibold text-content">Company details</p>
             <p className="text-[11px] text-content-subtle">
               The facts a directory asks for. They are stored once in the
               business profile, so every website of this project reuses them.

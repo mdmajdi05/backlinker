@@ -101,14 +101,21 @@ def main() -> int:
             page.goto(f"{BASE}{href}", wait_until="networkidle")
             page.wait_for_timeout(1800)
             detail = page.content()
-            has_campaign = "Backlink campaign" in detail
+            has_campaign = "Backlink work" in detail
             print(
                 f"[{'PASS' if has_campaign else 'FAIL'}]"
                 " the detail page shows the campaign cockpit"
             )
             if not has_campaign:
                 failures.append("the detail page has no campaign cockpit")
-            has_report = "Full report" in detail
+            has_details = "Project details" in detail and "Edit details" in detail
+            print(
+                f"[{'PASS' if has_details else 'FAIL'}]"
+                " the detail page shows the project details"
+            )
+            if not has_details:
+                failures.append("the detail page has no project details")
+            has_report = "Report page" in detail and "Download report" in detail
             print(
                 f"[{'PASS' if has_report else 'FAIL'}]"
                 " the detail page links to the full report"

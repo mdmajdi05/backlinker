@@ -118,13 +118,13 @@ export default function OverviewPage() {
     if (!data) return [];
     return [
       { label: "Projects", value: data.projects, href: "/projects" },
-      { label: "Discovered", value: data.opportunities, href: "/registry" },
-      { label: "Approved", value: data.approved, href: "/registry" },
+      { label: "Websites found", value: data.opportunities, href: "/websites" },
+      { label: "Approved websites", value: data.approved, href: "/websites" },
       { label: "Queued", value: data.queued, href: "/queue" },
-      { label: "Running", value: data.running, href: "/automation" },
+      { label: "Running", value: data.running, href: "/queue" },
       { label: "Published", value: data.published, href: "/verification" },
       { label: "Verified live", value: data.verified_live, href: "/verification" },
-      { label: "Pending manual", value: data.pending_manual, href: "/automation" },
+      { label: "Pending manual", value: data.pending_manual, href: "/queue" },
       { label: "Failed", value: data.failed, href: "/queue" },
       { label: "Awaiting retry", value: data.awaiting_retry, href: "/queue" },
       { label: "Requiring verification", value: data.requiring_verification, href: "/verification" },
@@ -159,7 +159,7 @@ export default function OverviewPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Overview"
+        title="Dashboard"
         description={
           data ? `Metrics generated at ${formatDateTime(data.generated_at)}` : "Workspace metrics"
         }
@@ -193,11 +193,11 @@ export default function OverviewPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader
-            title="Opportunities by category"
+            title="Backlink websites by category"
             description="Real counts reported by the backend"
             action={
-              <Link href="/registry" className="text-xs font-medium text-accent hover:underline">
-                Open Opportunities
+              <Link href="/websites" className="text-xs font-medium text-accent hover:underline">
+                Open Backlink websites
               </Link>
             }
           />
@@ -313,56 +313,59 @@ export default function OverviewPage() {
 
       <Card>
         <CardHeader
-          title="Where do I do what?"
-          description="One page per job - so nothing is done twice"
+          title="How it works"
+          description="Four steps, each on a simple page"
         />
         <CardBody>
-          <dl className="grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
-            <div>
-              <dt className="font-medium text-content">Find new websites</dt>
-              <dd className="text-content-muted">
-                <Link className="underline" href="/discovery">Discovery</Link> runs a provider search
-                - the result is reviewed in{" "}
-                <Link className="underline" href="/registry">Opportunities</Link>.
-              </dd>
-            </div>
-            <div>
-              <dt className="font-medium text-content">Review and approve</dt>
-              <dd className="text-content-muted">
-                <Link className="underline" href="/registry">Opportunities</Link> is the only place
-                where a website is approved, excluded or queued for a project.
-              </dd>
-            </div>
-            <div>
-              <dt className="font-medium text-content">Keep the site list</dt>
-              <dd className="text-content-muted">
-                <Link className="underline" href="/websites">Websites</Link> is the central list -
-                add a site by hand or import a spreadsheet there.
-              </dd>
-            </div>
-            <div>
-              <dt className="font-medium text-content">Run a project</dt>
-              <dd className="text-content-muted">
-                Open a project: its websites, its execution rules, the auto pilot and its report
-                live on the project page.
-              </dd>
-            </div>
-            <div>
-              <dt className="font-medium text-content">Change your company details</dt>
-              <dd className="text-content-muted">
-                <Link className="underline" href="/settings">Settings → Business profiles</Link> -
-                every project submits with the same profile.
-              </dd>
-            </div>
-            <div>
-              <dt className="font-medium text-content">Undo a deletion</dt>
-              <dd className="text-content-muted">
+          <ol className="grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
+            <li>
+              <p className="font-medium text-content">1. Create a project with its details</p>
+              <p className="text-content-muted">
+                <Link className="underline" href="/projects">My projects</Link> → New project.
+                The company facts stay with that project.
+              </p>
+            </li>
+            <li>
+              <p className="font-medium text-content">2. Assign backlink websites</p>
+              <p className="text-content-muted">
+                Open the project and use <strong className="text-content">Choose websites</strong>{" "}
+                with the category filter, paste URLs or import Excel.{" "}
+                <Link className="underline" href="/websites">Backlink websites</Link> is the
+                central list.
+              </p>
+            </li>
+            <li>
+              <p className="font-medium text-content">3. Start and stop the work</p>
+              <p className="text-content-muted">
+                <strong className="text-content">Start backlinks</strong> fills the details and
+                queues every ready site. <strong className="text-content">Stop</strong> pauses;
+                Start resumes. Speed is Slow / Normal / Fast.
+              </p>
+            </li>
+            <li>
+              <p className="font-medium text-content">4. Read the report and act</p>
+              <p className="text-content-muted">
+                The live table shows what happened per website. Download it as CSV, restart only
+                the failed rows or import an old report under{" "}
+                <Link className="underline" href="/imports">More tools</Link>.
+              </p>
+            </li>
+            <li>
+              <p className="font-medium text-content">Change your company details</p>
+              <p className="text-content-muted">
+                Open the project → <strong className="text-content">Project details → Edit
+                details</strong>. Nothing is shared behind your back.
+              </p>
+            </li>
+            <li>
+              <p className="font-medium text-content">Undo a deletion</p>
+              <p className="text-content-muted">
                 Everything you delete waits in the{" "}
                 <Link className="underline" href="/recycle-bin">Recycle bin</Link> - restore it
                 there or delete it forever.
-              </dd>
-            </div>
-          </dl>
+              </p>
+            </li>
+          </ol>
         </CardBody>
       </Card>
 

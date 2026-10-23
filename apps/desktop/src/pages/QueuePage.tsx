@@ -146,7 +146,7 @@ export function QueuePage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Queue"
+        title="Task queue"
         description="Tasks, leases and the controls for locally executed work."
       />
 

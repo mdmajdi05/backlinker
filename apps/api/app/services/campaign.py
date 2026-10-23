@@ -58,6 +58,7 @@ ROW_STATUSES = (
     "READY",
     "QUEUED",
     "SUBMITTING",
+    "PAUSED",
     "WAITING_MANUAL",
     "SUBMITTED",
     "VERIFIED",
@@ -65,6 +66,10 @@ ROW_STATUSES = (
     "VERIFICATION_FAILED",
     "EXCLUDED",
 )
+
+#: Task states the Stop button leaves behind.  They are not claimed by a
+#: worker and Start turns them back into QUEUED tasks.
+PAUSED_TASK_STATUSES = ("DISCOVERED", "PAUSED")
 
 
 def split_urls(text: str | None) -> list[str]:
@@ -304,6 +309,16 @@ def start_campaign(db: Session, project: Project) -> dict[str, Any]:
             )
             continue
 
+        if task is not None and task.status in PAUSED_TASK_STATUSES:
+            # Resume the work that the Stop button paused.  The task keeps its
+            # idempotency key, so pressing Start again never duplicates it.
+            task.status = "QUEUED"
+            task.scheduled_for = utcnow()
+            task.updated_at = utcnow()
+            opportunity.status = "QUEUED"
+            queued += 1
+            continue
+
         if task is not None and task.status in OPEN_TASK_STATUSES:
             already_queued += 1
             continue
@@ -344,6 +359,121 @@ def start_campaign(db: Session, project: Project) -> dict[str, Any]:
         "excluded": excluded,
         "skipped": skipped,
         "total": len(opportunities),
+    }
+
+
+def stop_campaign(db: Session, project: Project) -> dict[str, Any]:
+    """Pause the work of a project without losing it.
+
+    Queued tasks are put back into a paused state Start can resume.  A task
+    that is already running cannot be killed halfway through a form - it gets
+    the stop request and ends at the next checkpoint.  The answer says exactly
+    which of both happened.
+    """
+    project.status = "PAUSED"
+    paused = 0
+    stopping = 0
+    tasks = (
+        db.execute(
+            select(Task).where(
+                Task.project_id == project.id,
+                Task.type == "SUBMIT",
+                Task.status.in_(OPEN_TASK_STATUSES),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for task in tasks:
+        if task.status == "RUNNING":
+            task.cancel_requested = True
+            task.updated_at = utcnow()
+            stopping += 1
+        elif task.status in ("QUEUED", "RETRY_SCHEDULED"):
+            queue_service.pause_task(db, task)
+            paused += 1
+    db.commit()
+    return {
+        "project_status": project.status,
+        "paused": paused,
+        "stopping": stopping,
+        "message": (
+            f"{paused} website(s) paused"
+            + (f", {stopping} running task(s) stop at the next step" if stopping else "")
+        ),
+    }
+
+
+def unassign(
+    db: Session, project: Project, opportunity: Opportunity
+) -> dict[str, Any]:
+    """Remove one website from a project - the website itself stays.
+
+    Open work of the row is cancelled first, so a removed website cannot be
+    submitted in the background.  The website remains in the central list and
+    can be added to this project again later.
+    """
+    task = (
+        db.execute(
+            select(Task)
+            .where(Task.opportunity_id == opportunity.id, Task.type == "SUBMIT")
+            .order_by(Task.created_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+    if task is not None and task.status in OPEN_TASK_STATUSES:
+        if task.status == "RUNNING":
+            task.cancel_requested = True
+        queue_service.cancel_task(db, task, "Website removed from the project")
+
+    opportunity.status = "EXCLUDED"
+    opportunity.deleted_at = utcnow()
+    opportunity.updated_at = utcnow()
+    db.commit()
+    return {"removed": True, "opportunity_id": opportunity.id}
+
+
+def restart_failed(db: Session, project: Project) -> dict[str, Any]:
+    """Queue every failed submission and failed verification again."""
+    tasks = _latest_tasks(db, project.id)
+    records = _latest_records(db, project.id)
+    retried = 0
+    verifications = 0
+
+    for task in tasks.values():
+        if task.status != "FAILED":
+            continue
+        queue_service.retry_task(db, task, reset_attempts=True)
+        retried += 1
+
+    for record in records.values():
+        if record.verification_status not in ("VERIFICATION_FAILED", "REMOVED"):
+            continue
+        opportunity = db.get(Opportunity, record.opportunity_id) if record.opportunity_id else None
+        if opportunity is None or opportunity.deleted_at is not None:
+            continue
+        queue_service.enqueue(
+            db,
+            task_type="VERIFY",
+            project_id=project.id,
+            opportunity_id=opportunity.id,
+            website_id=opportunity.website_id,
+            payload={"backlink_id": record.id, "force": True},
+            priority=3,
+            idempotency_key=(
+                f"VERIFY:{record.id}:restart:{int(utcnow().timestamp())}"
+            ),
+        )
+        verifications += 1
+
+    if retried or verifications:
+        project.status = "ACTIVE"
+        db.commit()
+    return {
+        "retried": retried,
+        "verifications": verifications,
+        "project_status": project.status,
     }
 
 
@@ -465,6 +595,8 @@ def _row_status(
     ):
         return "SUBMITTED"
     if task is not None:
+        if task.status in PAUSED_TASK_STATUSES:
+            return "PAUSED"
         if task.status == "RUNNING":
             return "SUBMITTING"
         if task.status in ("QUEUED", "RETRY_SCHEDULED", "PAUSED"):
@@ -513,6 +645,7 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         "waiting_manual": 0,
         "needs_details": 0,
         "not_started": 0,
+        "paused": 0,
         "failed": 0,
         "excluded": 0,
         "remaining": 0,
@@ -564,6 +697,8 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
             counters["waiting_manual"] += 1
         elif status == "NEEDS_DETAILS":
             counters["needs_details"] += 1
+        elif status == "PAUSED":
+            counters["paused"] += 1
         elif status in ("FAILED", "VERIFICATION_FAILED"):
             counters["failed"] += 1
         elif status == "EXCLUDED":
@@ -583,7 +718,7 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "category": website.category,
                 "status": status,
                 "details_percent": details_percent,
-                "details_complete": not gap["missing"],
+                "details_complete": not blocked,
                 "missing": [item["label"] for item in blocked],
                 "task_id": task.id if task else None,
                 "task_status": task.status if task else None,

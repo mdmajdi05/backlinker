@@ -61,20 +61,20 @@ def main() -> int:
             browser.close()
             return 1
         page.goto(f"{BASE}{link.get_attribute('href')}", wait_until="networkidle")
-        page.wait_for_selector("text=Backlink campaign", timeout=30000)
+        page.wait_for_selector("text=Backlink work", timeout=30000)
         print("[PASS] the project page shows the campaign cockpit")
 
         # The advanced block must stay collapsed - the page is not crowded.
         details = page.locator("details").first
         if details.count() and details.get_attribute("open") is None:
-            print("[PASS] the advanced section is collapsed by default")
+            print("[PASS] the more-tools section is collapsed by default")
         else:
-            print("[WARN] the advanced section is open")
+            print("[WARN] the more-tools section is open")
         print(
-            f"[{'PASS' if page.locator('summary', has_text='Advanced').count() else 'FAIL'}]"
-            " the advanced section exists"
+            f"[{'PASS' if page.locator('summary', has_text="More tools").count() else 'FAIL'}]"
+            " the more-tools section exists"
         )
-        if page.locator("summary", has_text="Advanced").count() == 0:
+        if page.locator("summary", has_text="More tools").count() == 0:
             failures.append("no advanced section")
 
         # -- paste two URLs ---------------------------------------------
@@ -97,7 +97,7 @@ def main() -> int:
             failures.append("no start dialog")
         else:
             text = dialog.inner_text().lower()
-            explained = "business profile" in text and "active" in text
+            explained = "project details" in text and "active" in text
             print(
                 f"[{'PASS' if explained else 'FAIL'}]"
                 " the start dialog explains what happens"

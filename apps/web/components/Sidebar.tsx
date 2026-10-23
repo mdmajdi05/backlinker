@@ -25,7 +25,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-content">Auto Backlinker</p>
-          <p className="truncate text-[11px] text-content-subtle">Automation workspace</p>
+          <p className="truncate text-[11px] text-content-subtle">Backlink workspace</p>
         </div>
       </div>
 

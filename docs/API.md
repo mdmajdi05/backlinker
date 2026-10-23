@@ -124,14 +124,18 @@ of truth.
 
 | Method | Path | Purpose | Auth |
 | ------ | ---- | ------- | ---- |
-| GET | `/api/v1/projects/{project_id}/campaign` | Every website of the project with `details_percent` (stored values plus the values the business profile can supply on Start), `status`, `last_update` and the counters (`done`, `verified`, `submitted`, `in_progress`, `waiting_manual`, `needs_details`, `failed`, `remaining`, `percent`). | yes |
+| GET | `/api/v1/projects/{project_id}/campaign` | Every website of the project with `details_percent` (stored values plus the values the project details can supply on Start), `status`, `last_update` and the counters (`done`, `verified`, `submitted`, `in_progress`, `paused`, `waiting_manual`, `needs_details`, `failed`, `remaining`, `percent`). | yes |
+| GET | `/api/v1/projects/{project_id}/campaign/report.csv` | Download the live table as a CSV report. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/websites` | Body `{"text": "a.example/x, b.example/y"}` (or `{"urls": [...]}`). Adds every URL to the central list once and links it to the project. Answers every URL with `added`, `linked`, `existing`, `deleted` or `invalid`. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/import` | Multipart `file` (XLSX/CSV). Imports into the central list and links the imported rows to the project. | yes |
-| POST | `/api/v1/projects/{project_id}/campaign/start` | Fills the details from the business profile, sets the project `ACTIVE` and queues every website with complete details. Returns `queued`, `already_queued`, `needs_details` (with the missing labels), `done`, `excluded`. Never queues a half filled row and never duplicates a finished task. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/start` | Fills the details from the project details, sets the project `ACTIVE`, resumes paused rows and queues every website with complete details. Returns `queued`, `already_queued`, `needs_details` (with the missing labels), `done`, `excluded`. Never queues a half filled row and never duplicates a finished task. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/stop` | Sets the project `PAUSED`, pauses queued rows and asks running tasks to stop at their next safe step. Returns `paused`, `stopping` and the project status. | yes |
+| POST | `/api/v1/projects/{project_id}/campaign/restart-failed` | Queues every failed submission and failed verification again. Returns `retried` and `verifications`. | yes |
+| DELETE | `/api/v1/projects/{project_id}/campaign/{opportunity_id}` | Remove one website from the project and cancel its open work. The website stays in the central list and can be added again. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/{opportunity_id}/submit` | Body `{"published_url"?, "anchor_text"?, "verify"?}`. Records a manual submission, completes the waiting task, writes the backlink record and (by default) queues the verification. The record stays `SUBMITTED` - never `VERIFIED` without a real check. | yes |
 | POST | `/api/v1/projects/{project_id}/campaign/{opportunity_id}/verify` | Queue a verification of the backlink of one row. | yes |
 
-Row statuses: `NEEDS_DETAILS`, `READY`, `QUEUED`, `SUBMITTING`,
+Row statuses: `NEEDS_DETAILS`, `READY`, `QUEUED`, `SUBMITTING`, `PAUSED`,
 `WAITING_MANUAL`, `SUBMITTED`, `VERIFIED`, `FAILED`, `VERIFICATION_FAILED`,
 `EXCLUDED`.
 

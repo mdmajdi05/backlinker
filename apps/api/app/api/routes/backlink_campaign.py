@@ -8,9 +8,11 @@ opportunities, tasks and backlink records.
 
 from __future__ import annotations
 
+import csv
+from io import StringIO
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -28,6 +30,22 @@ router = APIRouter(tags=["campaign"])
 
 #: The file types the spreadsheet import understands.
 ALLOWED_SUFFIXES = {".xlsx", ".xlsm", ".csv"}
+
+#: The status column of the CSV uses the same words as the table.
+REPORT_STATUS = {
+    "NOT_STARTED": "Not started",
+    "NEEDS_DETAILS": "Details needed",
+    "READY": "Ready to start",
+    "QUEUED": "Queued",
+    "SUBMITTING": "Submitting",
+    "PAUSED": "Stopped",
+    "WAITING_MANUAL": "Submit by hand",
+    "SUBMITTED": "Submitted",
+    "VERIFIED": "Verified",
+    "FAILED": "Failed",
+    "VERIFICATION_FAILED": "Verification failed",
+    "EXCLUDED": "Excluded",
+}
 
 
 class AddWebsitesIn(BaseModel):
@@ -81,6 +99,54 @@ def read_campaign(project_id: str, db: DbSession, user: CurrentUser) -> dict:
     """The live table: one row per website plus the counters above it."""
     project = _project(db, project_id, user)
     return campaign_service.campaign_payload(db, project)
+
+
+@router.get("/projects/{project_id}/campaign/report.csv")
+def export_campaign_report(
+    project_id: str, db: DbSession, user: CurrentUser
+) -> Response:
+    """Download the live table as a spreadsheet-ready CSV file."""
+    project = _project(db, project_id, user)
+    payload = campaign_service.campaign_payload(db, project)
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "Website",
+            "URL",
+            "Category",
+            "Status",
+            "Data ready %",
+            "Missing fields",
+            "Published page",
+            "Last update",
+        ]
+    )
+    for row in payload["rows"]:
+        writer.writerow(
+            [
+                row["name"],
+                row["url"],
+                row["category"].replace("_", " ").title(),
+                REPORT_STATUS.get(row["status"], row["status"]),
+                row["details_percent"],
+                ", ".join(row["missing"]),
+                row["published_page_url"] or "",
+                row["last_update"].isoformat() if row["last_update"] else "",
+            ]
+        )
+    record_event(
+        db,
+        "campaign.report_downloaded",
+        f"Report of {project.name} downloaded",
+        project_id=project.id,
+    )
+    filename = f"backlinks-{project.slug or project.id}.csv"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/projects/{project_id}/campaign/websites")
@@ -199,6 +265,64 @@ def start_campaign(project_id: str, db: DbSession, user: CurrentUser) -> dict:
         },
     )
     return result
+
+
+@router.post("/projects/{project_id}/campaign/stop")
+def stop_campaign(project_id: str, db: DbSession, user: CurrentUser) -> dict:
+    """Pause every website of the project.  Start resumes the same work."""
+    project = _project(db, project_id, user)
+    result = campaign_service.stop_campaign(db, project)
+    record_event(
+        db,
+        "campaign.stopped",
+        f"Stopped {project.name}: {result['message']}",
+        project_id=project.id,
+        metadata={
+            "paused": result["paused"],
+            "stopping": result["stopping"],
+        },
+    )
+    return result
+
+
+@router.post("/projects/{project_id}/campaign/restart-failed")
+def restart_failed_campaign_rows(
+    project_id: str, db: DbSession, user: CurrentUser
+) -> dict:
+    """Queue every failed submission and failed verification again."""
+    project = _project(db, project_id, user)
+    result = campaign_service.restart_failed(db, project)
+    record_event(
+        db,
+        "campaign.failed_restarted",
+        (
+            f"{result['retried']} failed website(s) and "
+            f"{result['verifications']} verification(s) restarted"
+        ),
+        project_id=project.id,
+    )
+    return result
+
+
+@router.delete(
+    "/projects/{project_id}/campaign/{opportunity_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_campaign_row(
+    project_id: str, opportunity_id: str, db: DbSession, user: CurrentUser
+) -> Response:
+    """Remove one website from the project; the website itself stays."""
+    project = _project(db, project_id, user)
+    opportunity = _opportunity(db, project, opportunity_id)
+    campaign_service.unassign(db, project, opportunity)
+    record_event(
+        db,
+        "campaign.website_removed",
+        "Website removed from the project",
+        project_id=project.id,
+        metadata={"opportunity_id": opportunity_id},
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/projects/{project_id}/campaign/{opportunity_id}/submit")

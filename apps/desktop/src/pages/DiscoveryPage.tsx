@@ -147,7 +147,7 @@ export function DiscoveryPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Discovery"
+        title="Find new websites"
         description="Run provider searches and inspect what they produced."
         actions={
           <Button

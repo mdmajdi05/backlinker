@@ -105,7 +105,7 @@ export function OverviewPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Overview"
+        title="Dashboard"
         description={`Metrics generated at ${formatDate(metrics?.generated_at)}`}
       />
 
