@@ -74,7 +74,7 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 
 | Action | What happens |
 | ------ | ------------ |
-| Edit | name, description, target website, status and the landing pages; the company details are saved for this project |
+| Edit | name, description, target website and the landing pages; the company details are saved for this project. Status is changed only with the project's **Start / Stop** bar |
 | Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) |
 | Settings | speed preset (Slow / Normal / Fast) on the project page; concurrency, request rate, retries, backoff, verification interval and execution environment in More tools |
 | Report | CSV download from the project page; the Reports screen generates the full workbook with per-website counters |

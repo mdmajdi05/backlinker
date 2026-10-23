@@ -40,18 +40,6 @@ import type {
 
 export type ProjectStatus = "ACTIVE" | "PAUSED" | "ARCHIVED";
 
-const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string }> = [
-  { value: "ACTIVE", label: "Active" },
-  { value: "PAUSED", label: "Paused" },
-  { value: "ARCHIVED", label: "Archived" },
-];
-
-const STATUS_HINTS: Record<ProjectStatus, string> = {
-  ACTIVE: "The project is worked on - new tasks are queued.",
-  PAUSED: "Nothing new is queued for this project.",
-  ARCHIVED: "The project is finished - it only shows its history.",
-};
-
 const LANDING_KINDS: Array<{ value: TargetWebsite["kind"]; label: string }> = [
   { value: "MAIN", label: "Main page" },
   { value: "LANDING", label: "Landing page" },
@@ -488,25 +476,6 @@ export function ProjectEditDialog({
                 ))}
               </Select>
             )}
-          </Field>
-
-          <Field
-            label="Status"
-            hint={STATUS_HINTS[status]}
-          >
-            <Select
-              value={status}
-              onChange={(event) =>
-                setStatus(event.target.value as ProjectStatus)
-              }
-              aria-label="The status of the project"
-            >
-              {STATUS_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
           </Field>
         </div>
 

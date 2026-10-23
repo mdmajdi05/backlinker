@@ -19,13 +19,6 @@ import {
 import { apiClient, errorMessage } from "@/lib/api";
 import { useAction, useResource } from "@/lib/hooks";
 
-/** The states a project can have - the backend stores them as plain strings. */
-const STATUS_OPTIONS: Array<{ value: Project["status"]; label: string }> = [
-  { value: "ACTIVE", label: "Active - the campaign runs" },
-  { value: "PAUSED", label: "Paused - nothing new is queued" },
-  { value: "ARCHIVED", label: "Archived - finished, kept for the reports" },
-];
-
 const KIND_OPTIONS: Array<{ value: TargetWebsite["kind"]; label: string }> = [
   { value: "MAIN", label: "Main" },
   { value: "LANDING", label: "Landing" },
@@ -103,8 +96,9 @@ function sameLandingPages(
  * Edit dialog of a project.
  *
  * It changes the name, the description, the target website, the business
- * profile, the status and the landing pages of a project.  Only the fields
- * that were sent are changed - the backend works the same way.
+ * profile and the landing pages of a project.  The status is controlled by the
+ * Start / Stop bar on the project page - this dialog never fakes a pause.
+ * Only the fields that were sent are changed - the backend works the same way.
  *
  * After the save the stored state is read back.  Everything the backend did
  * not store is reported to the user instead of being claimed as saved.
@@ -394,29 +388,14 @@ export function ProjectEditDialog({
           </div>
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Project name" required>
-                <Input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Website Authority Growth"
-                  disabled={action.pending}
-                />
-              </Field>
-              <Field label="Status" hint="A paused project queues nothing new.">
-                <Select
-                  value={status}
-                  onChange={(event) => setStatus(event.target.value as Project["status"])}
-                  disabled={action.pending}
-                >
-                  {STATUS_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
+            <Field label="Project name" required>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Website Authority Growth"
+                disabled={action.pending}
+              />
+            </Field>
 
             <Field label="Description">
               <Textarea

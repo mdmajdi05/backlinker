@@ -29,16 +29,38 @@ Ek hi file dono pe chalti hai.
 - Database aapke machine pe banta hai:
   `~/Library/Application Support/AutoBacklinker/autobacklinker.db`
 - Aapko **koi login nahi karna** — local session khud ban jata hai
-- Browser khula hua ho to Overview pe live dashboard dikhega
+- Browser khula hua ho to Dashboard pe live metrics dikhega
 
 ---
 
-## 3. Kya offline chalta hai, kya internet chahta hai
+## 3. Kaam kaise karein (5 steps)
+
+1. **My projects → New project** — project ka naam, target website aur company
+   details bharo. Har project ke details uske apne hote hain, kisi doosre
+   project se share nahi hote.
+2. Project kholo aur **Step 1 — Add websites** me websites assign karo:
+   **Choose websites** (category filter ke saath), URLs paste karo, ya
+   Excel/CSV import karo.
+3. Jo detail kisi website ko chahiye wo row me **Missing** dikhti hai.
+   **Project details → Edit details** se bharo, ya us row ke **Fill details**
+   se sirf us website ke liye.
+4. **Step 2 — Start backlinks** dabao. **Stop** queue pause karta hai aur
+   **Resume backlinks** wahin se chalta hai. **Speed** (Slow / Normal / Fast)
+   kitni websites ek saath chalengi wo batata hai.
+5. **Step 3 — Assigned websites and report** me har website ka status dekho.
+   Manual sites ke liye **Mark submitted**, failed ke liye **Retry /
+   Restart failed**, aur poora report **Download report** (CSV) se lo.
+   **Remove** sirf is project se hatata hai — website **Backlink websites** me
+   rehti hai. Delete ki hui cheezein **Recycle bin** se wapas aa sakti hain.
+
+---
+
+## 4. Kya offline chalta hai, kya internet chahta hai
 
 | Feature | Internet? | Note |
 | ------- | --------- | ---- |
-| Projects, business profiles, settings | ❌ nahi | sab local DB me |
-| Website registry, approve/reject, notes | ❌ nahi | |
+| Projects, company details, settings | ❌ nahi | sab local DB me |
+| Review websites, approve/reject, notes | ❌ nahi | |
 | Excel/CSV import + column mapping | ❌ nahi | |
 | Excel reports (9 sheets) | ❌ nahi | |
 | Queue, worker, task history, retries | ❌ nahi | |
@@ -57,7 +79,7 @@ Install na ho to bhi app poori tarah chalti hai — sirf browser wale tasks
 
 ---
 
-## 4. Important: submission ka rule
+## 5. Important: submission ka rule
 
 App **khud se kisi website pe data submit nahi karta** jab tak us site ke liye
 adapter configure na ho. Ye deliberate hai:
@@ -73,7 +95,7 @@ Har site ki ToS, rate limits aur submission policy pehle khud check kar lena.
 
 ---
 
-## 5. Data kahan hai / backup
+## 6. Data kahan hai / backup
 
 | Kya | Kahan |
 | --- | ----- |
@@ -88,14 +110,14 @@ Har site ki ToS, rate limits aur submission policy pehle khud check kar lena.
 
 ---
 
-## 6. Uninstall
+## 7. Uninstall
 
 Applications se `Auto Backlinker` ko delete kar do. Upar wala data folder
 bach jayega (aapka data safe rahega) — use hatana ho to wo folder bhi delete kar do.
 
 ---
 
-## 7. Problem ho to
+## 8. Problem ho to
 
 | Problem | Solution |
 | ------- | -------- |

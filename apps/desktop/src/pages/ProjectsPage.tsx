@@ -178,23 +178,6 @@ export function ProjectsPage() {
     }
   }
 
-  async function toggleStatus(project: Project) {
-    const next = project.status === "ACTIVE" ? "PAUSED" : "ACTIVE";
-    try {
-      await api.projects.update(apiClient, project.id, { status: next });
-      toast.push(`Project ${next === "ACTIVE" ? "resumed" : "paused"}`, "success");
-      projects.reload();
-      setDetailsNonce((value) => value + 1);
-    } catch (err) {
-      toast.push(
-        err && typeof err === "object" && "message" in err
-          ? String((err as { message: unknown }).message)
-          : "Could not update the project",
-        "error",
-      );
-    }
-  }
-
   async function deleteProject() {
     if (!deleting) return;
     setDeletingBusy(true);
@@ -318,13 +301,6 @@ export function ProjectsPage() {
                           onClick={() => setEditing(project)}
                         >
                           Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => toggleStatus(project)}
-                        >
-                          {project.status === "ACTIVE" ? "Pause" : "Resume"}
                         </Button>
                         <Button
                           size="sm"
