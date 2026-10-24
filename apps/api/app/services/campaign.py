@@ -27,6 +27,7 @@ from app.db.models import BacklinkRecord, Opportunity, Project, Task, Website
 from app.services import opportunities as opportunity_service
 from app.services import queue as queue_service
 from app.services import site_details as details_service
+from app.services.automation_setup import automation_payload
 
 #: The URLs of the input box are separated by a comma, a semicolon, a space
 #: or a new line - people paste lists in all of these shapes.
@@ -726,6 +727,8 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "verification_status": record.verification_status if record else None,
                 "published_page_url": record.published_page_url if record else None,
                 "observed_anchor_text": record.observed_anchor_text if record else None,
+                "adapter_key": website.adapter.key if website.adapter else None,
+                "adapter_config": automation_payload(website),
                 "last_update": last_update,
             }
         )

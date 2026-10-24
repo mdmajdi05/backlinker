@@ -243,8 +243,11 @@ class BaseAdapter:
    consent walls are detected (`challenge_kind()`) and the task is paused for
    a human.
 4. **The adapter is data.**  Every adapter is also a row in
-   `automation_adapters`, so the user can enable / disable it and configure
-   it per project (`adapter_configurations`).
+   `automation_adapters`, so the user can enable / disable it.  A form can be
+   configured per website (`websites.adapter_config`) or, as a fallback, per
+   project and adapter (`adapter_configurations`).  The per-website
+   configuration wins: two directories in the same project have different
+   forms, field names and success signals.
 
 ### 4.2 Resolution
 
@@ -254,7 +257,9 @@ class BaseAdapter:
 2. otherwise the first automatable adapter that supports the category,
 3. otherwise the manual pack.
 
-The task can also pin an adapter explicitly (`tasks.adapter_id`).
+The task can also pin an adapter explicitly (`tasks.adapter_id`).  The
+per-website configuration is merged over the project configuration when its
+`adapter` marker matches the resolved adapter.
 
 ### 4.3 Shipped adapters
 

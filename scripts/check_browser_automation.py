@@ -12,13 +12,15 @@ The test then
 
   1. creates a project + business profile,
   2. registers the opportunity for the local form,
-  3. configures the `playwright_form` adapter with the form selectors,
-  4. queues the task and lets the worker drive a real browser,
-  5. checks that the submission was detected, that a backlink record was
+  3. queues it once without a setup - it must prepare the manual pack,
+  4. detects the form fields and stores the per-website configuration,
+  5. retries the waiting task and lets the worker drive a real browser,
+  6. checks that the success text was recognised, that a backlink record was
      created and that the verification engine confirms the link.
 
 Nothing is faked: the browser really fills and submits the form, and the
-verification really fetches the published page again.
+verification really fetches the published page again.  The retry path is the
+same one used by "Save and run now" in the interface.
 
 Usage:  .venv/bin/python scripts/check_browser_automation.py
 """
@@ -175,36 +177,60 @@ def main() -> int:
         check("playwright adapter is registered", playwright is not None)
         check("playwright adapter is automatable", bool(playwright and playwright["automatable"]))
 
-        _put(f"/adapters/{playwright['id']}/configuration", headers, {
-            "project_id": project["id"],
-            "config": {
-                "form_url": f"http://127.0.0.1:{SITE_PORT}/submit",
-                "fields": {
-                    "input[name='company']": "{{name}}",
-                    "input[name='email']": "{{email}}",
-                    "input[name='website']": "{{url}}",
-                    "textarea[name='description']": "{{description}}",
-                },
-                "submit_selector": "button#submit",
-                "success_selector": "#success",
-            },
+        website_id = opportunity.get("website_id")
+        check("the opportunity is linked to a website", bool(website_id))
+
+        detected = _post(f"/websites/{website_id}/automation/detect", headers, {
+            "form_url": f"http://127.0.0.1:{SITE_PORT}/submit",
         })
-        check("adapter configured for the project", True)
+        check("the detector found the static form", detected.get("reachable") is True)
+        detected_tokens = {field.get("token") for field in detected.get("fields", [])}
+        check(
+            "the detector proposed the common values",
+            {"name", "email", "website", "description"}.issubset(detected_tokens),
+            str(sorted(token for token in detected_tokens if token)),
+        )
 
-        opportunity = _patch(f"/opportunities/{opportunity['id']}", headers, {"adapter_id": playwright["id"]})
-        check("opportunity bound to the adapter", opportunity.get("adapter_id") == playwright["id"])
-
+        # The first run has no automation yet: it must prepare the real
+        # manual pack instead of failing.  This is what the operator sees when
+        # they press Start on a directory without selectors.
         queued = _post("/queue", headers, {"opportunity_ids": [opportunity["id"]], "type": "SUBMIT"})
         check("task queued", queued.get("created") == 1)
         task_id = queued["task_ids"][0]
+        task = _wait_task(task_id, headers)
+        check(
+            "an unconfigured form falls back to the manual pack",
+            task.get("status") == "WAITING_FOR_USER",
+            f"{task.get('status')} / {(task.get('last_error') or '')[:90]}",
+        )
+        check("nothing was submitted before the setup", len(SUBMISSIONS) == 0)
 
-        deadline = time.time() + 120
-        task = {}
-        while time.time() < deadline:
-            task = _get(f"/tasks/{task_id}", headers)
-            if task.get("status") not in ("QUEUED", "RUNNING"):
-                break
-            time.sleep(1)
+        website = _put(f"/websites/{website_id}/automation", headers, {
+            "adapter": "playwright_form",
+            "form_url": f"http://127.0.0.1:{SITE_PORT}/submit",
+            "fields": {
+                "input[name='company']": "{{name}}",
+                "input[name='email']": "{{email}}",
+                "input[name='website']": "{{url}}",
+                "textarea[name='description']": "{{description}}",
+            },
+            "success_kind": "text",
+            "success_value": "Your listing was submitted",
+            "submit_selector": "button#submit",
+        })
+        check("the per website setup was saved", website.get("adapter_key") == "playwright_form")
+        check(
+            "the success signal was stored on the website",
+            (website.get("adapter_config") or {}).get("success_kind") == "text"
+            and (website.get("adapter_config") or {}).get("success_value")
+            == "Your listing was submitted",
+        )
+
+        # The setup screen uses the retry endpoint after saving.  It must turn
+        # the waiting manual task into a real automatic run.
+        retried = _post(f"/tasks/{task_id}/retry", headers, {})
+        check("the waiting task was queued again", retried.get("status") == "QUEUED")
+        task = _wait_task(task_id, headers)
 
         print(f"       task status: {task.get('status')}  ({task.get('last_error') or 'no error'})")
         check("the browser really submitted the form", len(SUBMISSIONS) == 1,
@@ -247,6 +273,18 @@ def main() -> int:
     return 0
 
 
+def _wait_task(task_id: str, headers: dict, timeout: float = 120.0) -> dict:
+    """Wait until the worker is no longer running the task."""
+    deadline = time.time() + timeout
+    task: dict = {}
+    while time.time() < deadline:
+        task = _get(f"/tasks/{task_id}", headers)
+        if task.get("status") not in ("QUEUED", "RUNNING"):
+            return task
+        time.sleep(1)
+    return task
+
+
 def _wait_for_server() -> None:
     import httpx
 
@@ -274,15 +312,6 @@ def _put(path: str, headers: dict, payload: dict) -> dict:
     response = httpx.put(f"{API}{path}", headers=headers, json=payload, timeout=60.0)
     if response.status_code >= 400:
         raise RuntimeError(f"PUT {path} -> {response.status_code}: {response.text[:400]}")
-    return response.json()
-
-
-def _patch(path: str, headers: dict, payload: dict) -> dict:
-    import httpx
-
-    response = httpx.patch(f"{API}{path}", headers=headers, json=payload, timeout=60.0)
-    if response.status_code >= 400:
-        raise RuntimeError(f"PATCH {path} -> {response.status_code}: {response.text[:400]}")
     return response.json()
 
 

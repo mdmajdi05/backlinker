@@ -163,6 +163,7 @@ def opportunity_to_dict(opportunity: Opportunity, website: Website) -> dict[str,
     data = {
         "id": opportunity.id,
         "project_id": opportunity.project_id,
+        "website_id": website.id,
         "name": website.name,
         "domain": website.domain,
         "opportunity_url": website.opportunity_url,

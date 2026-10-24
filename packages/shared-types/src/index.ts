@@ -387,6 +387,7 @@ export interface ScoreBreakdown {
 export interface Opportunity {
   id: string;
   project_id: string;
+  website_id?: string;
   name: string;
   domain: string;
   opportunity_url: string;
@@ -784,6 +785,49 @@ export interface WebsiteStats {
   last_attempt_at: string | null;
 }
 
+/** The per website automatic form configuration. */
+export interface WebsiteAutomationConfig {
+  adapter: string;
+  form_url: string;
+  /** CSS selector -> value template such as ``{{name}}``. */
+  fields: Record<string, string>;
+  success_kind: "text" | "selector" | "url" | string;
+  success_value: string;
+  submit_selector: string;
+  timeout_ms?: number | null;
+}
+
+export interface WebsiteAutomationDetectField {
+  selector: string;
+  label: string;
+  token: string;
+  kind: string;
+  input_type: string;
+}
+
+export interface WebsiteAutomationSaveRequest {
+  adapter: string | null;
+  form_url: string;
+  /** CSS selector -> value template such as ``{{name}}``. */
+  fields: Record<string, string>;
+  success_kind: "text" | "selector" | "url";
+  success_value: string;
+  submit_selector?: string | null;
+  timeout_ms?: number | null;
+}
+
+export interface WebsiteAutomationDetectResult {
+  form_url: string;
+  final_url: string;
+  reachable: boolean;
+  http_status: number;
+  form_found: boolean;
+  fields: WebsiteAutomationDetectField[];
+  has_captcha: boolean;
+  has_password: boolean;
+  message: string;
+}
+
 /** One row of the central website list. */
 export interface WebsiteListItem {
   id: string;
@@ -797,6 +841,9 @@ export interface WebsiteListItem {
   score: number;
   notes: string | null;
   excluded_until: string | null;
+  adapter_id: string | null;
+  adapter_key: string | null;
+  adapter_config: WebsiteAutomationConfig | null;
   project_ids: string[];
   project_count: number;
   stats: WebsiteStats;
@@ -1017,6 +1064,9 @@ export interface CampaignRow {
   published_page_url: string | null;
   /** The anchor text observed on the published page (when verification ran). */
   observed_anchor_text: string | null;
+  /** The explicit adapter configured for this website (if any). */
+  adapter_key: string | null;
+  adapter_config: WebsiteAutomationConfig | null;
   last_update: string | null;
 }
 

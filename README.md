@@ -45,6 +45,7 @@ The product is built around three rules:
 | Area | What works |
 | ---- | ---------- |
 | **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, assign websites from a category-filtered list, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. **Stop** pauses and Start resumes the same work; **Remove** takes a website out of the project without deleting it; **Download report** exports the table as CSV and **Restart failed** requeues only the failed rows. Manual directories can be marked submitted and verified from the same row. |
+| **Per-website automation setup** | **Automate** on a project row opens a guided setup: form URL, **Detect fields** (static HTML), value-to-selector mapping and a success signal (page text, CSS selector or URL fragment). The setup is stored on the website itself, so two directories of the same project never share selectors. **Save and run now** requeues the row. Nothing is submitted without a success signal; a CAPTCHA or login pauses the task for a human. |
 | **Review websites** | A secondary review screen for discovery results: approve, exclude, add to a project or queue, merge duplicates and edit website fields. The normal flow does not need it - the project page assigns websites directly. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. Brave/SerpAPI keys saved in **API keys & integrations** are encrypted and used immediately. |
 | **API keys & integrations** | Save encrypted Brave Search, SerpAPI and AI provider keys, pick the AI model, delete keys, and enable or disable submission adapters. Discovery and AI read the stored configuration without a restart. |
@@ -72,7 +73,7 @@ The product is built around three rules:
 | AI assistance | Save the provider, model and key in **API keys & integrations** (or set `AUTOBL_AI_PROVIDER`, `AUTOBL_AI_API_KEY`, `AUTOBL_AI_MODEL`) - the product works without it, the suggestions are then rule based |
 | Cloud / hybrid storage | A reachable PostgreSQL server (`AUTOBL_DATABASE_URL`) and the `psycopg[binary]` driver |
 | Celery dispatch | A reachable Redis broker (`AUTOBL_CELERY_BROKER_URL`) |
-| Automated form submissions | Per-target adapter configuration (form URL, field selectors, success selector) - the targets must allow programmatic submissions |
+| Automated form submissions | A per-website **Automate** setup (form URL, field mapping, success signal) - the target must allow programmatic submissions and must not require a CAPTCHA or login |
 
 ### Not implemented (yet)
 
@@ -740,6 +741,10 @@ duplicate the registry.
 * **Playwright browsers are not installed by `bootstrap.sh`.**  Run
   `../../.venv/bin/python -m playwright install chromium` before using the
   `playwright_form` adapter.
+* **Automatic form setup is per website and needs a stable form.**  The
+  detector reads static HTML; a JavaScript-only form has to be mapped by hand.
+  The site must permit automated submissions, and a CAPTCHA or login always
+  pauses the task instead of being bypassed.
 * **AI output is advisory.**  Everything the AI layer produces can be edited
   by the operator, and the deterministic fallback is used whenever the
   provider is unavailable.
@@ -761,7 +766,7 @@ nodejs.org).  Everything below was actually run:
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Backend lint | `apps/api: ruff check app scripts tests` | pass |
-| Backend test suite | `apps/api: pytest` | 129 passed |
+| Backend test suite | `apps/api: pytest` | 288 passed |
 | Backend smoke test | `apps/api: python scripts/smoke_core.py` | 21/21 assertions pass |
 | Import / export engine | `apps/api: python scripts/check_dataflow.py` | pass (preview → commit → 9-sheet workbook) |
 | Automation engine | `apps/api: python scripts/check_automation.py` | pass (providers, adapters, scoring, statuses) |

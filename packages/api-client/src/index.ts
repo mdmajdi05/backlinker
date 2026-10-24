@@ -76,6 +76,8 @@ import type {
   StorageStatus,
   SubmissionDetails,
   SubmissionDetailsUpdate,
+  WebsiteAutomationDetectResult,
+  WebsiteAutomationSaveRequest,
   WebsiteChooseResult,
   WebsiteImportResult,
   BacklinkDetails,
@@ -709,6 +711,15 @@ export const api = {
     importFile: (c: ApiClient, file: File, fields: Record<string, string> = {}) => c.upload<WebsiteImportResult>("/api/v1/websites/import", file, fields),
     stats: (c: ApiClient, projectId?: string) => c.get<WebsiteStatsRow[]>("/api/v1/websites/stats", { project_id: projectId }),
     chooseForProject: (c: ApiClient, projectId: string, body: Record<string, unknown>) => c.post<WebsiteChooseResult>(`/api/v1/projects/${projectId}/websites/choose`, body),
+    /** Store the per website automatic form configuration. */
+    saveAutomation: (c: ApiClient, id: string, body: WebsiteAutomationSaveRequest) =>
+      c.put<WebsiteListItem>(`/api/v1/websites/${id}/automation`, body),
+    /** Remove the automatic form configuration (manual path). */
+    clearAutomation: (c: ApiClient, id: string) =>
+      c.delete<WebsiteListItem>(`/api/v1/websites/${id}/automation`),
+    /** Inspect the static form HTML and propose CSS selectors. */
+    detectAutomation: (c: ApiClient, id: string, body: { form_url?: string } = {}) =>
+      c.post<WebsiteAutomationDetectResult>(`/api/v1/websites/${id}/automation/detect`, body),
   },
 
   /** The automatic submission of a project. */

@@ -217,6 +217,13 @@ def compute_stats(
     return stats
 
 
+def _automation_payload(website: Website) -> dict[str, Any] | None:
+    """The client friendly view of the per website adapter configuration."""
+    from app.services.automation_setup import automation_payload
+
+    return automation_payload(website)
+
+
 def item_payload(
     db: Session, websites: Sequence[Website], project_id: str | None = None
 ) -> list[dict[str, Any]]:
@@ -241,6 +248,9 @@ def item_payload(
                 "score": float(website.score or 0.0),
                 "notes": website.notes,
                 "excluded_until": website.excluded_until,
+                "adapter_id": website.adapter_id,
+                "adapter_key": website.adapter.key if website.adapter else None,
+                "adapter_config": _automation_payload(website),
                 "project_ids": project_ids,
                 "project_count": len(project_ids),
                 "stats": {

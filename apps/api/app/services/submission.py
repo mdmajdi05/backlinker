@@ -157,6 +157,15 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     config: dict[str, Any] = {}
     if adapter is not None:
         config = _adapter_config(db, adapter, task.project_id)
+        # A configuration stored on the website itself wins over the project
+        # wide configuration: two directories of the same project have
+        # different forms.  The ``adapter`` marker prevents a stale website
+        # configuration from being applied to another adapter.
+        site_config = website.adapter_config if isinstance(website.adapter_config, dict) else {}
+        if site_config and (
+            not site_config.get("adapter") or str(site_config.get("adapter")) == adapter.key
+        ):
+            config = {**config, **site_config}
         if (
             adapter.automatable
             and not adapter.domains

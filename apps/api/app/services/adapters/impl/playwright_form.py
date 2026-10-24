@@ -13,6 +13,7 @@ works with JavaScript. It is deliberately conservative:
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -53,7 +54,7 @@ class PlaywrightFormAdapter(BaseAdapter):
     required_config: ClassVar[dict[str, Any]] = {
         "form_url": "string - URL of the submission form",
         "fields": "object - CSS selector to value mapping",
-        "success_selector": "string - CSS selector proving success",
+        "success_selector": "string - CSS selector proving success (or success_text / success_url_contains)",
     }
     required_user_fields: tuple[str, ...] = ("name", "website", "description")
     registration_required = False
@@ -62,7 +63,11 @@ class PlaywrightFormAdapter(BaseAdapter):
     verification_method = "http_link_check"
     retryable_errors: tuple[str, ...] = ("timeout", "connection_reset", "http_5xx")
     restrictions = "Pauses for manual intervention when a CAPTCHA or login challenge is detected."
-    success_signals: tuple[str, ...] = ("Success selector present after submission",)
+    success_signals: tuple[str, ...] = (
+        "Success selector present after submission",
+        "Success text present after submission",
+        "Success URL fragment present after submission",
+    )
     domains: tuple[str, ...] = ()
 
     def submit(self, ctx: SubmissionContext) -> SubmissionResult:
@@ -164,6 +169,27 @@ class PlaywrightFormAdapter(BaseAdapter):
                 evidence={"challenge": challenge, "url": form_url, "screenshot": screenshot},
             )
 
+        # Refuse to submit anything when the configuration cannot prove the
+        # result.  A form that was sent without a success signal is exactly the
+        # case where the application would otherwise have to guess.
+        success_selector = str(config.get("success_selector") or "").strip()
+        success_text = str(config.get("success_text") or "").strip()
+        success_url_contains = str(config.get("success_url_contains") or "").strip()
+        if not (success_selector or success_text or success_url_contains):
+            return self._failed(
+                "No success signal is configured (success_selector, success_text or "
+                "success_url_contains) - nothing was submitted."
+            )
+        if success_selector:
+            # A broken selector must be reported before the form is sent, not
+            # after a submission that cannot be checked.
+            try:
+                page.locator(success_selector).count()
+            except playwright_error as exc:
+                return self._failed(
+                    f"The configured success selector is not valid: {exc}"
+                )
+
         for selector, template in fields.items():
             if ctx.cancelled():
                 return self._cancelled()
@@ -178,37 +204,49 @@ class PlaywrightFormAdapter(BaseAdapter):
         if ctx.cancelled():
             return self._cancelled()
         submit_selector = str(config.get("submit_selector") or "").strip()
+        click_error: Exception | None = None
         try:
             if submit_selector:
                 page.click(submit_selector, timeout=timeout_ms)
             else:
                 page.click("button[type=submit], input[type=submit]", timeout=timeout_ms)
-        except playwright_timeout as exc:
-            screenshot = self._screenshot(ctx, page)
-            return self._failed(
-                f"The submit button did not respond: {exc}",
-                retryable=True,
-                evidence={"screenshot": screenshot},
-            )
-        except playwright_error as exc:
-            return self._failed(f"The form could not be submitted: {exc}")
+        except (playwright_timeout, playwright_error) as exc:
+            # The click may have been dispatched before the error.  Do not
+            # return a retryable failure - a retry could submit twice.  We
+            # still check the success signal below; if it is absent the task
+            # is handed to a human.
+            click_error = exc
 
-        success_selector = str(config.get("success_selector") or "").strip()
-        if not success_selector:
+        signal = self._wait_for_success(
+            page,
+            success_selector,
+            success_text,
+            success_url_contains,
+            timeout_ms,
+            playwright_error,
+        )
+        if signal is None:
             screenshot = self._screenshot(ctx, page)
-            return self._failed(
-                "No 'success_selector' is configured - without it a successful submission "
-                "could not be proven.",
-                evidence={"screenshot": screenshot, "final_url": page.url},
-            )
-        try:
-            page.wait_for_selector(success_selector, timeout=timeout_ms)
-        except playwright_timeout as exc:
-            screenshot = self._screenshot(ctx, page)
-            return self._failed(
-                f"The success selector '{success_selector}' never appeared: {exc}",
-                retryable=True,
-                evidence={"screenshot": screenshot, "final_url": page.url},
+            if click_error is not None:
+                message = (
+                    "The submit button reported an error, so it is not clear whether "
+                    "the form was sent. Check the site; if the submission exists, "
+                    "mark it submitted. It was not marked submitted automatically."
+                )
+            else:
+                message = (
+                    "The form was sent, but the configured success signal did not appear. "
+                    "Check the site; if the submission exists, mark it submitted. "
+                    "It was not marked submitted automatically."
+                )
+            return self._waiting(
+                message,
+                evidence={
+                    "screenshot": screenshot,
+                    "final_url": page.url,
+                    "success_signal_timeout": f"{timeout_ms} ms",
+                    "submit_click_error": str(click_error) if click_error else None,
+                },
             )
 
         screenshot = self._screenshot(ctx, page)
@@ -220,11 +258,52 @@ class PlaywrightFormAdapter(BaseAdapter):
             evidence={
                 "form_url": form_url,
                 "final_url": page.url,
-                "success_signal": f"success_selector:{success_selector}",
+                "success_signal": signal,
                 "screenshot": screenshot,
                 "headless": bool(settings.playwright_headless),
             },
         )
+
+    @staticmethod
+    def _wait_for_success(
+        page: Any,
+        success_selector: str,
+        success_text: str,
+        success_url_contains: str,
+        timeout_ms: int,
+        playwright_error: type[Exception],
+    ) -> str | None:
+        """Poll for the success signal across page navigations.
+
+        ``wait_for_function`` can fail with "execution context was destroyed"
+        when the form navigates to a confirmation page.  The loop treats that
+        as "not yet" and keeps checking the new document, so a real success is
+        not turned into a failed task (which could submit the form twice).
+        """
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        while time.monotonic() < deadline:
+            try:
+                if success_selector:
+                    locator = page.locator(success_selector)
+                    if locator.count() > 0 and locator.first.is_visible():
+                        return f"success_selector:{success_selector}"
+                elif success_text:
+                    body = page.evaluate(
+                        "() => (document.body ? document.body.innerText : '')"
+                    )
+                    if success_text.lower() in str(body or "").lower():
+                        return f"success_text:{success_text}"
+                elif success_url_contains and success_url_contains in page.url:
+                    return f"success_url_contains:{success_url_contains}"
+            except playwright_error:
+                # A navigation destroys the old execution context.  Keep
+                # polling the new page instead of declaring a failure.
+                pass
+            try:
+                page.wait_for_timeout(250)
+            except playwright_error:
+                return None
+        return None
 
     def _cancelled(self) -> SubmissionResult:
         """The task was cancelled (or the whole execution was stopped)."""

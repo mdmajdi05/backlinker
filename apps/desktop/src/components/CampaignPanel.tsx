@@ -29,6 +29,7 @@ import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock } from "../components/common";
 import { SubmissionDetailsPanel } from "../components/SubmissionDetailsPanel";
+import { AutomationSetupDialog } from "../components/AutomationSetupDialog";
 import { formatDate } from "../lib/format";
 
 /** The status of a row as the operator reads it - not the internal code. */
@@ -110,6 +111,7 @@ export function CampaignPanel({
     null,
   );
   const [detailsRow, setDetailsRow] = React.useState<CampaignRow | null>(null);
+  const [automationRow, setAutomationRow] = React.useState<CampaignRow | null>(null);
   const [submitRow, setSubmitRow] = React.useState<CampaignRow | null>(null);
   const [submitMode, setSubmitMode] = React.useState<"mark" | "update">("mark");
   const [submitUrl, setSubmitUrl] = React.useState("");
@@ -717,8 +719,13 @@ export function CampaignPanel({
                             >
                               {row.domain}
                             </a>
-                            <p className="text-[11px] text-content-subtle">
+                            <p className="flex flex-wrap items-center gap-1 text-[11px] text-content-subtle">
                               {row.category.replace(/_/g, " ")}
+                              {row.adapter_key ? (
+                                <Badge tone="info" className="px-1 py-0 text-[9px]">
+                                  Auto setup
+                                </Badge>
+                              ) : null}
                             </p>
                           </div>
                         </Td>
@@ -768,8 +775,26 @@ export function CampaignPanel({
                               </Button>
                             ) : null}
                             {row.status === "WAITING_MANUAL" ? (
-                              <Button size="sm" onClick={() => openSubmit(row)}>
-                                Mark submitted
+                              <>
+                                <Button size="sm" onClick={() => openSubmit(row)}>
+                                  Mark submitted
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setAutomationRow(row)}
+                                >
+                                  Automate
+                                </Button>
+                              </>
+                            ) : null}
+                            {["READY", "FAILED", "PAUSED"].includes(row.status) ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setAutomationRow(row)}
+                              >
+                                Automate
                               </Button>
                             ) : null}
                             {row.status === "SUBMITTED" ? (
@@ -1033,6 +1058,17 @@ export function CampaignPanel({
           </label>
         </div>
       </Dialog>
+
+      <AutomationSetupDialog
+        open={automationRow !== null}
+        onClose={() => setAutomationRow(null)}
+        websiteId={automationRow?.website_id ?? ""}
+        domain={automationRow?.domain ?? ""}
+        formUrl={automationRow?.url ?? ""}
+        taskId={automationRow?.task_id ?? null}
+        config={automationRow?.adapter_config ?? null}
+        onSaved={refresh}
+      />
 
       {detailsRow ? (
         <SubmissionDetailsPanel

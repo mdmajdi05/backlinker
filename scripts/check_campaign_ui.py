@@ -133,6 +133,68 @@ def main() -> int:
             page.wait_for_timeout(1000)
         if manual.count() > 0:
             print("[PASS] a manual submission is offered")
+            automate = page.get_by_role("button", name="Automate")
+            if automate.count() > 0:
+                automate.first.click()
+                page.wait_for_timeout(600)
+                automation_dialog = page.get_by_role("dialog").last
+                automation_text = automation_dialog.inner_text().lower()
+                parts = [
+                    ("form URL", "submission form url"),
+                    ("field detection", "detect fields"),
+                    ("field mapping", "field mapping"),
+                    ("success signal", "success signal"),
+                    ("browser explanation", "real browser"),
+                ]
+                for label, needle in parts:
+                    ok = needle in automation_text
+                    print(
+                        f"[{'PASS' if ok else 'FAIL'}] the automation dialog shows the {label}"
+                    )
+                    if not ok:
+                        failures.append(f"automation dialog missing {label}")
+                automation_dialog.get_by_role("button", name="Add field").click()
+                automation_dialog.get_by_label("Value").first.select_option(
+                    label="Company name"
+                )
+                automation_dialog.get_by_label("CSS selector").first.fill(
+                    '[name="company"]'
+                )
+                automation_dialog.get_by_label("Success signal").fill("Thank you")
+                automation_dialog.get_by_role("button", name="Save only", exact=True).click()
+                page.wait_for_timeout(2500)
+                saved = "automatic setup saved" in page.content().lower()
+                print(
+                    f"[{'PASS' if saved else 'FAIL'}] the automation setup can be saved"
+                )
+                if not saved:
+                    failures.append("the automation setup was not saved")
+
+                page.get_by_role("button", name="Automate").first.click()
+                page.wait_for_timeout(600)
+                automation_dialog = page.get_by_role("dialog").last
+                manual_mode = automation_dialog.get_by_role(
+                    "button", name="Use manual mode"
+                )
+                if manual_mode.count() > 0:
+                    manual_mode.click()
+                    page.wait_for_timeout(300)
+                    automation_dialog.get_by_role(
+                        "button", name="Confirm manual mode"
+                    ).click()
+                    page.wait_for_timeout(2200)
+                    cleared = "manual submission path" in page.content().lower()
+                    print(
+                        f"[{'PASS' if cleared else 'FAIL'}] the setup can be cleared again"
+                    )
+                    if not cleared:
+                        failures.append("the automation setup was not cleared")
+                else:
+                    print("[FAIL] the saved setup cannot be cleared")
+                    failures.append("no manual-mode control after saving")
+                    automation_dialog.get_by_role("button", name="Cancel").click()
+            else:
+                print("[WARN] the Automate action is not shown")
             manual.first.click()
             page.wait_for_timeout(600)
             dialog = page.get_by_role("dialog").last

@@ -350,6 +350,7 @@ class ProjectDetailOut(ProjectOut):
 class OpportunityOut(BaseModel):
     id: str
     project_id: str | None = None
+    website_id: str | None = None
     name: str
     domain: str
     opportunity_url: str
@@ -468,6 +469,10 @@ class WebsiteListItem(BaseModel):
     score: float
     notes: str | None = None
     excluded_until: datetime | None = None
+    #: The explicitly assigned submission adapter (key and row id).
+    adapter_id: str | None = None
+    adapter_key: str | None = None
+    adapter_config: dict[str, Any] | None = None
     #: The projects that use this website.
     project_ids: list[str] = []
     project_count: int = 0
@@ -537,6 +542,53 @@ class WebsiteUpdateIn(BaseModel):
                 f"'{value}' is not a website status ({', '.join(WEBSITE_STATUSES)})"
             )
         return status
+
+
+class WebsiteAutomationIn(BaseModel):
+    """The per website automatic submission configuration.
+
+    ``adapter`` is ``playwright_form`` (real browser, recommended) or
+    ``http_form`` (plain HTML post).  An empty value clears the automation and
+    puts the website back into the manual path.
+    """
+
+    adapter: str | None = None
+    form_url: str = ""
+    fields: dict[str, str] = Field(default_factory=dict)
+    success_kind: str = "text"
+    success_value: str = ""
+    submit_selector: str | None = None
+    timeout_ms: int | None = None
+
+
+class WebsiteAutomationField(BaseModel):
+    """A form control found on the page of a website."""
+
+    selector: str
+    label: str
+    token: str = ""
+    kind: str = "input"
+    input_type: str = "text"
+
+
+class WebsiteAutomationDetectIn(BaseModel):
+    """The input of the field detector (the form URL is optional)."""
+
+    form_url: str = ""
+
+
+class WebsiteAutomationDetectOut(BaseModel):
+    """What the detector observed on the form page."""
+
+    form_url: str
+    final_url: str = ""
+    reachable: bool = False
+    http_status: int = 0
+    form_found: bool = False
+    fields: list[WebsiteAutomationField] = Field(default_factory=list)
+    has_captcha: bool = False
+    has_password: bool = False
+    message: str = ""
 
 
 class WebsiteImportRowOut(BaseModel):

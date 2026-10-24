@@ -18,6 +18,7 @@
 import type { WebsiteStatsRow } from "@autobacklinker/api-client";
 import type {
   Paginated,
+  WebsiteAutomationConfig,
   WebsiteChooseResult,
   WebsiteImportResult,
   WebsiteListItem,
@@ -150,6 +151,28 @@ function normalizeStats(raw: unknown): WebsiteStats {
   };
 }
 
+function normalizeAutomation(raw: unknown): WebsiteAutomationConfig | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Record<string, unknown>;
+  const rawFields = (data.fields ?? {}) as Record<string, unknown>;
+  const fields: Record<string, string> = {};
+  Object.entries(rawFields).forEach(([selector, template]) => {
+    const key = selector.trim();
+    if (key) fields[key] = text(template);
+  });
+  const adapter = text(data.adapter).trim();
+  if (!adapter && Object.keys(fields).length === 0) return null;
+  return {
+    adapter,
+    form_url: text(data.form_url),
+    fields,
+    success_kind: text(data.success_kind) || "text",
+    success_value: text(data.success_value),
+    submit_selector: text(data.submit_selector),
+    timeout_ms: typeof data.timeout_ms === "number" ? data.timeout_ms : null,
+  };
+}
+
 /** One row of the central list - never trust the answer blindly. */
 export function normalizeWebsite(raw: unknown): WebsiteListItem {
   const data = (raw ?? {}) as Record<string, unknown>;
@@ -168,6 +191,9 @@ export function normalizeWebsite(raw: unknown): WebsiteListItem {
     score: count(data.score),
     notes: optionalText(data.notes),
     excluded_until: optionalText(data.excluded_until),
+    adapter_id: optionalText(data.adapter_id),
+    adapter_key: optionalText(data.adapter_key),
+    adapter_config: normalizeAutomation(data.adapter_config),
     project_ids: projectIds,
     project_count: count(data.project_count) || projectIds.length,
     stats: normalizeStats(data.stats),

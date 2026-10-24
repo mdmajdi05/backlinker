@@ -17,6 +17,9 @@ from app.db.models import Opportunity, Project, Website
 from app.schemas import (
     DetailsGapReport,
     PaginatedResponse,
+    WebsiteAutomationDetectIn,
+    WebsiteAutomationDetectOut,
+    WebsiteAutomationIn,
     WebsiteChooseIn,
     WebsiteChooseResult,
     WebsiteCreateIn,
@@ -25,7 +28,7 @@ from app.schemas import (
     WebsiteStatsRow,
     WebsiteUpdateIn,
 )
-from app.services import access
+from app.services import access, automation_setup
 from app.services import site_details as details_service
 from app.services import websites as website_service
 from app.services.audit import record_audit
@@ -164,6 +167,95 @@ def update_website(
         after={"fields": sorted(changes.keys())},
     )
     return WebsiteListItem(**website_service.item_payload(db, [updated])[0])
+
+
+@router.put("/websites/{website_id}/automation", response_model=WebsiteListItem)
+def save_website_automation(
+    website_id: str,
+    payload: WebsiteAutomationIn,
+    db: DbSession,
+    user: CurrentUser,
+) -> WebsiteListItem:
+    """Configure automatic form submission for **one** website.
+
+    The configuration is stored on the website (not on the project): every
+    directory has a different form.  Saving an empty adapter clears the
+    configuration and puts the website back on the manual path.
+    """
+    website = _entry(db, website_id)
+    try:
+        saved = automation_setup.save_automation(
+            db, website, payload.model_dump(exclude_unset=False)
+        )
+    except automation_setup.AutomationSetupError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": "invalid_automation", "message": exc.message},
+        ) from exc
+    record_event(
+        db,
+        "website.automation_saved" if saved.adapter_id else "website.automation_cleared",
+        (
+            f"Saved automatic submission setup for {saved.domain}"
+            if saved.adapter_id
+            else f"Cleared automatic submission setup for {saved.domain}"
+        ),
+        website_id=saved.id,
+        metadata={"adapter": saved.adapter.key if saved.adapter else None},
+    )
+    record_audit(
+        db,
+        "configure_automation",
+        "website",
+        saved.id,
+        actor_id=user.id,
+        after={"adapter": saved.adapter.key if saved.adapter else None},
+    )
+    return WebsiteListItem(**website_service.item_payload(db, [saved])[0])
+
+
+@router.delete("/websites/{website_id}/automation", response_model=WebsiteListItem)
+def clear_website_automation(
+    website_id: str, db: DbSession, user: CurrentUser
+) -> WebsiteListItem:
+    """Remove the automatic form setup of a website (manual path)."""
+    website = _entry(db, website_id)
+    cleared = automation_setup.clear_automation(db, website)
+    record_event(
+        db,
+        "website.automation_cleared",
+        f"Cleared automatic submission setup for {cleared.domain}",
+        website_id=cleared.id,
+    )
+    record_audit(db, "clear_automation", "website", cleared.id, actor_id=user.id)
+    return WebsiteListItem(**website_service.item_payload(db, [cleared])[0])
+
+
+@router.post(
+    "/websites/{website_id}/automation/detect",
+    response_model=WebsiteAutomationDetectOut,
+)
+def detect_website_automation_fields(
+    website_id: str,
+    payload: WebsiteAutomationDetectIn,
+    db: DbSession,
+    user: CurrentUser,
+) -> WebsiteAutomationDetectOut:
+    """Read the form page and propose selectors for the common values.
+
+    This only inspects static HTML.  It never submits the form and never marks
+    the website as automated - the operator has to review and save the result.
+    """
+    del user
+    website = _entry(db, website_id)
+    try:
+        result = automation_setup.detect_fields(db, website, payload.form_url)
+    except automation_setup.AutomationSetupError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": "detect_failed", "message": exc.message},
+        ) from exc
+    return WebsiteAutomationDetectOut(**result)
 
 
 @router.delete("/websites/{website_id}", status_code=status.HTTP_204_NO_CONTENT)

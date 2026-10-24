@@ -221,6 +221,10 @@ class Website(IdMixin, TimestampMixin, Base):
     adapter_id: Mapped[str | None] = mapped_column(
         ForeignKey("automation_adapters.id", ondelete="SET NULL"), nullable=True
     )
+    #: The per website configuration of the assigned adapter (form URL,
+    #: selector mapping, success signal).  Each website can have its own
+    #: configuration; a project wide AdapterConfiguration remains supported.
+    adapter_config: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     anchor_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
