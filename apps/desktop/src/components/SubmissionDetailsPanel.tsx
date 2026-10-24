@@ -591,7 +591,8 @@ export function SubmissionDetailsPanel({
             </Alert>
           ) : data.complete ? (
             <Alert tone="success" title="Every required detail is filled">
-              The submission can run without asking for anything.
+              Every value the website asks for is ready. If this site has no automated
+              adapter, submit the form by hand and then mark it submitted.
             </Alert>
           ) : (
             <Alert tone="info" title="The details are not complete">

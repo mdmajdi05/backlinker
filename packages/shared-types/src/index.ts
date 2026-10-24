@@ -1015,6 +1015,8 @@ export interface CampaignRow {
   backlink_id: string | null;
   verification_status: string | null;
   published_page_url: string | null;
+  /** The anchor text observed on the published page (when verification ran). */
+  observed_anchor_text: string | null;
   last_update: string | null;
 }
 

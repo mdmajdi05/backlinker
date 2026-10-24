@@ -111,6 +111,7 @@ export function CampaignPanel({
   );
   const [detailsRow, setDetailsRow] = React.useState<CampaignRow | null>(null);
   const [submitRow, setSubmitRow] = React.useState<CampaignRow | null>(null);
+  const [submitMode, setSubmitMode] = React.useState<"mark" | "update">("mark");
   const [submitUrl, setSubmitUrl] = React.useState("");
   const [submitAnchor, setSubmitAnchor] = React.useState("");
   const [submitVerify, setSubmitVerify] = React.useState(true);
@@ -337,10 +338,11 @@ export function CampaignPanel({
     }
   }
 
-  function openSubmit(row: CampaignRow) {
+  function openSubmit(row: CampaignRow, mode: "mark" | "update" = "mark") {
     setSubmitRow(row);
+    setSubmitMode(mode);
     setSubmitUrl(row.published_page_url ?? row.url);
-    setSubmitAnchor("");
+    setSubmitAnchor(row.observed_anchor_text ?? "");
     setSubmitVerify(true);
   }
 
@@ -359,9 +361,13 @@ export function CampaignPanel({
         },
       );
       toast.push(
-        submitVerify
-          ? "Marked as submitted - verification is queued"
-          : "Marked as submitted",
+        submitMode === "update"
+          ? submitVerify
+            ? "Published link updated - verification is queued"
+            : "Published link updated"
+          : submitVerify
+            ? "Marked as submitted - verification is queued"
+            : "Marked as submitted",
         "success",
       );
       setSubmitRow(null);
@@ -767,14 +773,23 @@ export function CampaignPanel({
                               </Button>
                             ) : null}
                             {row.status === "SUBMITTED" ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                loading={busyRow === row.opportunity_id}
-                                onClick={() => void verifyRow(row)}
-                              >
-                                Verify
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  loading={busyRow === row.opportunity_id}
+                                  onClick={() => void verifyRow(row)}
+                                >
+                                  Verify
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => openSubmit(row, "update")}
+                                >
+                                  Update link
+                                </Button>
+                              </>
                             ) : null}
                             {row.status === "FAILED" && row.task_id ? (
                               <Button
@@ -802,14 +817,23 @@ export function CampaignPanel({
                               </>
                             ) : null}
                             {row.status === "VERIFIED" && row.published_page_url ? (
-                              <a
-                                href={row.published_page_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[11px] text-accent hover:underline"
-                              >
-                                View link
-                              </a>
+                              <>
+                                <a
+                                  href={row.published_page_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] text-accent hover:underline"
+                                >
+                                  View link
+                                </a>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => openSubmit(row, "update")}
+                                >
+                                  Update link
+                                </Button>
+                              </>
                             ) : null}
                             {row.status !== "NEEDS_DETAILS" ? (
                               <Button
@@ -844,7 +868,8 @@ export function CampaignPanel({
                 fills them; a site is never sent half filled. Sites without an automation
                 stay at{" "}
                 <span className="font-medium text-content">&quot;Submit by hand&quot;</span>
-                : you submit them, then press{" "}
+                : open <span className="font-medium text-content">Details</span> for the
+                values, submit them on the website, then press{" "}
                 <span className="font-medium text-content">Mark submitted</span>.{" "}
                 <strong className="font-semibold text-content">Stop</strong> pauses the
                 queued work and Start resumes it.
@@ -955,16 +980,24 @@ export function CampaignPanel({
         open={submitRow !== null}
         onClose={() => setSubmitRow(null)}
         title={
-          submitRow ? `Mark submitted - ${submitRow.name}` : "Mark submitted"
+          submitRow
+            ? `${submitMode === "update" ? "Update published link" : "Mark submitted"} - ${submitRow.name}`
+            : submitMode === "update"
+              ? "Update published link"
+              : "Mark submitted"
         }
-        description="Use this after you filled the form of the website by hand."
+        description={
+          submitMode === "update"
+            ? "Correct the page where your link lives. Saving it queues a fresh verification."
+            : "Use this after you filled the form of the website by hand."
+        }
         footer={
           <>
             <Button variant="outline" onClick={() => setSubmitRow(null)}>
               Cancel
             </Button>
             <Button onClick={() => void markSubmitted()} loading={submitting}>
-              Mark submitted
+              {submitMode === "update" ? "Save link" : "Mark submitted"}
             </Button>
           </>
         }

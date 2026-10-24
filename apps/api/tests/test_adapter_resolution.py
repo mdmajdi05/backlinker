@@ -80,3 +80,40 @@ def test_the_fallback_adapter_matches_the_submission_method(db_session) -> None:
     adapter = adapters.adapter_for_website(website)
     assert adapter is not None
     assert "BROWSER_FORM" in adapter.supported_methods
+
+
+def test_an_unconfigured_generic_adapter_falls_back_to_the_manual_pack(
+    db_session, project_id, opportunity_id
+) -> None:
+    """A directory without configured selectors must wait for the operator.
+
+    The fallback used to pick ``playwright_form`` only because the website
+    advertises a ``BROWSER_FORM``.  The adapter then failed with "No form_url
+    is configured", so the real manual submission path was never reached.
+    """
+    from app.db.models import Opportunity, Task, Website
+    from app.services.submission import execute_submission
+
+    db_session.rollback()
+    opportunity = db_session.get(Opportunity, opportunity_id)
+    assert opportunity is not None
+    website = db_session.get(Website, opportunity.website_id)
+    assert website is not None
+    website.submission_method = "BROWSER_FORM"
+    task = Task(
+        project_id=project_id,
+        opportunity_id=opportunity.id,
+        website_id=website.id,
+        type="SUBMIT",
+        status="RUNNING",
+        idempotency_key="SUBMIT:unconfigured-adapter",
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    outcome = execute_submission(db_session, task)
+
+    assert outcome.status == "WAITING_FOR_USER"
+    assert outcome.requires_human is True
+    assert outcome.result["submission_pack"]["opportunity_url"] == website.opportunity_url
+    assert outcome.result["submission_pack"]["instructions"]

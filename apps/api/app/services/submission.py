@@ -147,6 +147,25 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     adapter = resolve_adapter(db, task.adapter_id) or resolve_adapter(db, website.adapter_id)
     if adapter is None:
         adapter = adapter_for_website(website)
+
+    # A generic adapter that declares required configuration but has none for
+    # this project can only fail.  Most discovered directories hit this path:
+    # they have a BROWSER_FORM submission method but nobody configured the
+    # selectors.  Prepare the real manual pack instead of queueing a task that
+    # is guaranteed to end in FAILED.  An explicitly assigned *domain* adapter
+    # may carry built-in defaults, so it is never downgraded here.
+    config: dict[str, Any] = {}
+    if adapter is not None:
+        config = _adapter_config(db, adapter, task.project_id)
+        if (
+            adapter.automatable
+            and not adapter.domains
+            and adapter.required_config
+            and not config
+        ):
+            adapter = None
+            config = {}
+
     if adapter is None:
         pack = _manual_pack(website, opportunity, project, profile)
         _store_manual_pack(db, task, website, pack)
@@ -158,7 +177,7 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
             ),
             error="No adapter available for this website",
             requires_human=True,
-            result=pack,
+            result={"submission_pack": pack},
         )
 
     if not adapter.automatable:
@@ -169,11 +188,10 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
             message=f"Adapter '{adapter.name}' requires manual completion. A submission pack was prepared.",
             error="Adapter is not automatable",
             requires_human=True,
-            result=pack,
+            result={"submission_pack": pack},
         )
 
     project_settings = project.settings.__dict__ if project and project.settings else {}
-    config = _adapter_config(db, adapter, task.project_id)
     evidence_dir = settings.managed_files_dir / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
 

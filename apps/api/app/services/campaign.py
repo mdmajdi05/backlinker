@@ -725,6 +725,7 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "backlink_id": record.id if record else None,
                 "verification_status": record.verification_status if record else None,
                 "published_page_url": record.published_page_url if record else None,
+                "observed_anchor_text": record.observed_anchor_text if record else None,
                 "last_update": last_update,
             }
         )

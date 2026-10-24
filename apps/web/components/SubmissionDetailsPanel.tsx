@@ -619,7 +619,8 @@ export function SubmissionDetailsPanel({
         </Alert>
       ) : (
         <Alert tone="success" title="All required details are filled in">
-          The submission can run without asking you for anything else.
+          Every value the website asks for is ready. If this site has no automated
+          adapter, submit the form by hand and then mark it submitted.
         </Alert>
       )}
 
