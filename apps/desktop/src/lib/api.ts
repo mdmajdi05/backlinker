@@ -10,7 +10,7 @@
  *   * the machine token of the sidecar is sent as `X-Local-Token` and *only*
  *     to a loopback address - it never leaves the machine,
  *   * a hosted backend is used only when the operator selects one explicitly
- *     (Settings -> Cloud synchronisation) and the switch is reversible,
+ *     (Settings -> Optional hosted backend) and the switch is reversible,
  *   * if the local backend is not reachable yet the client waits and retries
  *     instead of talking to something else.
  *

@@ -930,6 +930,10 @@ export interface IntegrationCredentialSummary {
   status: string;
   has_value: boolean;
   masked_hint: string;
+  /** Model stored for AI credentials. */
+  model?: string | null;
+  /** Optional base URL stored for AI credentials. */
+  base_url?: string | null;
   updated_at: string;
 }
 
@@ -1248,6 +1252,10 @@ export interface ReorderResult {
 /** The response of the bulk endpoints (`/opportunities/bulk`, `/queue/bulk-control`). */
 export interface BulkActionResult {
   affected: number;
+  /** Only the registry "queue" action reports how many submissions were created. */
+  queued?: number;
+  /** Opportunities that were left alone (already queued, paused project, ...). */
+  skipped?: number;
 }
 
 /** The response of `POST /api/v1/verification/run`. */

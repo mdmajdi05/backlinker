@@ -226,8 +226,31 @@ export default function RegistryPage() {
       }),
     );
     if (outcome.ok && outcome.data) {
-      const affected = outcome.data.affected;
-      toast.push(`${affected} website${affected === 1 ? "" : "s"} updated`, "success");
+      const { affected, queued = 0, skipped = 0 } = outcome.data;
+      if (bulkAction === "queue") {
+        // Only report success when a submission was really created - a run
+        // where every website was already queued is not a success.
+        if (queued === 0) {
+          toast.push(
+            skipped > 0
+              ? `Nothing queued: ${skipped} website${skipped === 1 ? " was" : "s were"} already queued, excluded or in a paused project`
+              : "Nothing was queued",
+            "info",
+          );
+        } else if (skipped > 0) {
+          toast.push(
+            `${queued} website${queued === 1 ? "" : "s"} queued, ${skipped} skipped (already queued or not eligible)`,
+            "success",
+          );
+        } else {
+          toast.push(
+            `${queued} website${queued === 1 ? "" : "s"} added to the queue`,
+            "success",
+          );
+        }
+      } else {
+        toast.push(`${affected} website${affected === 1 ? "" : "s"} updated`, "success");
+      }
       setSelected([]);
       setConfirmAction(null);
       opportunities.reload();
@@ -289,9 +312,10 @@ export default function RegistryPage() {
       ) : null}
 
       {selectedAutoPilot?.state === "unavailable" ? (
-        <Alert tone="neutral" title="The automatic submission state is not available yet">
-          The backend answered 404 for the auto pilot endpoint of this project, therefore the
-          registry can not show whether approving queues the submission.
+        <Alert tone="neutral" title="The automatic submission state could not be loaded">
+          The backend answered 404 for the auto pilot endpoint of this project. The project may
+          have been removed, or it may not belong to this account, so the registry can not show
+          whether approving queues the submission.
         </Alert>
       ) : null}
 
@@ -760,9 +784,9 @@ function DetailsCell({ summary }: { summary?: DetailsSummary }) {
   }
   if (summary.state === "unavailable") {
     return (
-      <Tooltip label="The backend does not provide submission details for this opportunity yet.">
+      <Tooltip label="The backend returned 404 for this opportunity's details; it may have been removed.">
         <span>
-          <Badge tone="neutral">not available</Badge>
+          <Badge tone="neutral">details unavailable</Badge>
         </span>
       </Tooltip>
     );
@@ -790,9 +814,9 @@ function AutoSubmitCell({ summary }: { summary?: AutoPilotSummary }) {
   }
   if (summary.state === "unavailable") {
     return (
-      <Tooltip label="The backend does not expose the auto pilot endpoint for this project yet.">
+      <Tooltip label="The backend returned 404 for this project's auto pilot endpoint; the project may have been removed.">
         <span>
-          <Badge tone="neutral">not available</Badge>
+          <Badge tone="neutral">state unavailable</Badge>
         </span>
       </Tooltip>
     );

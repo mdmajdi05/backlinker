@@ -268,7 +268,7 @@ export function useAuth(): AuthContextValue {
   return React.useContext(AuthContext);
 }
 
-/** Points the shared client at a different backend (cloud sync). */
+/** Points the shared client at a different backend. */
 export function useBackendUrl(url: string): void {
   React.useEffect(() => {
     setApiBaseUrl(url);

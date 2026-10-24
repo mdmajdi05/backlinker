@@ -72,7 +72,7 @@ export default function AutomationPage() {
         page: 1,
         page_size: 25,
         status: "RUNNING",
-        execution_environment: environment || undefined,
+        environment: environment || undefined,
       }),
     [environment, tick],
   );
@@ -82,7 +82,7 @@ export default function AutomationPage() {
       api.queue.list(apiClient, {
         page,
         page_size: PAGE_SIZE,
-        execution_environment: environment || undefined,
+        environment: environment || undefined,
       }),
     [page, environment, tick],
   );

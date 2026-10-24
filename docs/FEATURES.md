@@ -10,7 +10,7 @@ products**:
 | Backend instance | its own | **its own** - never the web one |
 | Database | SQLite (default) or PostgreSQL | SQLite in the app data directory |
 | Start | `make dev-api` + `make dev-web` | one double click |
-| Cloud | optional | optional, clearly labelled |
+| Hosted backend | optional | optional, clearly labelled, no automatic sync |
 
 The desktop product **never depends** on the web backend or on a cloud
 backend. Everything that needs the network (discovery, verification, form
@@ -76,7 +76,7 @@ Every job shows **where** it runs (`LOCAL` / `CLOUD`) and its state.
 | ------ | ------------ |
 | Edit | name, description, target website and the landing pages; the company details are saved for this project. Status is changed only with the project's **Start / Stop** bar |
 | Delete | the opportunities, tasks, attempts and verification records of the project are removed; **the websites stay in the website list** (they are shared) |
-| Settings | speed preset (Slow / Normal / Fast) on the project page; concurrency, request rate, retries, backoff, verification interval and execution environment in More tools |
+| Settings | speed preset (Slow / Normal / Fast) on the project page; the desktop project page also exposes the concurrency, backoff and verification interval values that the worker actually reads |
 | Report | CSV download from the project page; the Reports screen generates the full workbook with per-website counters |
 | Company details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and the **anchor texts** - asked when the project is created and editable at any time |
 | Recycle bin | everything that is deleted (projects, websites, business profiles, opportunities) waits here until it is **restored** or **deleted forever** |
@@ -102,9 +102,9 @@ one project can never change another.
 | Browser isolation + runtime | yes | yes | `/browser/status`, `/browser/install` |
 | Verification | yes | yes | `/verification/records`, `/verification/run` |
 | Reports & exports | yes | yes | `/reports`, `/reports/{id}/download` |
+| API keys & integrations | yes | yes | `/integrations/providers`, `/integrations/credentials` |
 | Recycle bin | yes | yes | `/recycle-bin`, `/recycle-bin/{kind}/{id}/restore` |
 | Import centre | yes | yes | `/imports/preview`, `/imports/{id}/commit` |
-| Integrations (encrypted credentials) | yes | yes | `/integrations/credentials` |
 | Devices & agents | yes | yes | `/devices` |
 | Activity log | yes | yes | `/activity` |
 | Settings (global, project, automation, storage) | yes | yes | `/settings` related endpoints |
@@ -119,5 +119,5 @@ two clients use and fails when one of them can do something the other cannot.
 | Start | two commands | one double click | the desktop bundles its backend |
 | File dialogs | browser file input | native macOS dialog | platform convention |
 | Notifications | browser notifications | native notifications | platform convention |
-| Cloud switch | available | available but clearly optional | the desktop works without it |
+| Hosted backend switch | available | available but clearly optional | it only changes where requests go; no data is copied or synced |
 | Browser runtime | installed on demand | installed on demand | 150 MB - it is not bundled |

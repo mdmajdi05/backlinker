@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  Alert,
   Badge,
   Button,
   Card,
@@ -30,19 +29,19 @@ function errorText(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function statusOf(error: unknown): number | null {
-  if (error && typeof error === "object" && "status" in error) {
-    const value = (error as { status: unknown }).status;
-    return typeof value === "number" ? value : null;
-  }
-  return null;
-}
+/**
+ * Local AI backends (Ollama, LM Studio, local OpenAI compatible servers) run
+ * on this machine and need no API key - a model name is enough.
+ */
+const KEYLESS_AI_PROVIDERS = new Set(["ollama", "lmstudio", "local"]);
 
 export function IntegrationsPage() {
   const toast = useToast();
   const [provider, setProvider] = React.useState("");
   const [label, setLabel] = React.useState("");
   const [secret, setSecret] = React.useState("");
+  const [model, setModel] = React.useState("");
+  const [baseUrl, setBaseUrl] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = React.useState<IntegrationCredentialSummary | null>(
@@ -58,10 +57,12 @@ export function IntegrationsPage() {
   const credentialItems = credentials.data ?? [];
   const adapterItems = adapters.data ?? [];
 
-  // The endpoint does not exist on older backends - then no credential can be
-  // stored and nothing is simulated.
-  const storageMissing =
-    statusOf(credentials.error) === 404 || statusOf(credentials.error) === 405;
+  const selectedProvider = providerItems.find((item) => item.key === provider);
+  const isAiProvider = Boolean(
+    selectedProvider?.purpose.toLowerCase().startsWith("ai"),
+  );
+  const isKeylessProvider = KEYLESS_AI_PROVIDERS.has(provider.trim().toLowerCase());
+  const showsModelField = isAiProvider || isKeylessProvider;
 
   async function save() {
     setFormError(null);
@@ -69,18 +70,30 @@ export function IntegrationsPage() {
       setFormError("Select a provider.");
       return;
     }
-    if (!secret.trim()) {
-      setFormError("A secret is required.");
+    if (isKeylessProvider && !model.trim()) {
+      setFormError(
+        "A model is required for local AI providers (no API key is needed).",
+      );
+      return;
+    }
+    if (!isKeylessProvider && !secret.trim()) {
+      setFormError("An API key (secret) is required for this provider.");
       return;
     }
 
     setSaving(true);
     try {
-      await api.integrations.saveCredential(apiClient, {
-        provider,
-        label: label.trim() || provider,
-        secret: secret.trim(),
-      });
+      await apiClient.post<IntegrationCredentialSummary>(
+        "/api/v1/integrations/credentials",
+        {
+          provider,
+          label: label.trim() || provider,
+          // Local providers are saved with an empty secret.
+          secret: secret.trim(),
+          model: showsModelField && model.trim() ? model.trim() : undefined,
+          base_url: isKeylessProvider && baseUrl.trim() ? baseUrl.trim() : undefined,
+        },
+      );
       toast.push("Credential stored on the local backend", "success");
       void sendNativeNotification(
         "Auto Backlinker",
@@ -89,6 +102,8 @@ export function IntegrationsPage() {
       // The secret is never read back - it is dropped from the form.
       setSecret("");
       setLabel("");
+      setModel("");
+      setBaseUrl("");
       credentials.reload();
       providers.reload();
     } catch (err) {
@@ -150,14 +165,6 @@ export function IntegrationsPage() {
         }
       />
 
-      {storageMissing ? (
-        <Alert tone="warning" title="Credential storage is not available">
-          The backend does not answer the credential endpoint, so no key can be
-          stored on this machine. Nothing is simulated and no key is kept in the
-          desktop app.
-        </Alert>
-      ) : null}
-
       <Card>
         <CardHeader
           title="Supported providers"
@@ -177,8 +184,8 @@ export function IntegrationsPage() {
             </div>
           ) : providerItems.length === 0 ? (
             <NothingYet
-              title="No providers known"
-              description="The backend did not report any integration provider."
+              title="No providers available"
+              description="No integration providers are configured on this installation."
             />
           ) : (
             <Table>
@@ -246,13 +253,50 @@ export function IntegrationsPage() {
                   placeholder="Production key"
                 />
               </Field>
-              <Field label="Secret" required>
+              {showsModelField ? (
+                <Field
+                  label="Model"
+                  required={isKeylessProvider}
+                  hint={
+                    isKeylessProvider
+                      ? "Required for local providers, for example llama3.1"
+                      : "Optional - leave empty to use the provider default"
+                  }
+                >
+                  <Input
+                    value={model}
+                    onChange={(event) => setModel(event.target.value)}
+                    placeholder={isKeylessProvider ? "llama3.1" : "e.g. gpt-4o-mini"}
+                  />
+                </Field>
+              ) : null}
+              {isKeylessProvider ? (
+                <Field
+                  label="Base URL"
+                  hint="Optional. Leave empty for the default: Ollama uses :11434, LM Studio and local servers use :1234/v1."
+                >
+                  <Input
+                    value={baseUrl}
+                    onChange={(event) => setBaseUrl(event.target.value)}
+                    placeholder="http://localhost:11434/v1"
+                  />
+                </Field>
+              ) : null}
+              <Field
+                label="Secret"
+                required={!isKeylessProvider}
+                hint={
+                  isKeylessProvider
+                    ? "Not required: local AI servers run without an API key."
+                    : undefined
+                }
+              >
                 <Input
                   type="password"
                   value={secret}
                   autoComplete="off"
                   onChange={(event) => setSecret(event.target.value)}
-                  placeholder="••••••••••••"
+                  placeholder={isKeylessProvider ? "No key needed" : "••••••••••••"}
                 />
               </Field>
 
@@ -263,7 +307,10 @@ export function IntegrationsPage() {
               <div className="flex justify-end">
                 <Button
                   loading={saving}
-                  disabled={storageMissing || !provider || !secret.trim()}
+                  disabled={
+                    !provider ||
+                    (isKeylessProvider ? !model.trim() : !secret.trim())
+                  }
                   onClick={save}
                 >
                   Save credential
@@ -356,7 +403,7 @@ export function IntegrationsPage() {
           ) : adapterItems.length === 0 ? (
             <NothingYet
               title="No adapters registered"
-              description="The backend did not report any submission adapters."
+              description="No submission adapters are registered on this installation."
             />
           ) : (
             <Table>

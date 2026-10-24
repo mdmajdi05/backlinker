@@ -31,8 +31,8 @@ import { ProjectEditDialog } from "@/components/ProjectEditDialog";
  *
  * The campaign is the primary view: add websites, press start and watch the
  * live table.  Everything that is only needed once in a while - the full
- * website fields, the auto pilot and the execution settings - lives in the
- * "Advanced" section further down, so the page stays understandable without
+ * website fields, the auto pilot and the statistics - lives in the "More
+ * tools" section further down, so the page stays understandable without
  * hiding a feature.
  */
 export default function ProjectDetailPage() {

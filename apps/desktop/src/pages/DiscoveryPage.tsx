@@ -55,7 +55,6 @@ export function DiscoveryPage() {
   const [language, setLanguage] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [limit, setLimit] = React.useState("50");
-  const [apiKey, setApiKey] = React.useState("");
   const [running, setRunning] = React.useState(false);
   const [runError, setRunError] = React.useState<string | null>(null);
 
@@ -127,14 +126,12 @@ export function DiscoveryPage() {
         language: language.trim() || undefined,
         category: (category || undefined) as OpportunityCategory | undefined,
         limit: Number.parseInt(limit, 10) || undefined,
-        config: apiKey.trim() ? { api_key: apiKey.trim() } : undefined,
       });
       toast.push(`Discovery run ${result.status.toLowerCase()}`, "success");
       void sendNativeNotification(
         "Auto Backlinker",
         `Discovery run ${result.status.toLowerCase()} (${provider}).`,
       );
-      setApiKey("");
       setPage(1);
       runs.reload();
     } catch (err) {
@@ -268,10 +265,7 @@ export function DiscoveryPage() {
               <Field label="Provider" required>
                 <Select
                   value={provider}
-                  onChange={(event) => {
-                    setProvider(event.target.value);
-                    setApiKey("");
-                  }}
+                  onChange={(event) => setProvider(event.target.value)}
                 >
                   <option value="">Select provider…</option>
                   {providerItems.map((item) => (
@@ -332,19 +326,20 @@ export function DiscoveryPage() {
                 />
               </Field>
               {selectedProvider?.requires_credentials ? (
-                <Field
-                  label="API key"
-                  className="sm:col-span-2"
-                  hint="Sent with the run. The backend stores it encrypted - it is never shown again."
-                >
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    autoComplete="off"
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder="••••••••••••"
-                  />
-                </Field>
+                <div className="rounded-md border border-line bg-surface-sunken p-3 sm:col-span-2">
+                  <p className="text-xs text-content-muted">
+                    This provider needs an API key. Save it once in API keys &amp; integrations;
+                    every discovery run reads the stored key automatically.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                    onClick={() => navigate("integrations")}
+                  >
+                    Open API keys &amp; integrations
+                  </Button>
+                </div>
               ) : null}
             </div>
 

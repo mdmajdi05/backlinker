@@ -6,11 +6,9 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Checkbox,
   Field,
   Input,
   KeyValue,
-  Label,
   MetricTile,
   Select,
   StatusBadge,
@@ -37,22 +35,24 @@ import { isMissingEndpoint } from "../lib/api";
 import { openReportForProject } from "./ReportsPage";
 import type {
   BusinessProfile,
-  ExecutionEnvironment,
   Opportunity,
   Project,
   ProjectSettings,
   TargetWebsite,
 } from "@autobacklinker/shared-types";
 
-const WEEKDAYS = [
-  { value: 1, label: "Mon" },
-  { value: 2, label: "Tue" },
-  { value: 3, label: "Wed" },
-  { value: 4, label: "Thu" },
-  { value: 5, label: "Fri" },
-  { value: 6, label: "Sat" },
-  { value: 7, label: "Sun" },
-];
+/* Every field the execution form exposes is read by the backend:
+   the worker limits (runner.py) and the retry / verification backoff. */
+type EditableSettings = Pick<
+  ProjectSettings,
+  | "max_concurrency"
+  | "global_concurrency"
+  | "per_domain_concurrency"
+  | "backoff_base_seconds"
+  | "jitter_seconds"
+  | "verify_interval_hours"
+  | "verify_backoff_hours"
+>;
 
 const DEFAULTS: ProjectSettings = {
   id: "",
@@ -75,6 +75,32 @@ const DEFAULTS: ProjectSettings = {
   auto_queue_approved: false,
   timezone: "UTC",
 };
+
+function editableFrom(settings: ProjectSettings | null): EditableSettings {
+  const source = settings ?? DEFAULTS;
+  return {
+    max_concurrency: source.max_concurrency,
+    global_concurrency: source.global_concurrency,
+    per_domain_concurrency: source.per_domain_concurrency,
+    backoff_base_seconds: source.backoff_base_seconds,
+    jitter_seconds: source.jitter_seconds,
+    verify_interval_hours: source.verify_interval_hours,
+    verify_backoff_hours: source.verify_backoff_hours,
+  };
+}
+
+/* The PUT replaces every settings column, so the values the form does not
+   expose are sent back unchanged instead of being reset to the defaults. */
+function settingsBase(
+  settings: ProjectSettings | null,
+): Omit<ProjectSettings, "id" | "project_id"> {
+  const {
+    id: _id,
+    project_id: _projectId,
+    ...base
+  } = settings ?? DEFAULTS;
+  return base;
+}
 
 function errorText(error: unknown, fallback: string): string {
   if (error && typeof error === "object" && "message" in error) {
@@ -99,37 +125,25 @@ function SettingsForm({
   settings: ProjectSettings | null;
 }) {
   const toast = useToast();
-  const [form, setForm] = React.useState<ProjectSettings>(() => ({
-    ...DEFAULTS,
-    ...(settings ?? {}),
-    operating_schedule: {
-      ...DEFAULTS.operating_schedule,
-      ...(settings?.operating_schedule ?? {}),
-    },
-  }));
+  const [form, setForm] = React.useState<EditableSettings>(() =>
+    editableFrom(settings),
+  );
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    setForm({
-      ...DEFAULTS,
-      ...(settings ?? {}),
-      operating_schedule: {
-        ...DEFAULTS.operating_schedule,
-        ...(settings?.operating_schedule ?? {}),
-      },
-    });
+    setForm(editableFrom(settings));
   }, [settings]);
 
-  const update = <K extends keyof ProjectSettings>(
+  const update = <K extends keyof EditableSettings>(
     key: K,
-    value: ProjectSettings[K],
+    value: EditableSettings[K],
   ) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const numberField = (
-    key: keyof ProjectSettings,
+    key: keyof EditableSettings,
     label: string,
     hint?: string,
   ) => (
@@ -140,7 +154,10 @@ function SettingsForm({
         value={String(form[key] ?? "")}
         onChange={(event) => {
           const parsed = Number.parseInt(event.target.value, 10);
-          update(key, (Number.isFinite(parsed) ? parsed : 0) as ProjectSettings[typeof key]);
+          update(
+            key,
+            (Number.isFinite(parsed) ? parsed : 0) as EditableSettings[typeof key],
+          );
         }}
       />
     </Field>
@@ -151,23 +168,8 @@ function SettingsForm({
     setSaving(true);
     try {
       await api.projects.updateSettings(apiClient, projectId, {
-        max_concurrency: form.max_concurrency,
-        global_concurrency: form.global_concurrency,
-        per_domain_concurrency: form.per_domain_concurrency,
-        per_provider_concurrency: form.per_provider_concurrency,
-        request_rate_per_minute: form.request_rate_per_minute,
-        max_retries: form.max_retries,
-        backoff_base_seconds: form.backoff_base_seconds,
-        jitter_seconds: form.jitter_seconds,
-        operating_schedule: form.operating_schedule,
-        verify_interval_hours: form.verify_interval_hours,
-        verify_backoff_hours: form.verify_backoff_hours,
-        daily_discovery_limit: form.daily_discovery_limit,
-        allow_browser_automation: form.allow_browser_automation,
-        require_approval: form.require_approval,
-        execution_environment: form.execution_environment,
-        auto_queue_approved: form.auto_queue_approved,
-        timezone: form.timezone,
+        ...settingsBase(settings),
+        ...form,
       });
       toast.push("Project settings saved", "success");
       void sendNativeNotification(
@@ -187,135 +189,10 @@ function SettingsForm({
         {numberField("max_concurrency", "Max concurrency", "Parallel tasks of this project")}
         {numberField("global_concurrency", "Global concurrency")}
         {numberField("per_domain_concurrency", "Per-domain concurrency")}
-        {numberField("per_provider_concurrency", "Per-provider concurrency")}
-        {numberField("request_rate_per_minute", "Requests / minute", "Rate limit")}
-        {numberField("max_retries", "Max retries")}
         {numberField("backoff_base_seconds", "Backoff base (s)")}
         {numberField("jitter_seconds", "Jitter (s)")}
         {numberField("verify_interval_hours", "Verification interval (h)")}
         {numberField("verify_backoff_hours", "Verification backoff (h)")}
-        {numberField("daily_discovery_limit", "Daily discovery limit")}
-        <Field label="Timezone">
-          <Input
-            value={form.timezone}
-            onChange={(event) => update("timezone", event.target.value)}
-            placeholder="UTC"
-          />
-        </Field>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field
-          label="Execution environment"
-          hint="LOCAL runs the work on this machine, CLOUD needs a hosted worker."
-        >
-          <Select
-            value={form.execution_environment}
-            onChange={(event) =>
-              update(
-                "execution_environment",
-                event.target.value as ExecutionEnvironment,
-              )
-            }
-          >
-            <option value="LOCAL">Local agent (this device)</option>
-            <option value="CLOUD">Cloud worker</option>
-          </Select>
-        </Field>
-
-        <div className="flex flex-col gap-2 pt-5">
-          <Label className="flex items-center gap-2 text-content">
-            <Checkbox
-              checked={form.require_approval}
-              onChange={(event) =>
-                update("require_approval", event.target.checked)
-              }
-            />
-            Require approval
-          </Label>
-          <Label className="flex items-center gap-2 text-content">
-            <Checkbox
-              checked={form.auto_queue_approved}
-              onChange={(event) =>
-                update("auto_queue_approved", event.target.checked)
-              }
-            />
-            Auto-queue approved
-          </Label>
-          <Label className="flex items-center gap-2 text-content">
-            <Checkbox
-              checked={form.allow_browser_automation}
-              onChange={(event) =>
-                update("allow_browser_automation", event.target.checked)
-              }
-            />
-            Allow browser automation
-          </Label>
-        </div>
-      </div>
-
-      <div className="rounded-md border border-line p-3">
-        <p className="mb-2 text-xs font-semibold text-content">Operating schedule</p>
-        <div className="flex flex-wrap gap-2">
-          {WEEKDAYS.map((day) => {
-            const active = form.operating_schedule.days.includes(day.value);
-            return (
-              <button
-                key={day.value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => {
-                  const days = active
-                    ? form.operating_schedule.days.filter((d) => d !== day.value)
-                    : [...form.operating_schedule.days, day.value].sort(
-                        (a, b) => a - b,
-                      );
-                  update("operating_schedule", {
-                    ...form.operating_schedule,
-                    days,
-                  });
-                }}
-                className={
-                  active
-                    ? "h-8 w-11 rounded-md border border-accent bg-accent-soft text-xs font-medium text-accent"
-                    : "h-8 w-11 rounded-md border border-line text-xs font-medium text-content-muted transition-colors hover:bg-surface-sunken"
-                }
-              >
-                {day.label}
-              </button>
-            );
-          })}
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Field label="Start hour (0-23)">
-            <Input
-              type="number"
-              min={0}
-              max={23}
-              value={form.operating_schedule.start_hour}
-              onChange={(event) =>
-                update("operating_schedule", {
-                  ...form.operating_schedule,
-                  start_hour: Number.parseInt(event.target.value, 10) || 0,
-                })
-              }
-            />
-          </Field>
-          <Field label="End hour (0-23)">
-            <Input
-              type="number"
-              min={0}
-              max={23}
-              value={form.operating_schedule.end_hour}
-              onChange={(event) =>
-                update("operating_schedule", {
-                  ...form.operating_schedule,
-                  end_hour: Number.parseInt(event.target.value, 10) || 0,
-                })
-              }
-            />
-          </Field>
-        </div>
       </div>
 
       {error ? (
@@ -327,16 +204,7 @@ function SettingsForm({
       <div className="flex justify-end gap-2 border-t border-line pt-3">
         <Button
           variant="outline"
-          onClick={() =>
-            setForm({
-              ...DEFAULTS,
-              ...(settings ?? {}),
-              operating_schedule: {
-                ...DEFAULTS.operating_schedule,
-                ...(settings?.operating_schedule ?? {}),
-              },
-            })
-          }
+          onClick={() => setForm(editableFrom(settings))}
         >
           Reset
         </Button>
@@ -556,9 +424,6 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
             {data.target_website}
           </button>
           <Badge tone="neutral">v{data.version}</Badge>
-          <Badge tone="neutral">
-            {data.settings?.execution_environment ?? "CLOUD"}
-          </Badge>
           {data.description ? (
             <span className="text-xs text-content-muted">{data.description}</span>
           ) : null}
@@ -810,7 +675,7 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
       <Card>
         <CardHeader
           title="Execution settings"
-          description="Concurrency, rate limit, retries, backoff and verification cadence"
+          description="Concurrency, retry backoff and verification cadence"
         />
         <CardBody>
           {settings.loading && !settings.data ? (

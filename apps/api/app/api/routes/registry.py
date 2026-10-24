@@ -26,9 +26,33 @@ from app.services.opportunities import (
     normalize_url,
     opportunity_to_dict,
 )
-from app.services.queue import OPEN_TASK_STATUSES
+from app.services.queue import (
+    OPEN_TASK_STATUSES,
+    build_idempotency_key,
+    enqueue,
+)
 
 router = APIRouter(tags=["registry"])
+
+#: Task states that mean a submission is already on its way.  ``RUNNING`` is
+#: added to the queue service's list so a task that a worker holds right now is
+#: not queued a second time.
+BUSY_SUBMIT_STATUSES = (*OPEN_TASK_STATUSES, "RUNNING")
+
+
+def _busy_opportunities(db, project_ids: set[str]) -> set[str]:
+    """The opportunities that already have an open submission task."""
+    if not project_ids:
+        return set()
+    rows = db.execute(
+        select(Task.opportunity_id).where(
+            Task.project_id.in_(project_ids),
+            Task.type == "SUBMIT",
+            Task.status.in_(BUSY_SUBMIT_STATUSES),
+            Task.opportunity_id.is_not(None),
+        )
+    ).scalars().all()
+    return {row for row in rows if row}
 
 
 def _load(db, opportunity_id: str, user) -> tuple[Opportunity, Website]:
@@ -212,16 +236,27 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
         stmt = stmt.where(scope)
     opportunities = db.execute(stmt).scalars().all()
     if not opportunities:
-        return {"affected": 0}
+        return {"affected": 0, "queued": 0, "skipped": 0}
 
     project = None
     if payload.project_id:
         project = _owned_project(db, payload.project_id, user)
 
     affected = 0
+    queued = 0
+    skipped = 0
+    # Only the queue action needs to know which opportunities are already being
+    # worked on - computing the set once keeps the loop free of a query per row.
+    busy = (
+        _busy_opportunities(db, {item.project_id for item in opportunities if item.project_id})
+        if action == "queue"
+        else set()
+    )
     for opportunity in opportunities:
         website = db.get(Website, opportunity.website_id)
         if website is None:
+            if action == "queue":
+                skipped += 1
             continue
         if action == "approve":
             opportunity.status = "APPROVED"
@@ -250,6 +285,67 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
                             website_id=website.id,
                             metadata={"auto_submit": True},
                         )
+        elif action == "queue":
+            # "Add to queue" means: approve the opportunity and put exactly one
+            # submission on the durable queue.  A project that is paused,
+            # archived or removed never receives new work, and an opportunity
+            # that already has an open submission task is not queued twice.
+            project_id = opportunity.project_id
+            target_project = db.get(Project, project_id) if project_id else None
+            if (
+                target_project is None
+                or target_project.deleted_at is not None
+                or target_project.status != "ACTIVE"
+            ):
+                skipped += 1
+                continue
+            if opportunity.id in busy:
+                skipped += 1
+                continue
+            if website.excluded_until is not None and website.excluded_until > utcnow():
+                skipped += 1
+                continue
+
+            task, created = enqueue(
+                db,
+                task_type="SUBMIT",
+                project_id=project_id,
+                opportunity_id=opportunity.id,
+                website_id=website.id,
+                adapter_id=website.adapter_id,
+                payload={
+                    "opportunity_id": opportunity.id,
+                    "website_id": website.id,
+                    "landing_page": opportunity.target_landing_page,
+                    "anchor_text": website.anchor_text,
+                    "source": "registry_bulk",
+                },
+                # The same identity the queue endpoint and the auto pilot use,
+                # therefore a retried bulk call can never submit twice.
+                idempotency_key=build_idempotency_key(
+                    "SUBMIT", project_id, opportunity.id, {"opportunity": opportunity.id}
+                ),
+            )
+            if not created:
+                # The task already exists (open or finished) - the opportunity
+                # keeps the state it has instead of pretending to be queued.
+                skipped += 1
+                continue
+            # Queueing is the approval: the opportunity leaves the review list.
+            opportunity.status = "QUEUED"
+            website.status = "APPROVED"
+            busy.add(opportunity.id)
+            queued += 1
+            affected += 1
+            record_event(
+                db,
+                "task.queued",
+                f"Queued {website.domain} for submission",
+                task_id=task.id,
+                project_id=project_id,
+                website_id=website.id,
+                metadata={"type": "SUBMIT", "source": "registry_bulk"},
+            )
         elif action == "reject":
             opportunity.status = "REJECTED"
             website.status = "REJECTED"
@@ -317,7 +413,7 @@ def bulk_action(payload: BulkActionRequest, db: DbSession, user: CurrentUser) ->
         actor_id=user.id,
         after={"count": affected, "ids": payload.opportunity_ids},
     )
-    return {"affected": affected}
+    return {"affected": affected, "queued": queued, "skipped": skipped}
 
 
 @router.post("/registry/exclusions")

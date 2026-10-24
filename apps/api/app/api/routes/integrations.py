@@ -16,6 +16,11 @@ from app.core.crypto import decrypt, encrypt, mask
 from app.db.models import IntegrationCredential
 from app.schemas import ORMModel
 from app.services.events import record_event
+from app.services.integration_credentials import (
+    AI_PROVIDERS,
+    credential_is_configured,
+    is_keyless_ai_provider,
+)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -41,17 +46,53 @@ KNOWN_PROVIDERS: dict[str, dict[str, str]] = {
         "purpose": "AI assistance - classification, drafts, mapping",
         "docs": "https://docs.anthropic.com/",
     },
+    "claude": {
+        "name": "Anthropic Claude (alias)",
+        "purpose": "AI assistance - classification, drafts, mapping",
+        "docs": "https://docs.anthropic.com/",
+    },
     "openrouter": {
         "name": "OpenRouter",
         "purpose": "AI assistance through an OpenAI compatible gateway",
         "docs": "https://openrouter.ai/docs",
+    },
+    "groq": {
+        "name": "Groq",
+        "purpose": "AI assistance through the Groq OpenAI compatible API",
+        "docs": "https://console.groq.com/docs",
     },
     "ollama": {
         "name": "Ollama (local models)",
         "purpose": "AI assistance without any external service",
         "docs": "https://ollama.com/",
     },
+    "lmstudio": {
+        "name": "LM Studio (local models)",
+        "purpose": "AI assistance through a local LM Studio server",
+        "docs": "https://lmstudio.ai/docs",
+    },
+    "local": {
+        "name": "Local OpenAI compatible server",
+        "purpose": "AI assistance through a local OpenAI compatible endpoint",
+        "docs": "https://platform.openai.com/docs/api-reference",
+    },
+    "openai_compatible": {
+        "name": "OpenAI compatible endpoint",
+        "purpose": "AI assistance through any OpenAI compatible endpoint",
+        "docs": "https://platform.openai.com/docs/api-reference",
+    },
 }
+
+# Keep the advertised providers aligned with the providers the AI engine supports.
+for _provider_key in AI_PROVIDERS:
+    KNOWN_PROVIDERS.setdefault(
+        _provider_key,
+        {
+            "name": _provider_key.replace("_", " ").title(),
+            "purpose": "AI assistance",
+            "docs": "",
+        },
+    )
 
 
 class CredentialOut(ORMModel):
@@ -61,17 +102,22 @@ class CredentialOut(ORMModel):
     status: str
     has_value: bool
     masked_hint: str
+    model: str | None = None
+    base_url: str | None = None
     updated_at: str
 
 
 def _to_out(row: IntegrationCredential) -> dict:
+    meta = row.meta or {}
     return {
         "id": row.id,
         "provider": row.provider,
         "label": row.label,
         "status": row.status,
         "has_value": bool(row.secret_encrypted),
-        "masked_hint": mask((row.meta or {}).get("hint")),
+        "masked_hint": mask(meta.get("hint")),
+        "model": meta.get("model"),
+        "base_url": meta.get("base_url"),
         "updated_at": row.updated_at.isoformat() if row.updated_at else "",
     }
 
@@ -83,7 +129,9 @@ def list_providers(user: CurrentUser) -> list[dict]:
 
     with session_scope() as db:
         rows = db.execute(select(IntegrationCredential)).scalars().all()
-    configured = {row.provider for row in rows if row.secret_encrypted}
+    # A credential counts as configured when its secret is readable, or - for a
+    # keyless local AI provider - when it names a model.
+    configured = {row.provider for row in rows if credential_is_configured(row)}
     out = []
     for key, meta in KNOWN_PROVIDERS.items():
         out.append(
@@ -109,6 +157,8 @@ def upsert_credential(payload: dict, db: DbSession, user: CurrentUser) -> dict:
     provider = (payload.get("provider") or "").strip().lower()
     label = (payload.get("label") or "default").strip()
     secret = payload.get("secret") or payload.get("api_key") or ""
+    model = str(payload.get("model") or "").strip()
+    base_url = str(payload.get("base_url") or "").strip()
     if not provider:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -130,18 +180,40 @@ def upsert_credential(payload: dict, db: DbSession, user: CurrentUser) -> dict:
         row = IntegrationCredential(provider=provider, label=label, user_id=user.id)
         db.add(row)
 
+    meta = dict(row.meta or {})
+    if model:
+        meta["model"] = model
+    if base_url:
+        meta["base_url"] = base_url
+
+    keyless = is_keyless_ai_provider(provider)
     if secret:
         row.secret_encrypted = encrypt(secret, settings.secret_key, associated_data=provider)
         row.status = "CONFIGURED"
-        row.meta = {**(row.meta or {}), "hint": mask(secret)}
-    elif row.secret_encrypted:
-        # Keep the existing secret but let the user change the metadata.
-        row.meta = {**(row.meta or {}), "hint": mask((row.meta or {}).get("hint", ""))}
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "invalid", "message": "A secret is required for a new credential"},
-        )
+        meta["hint"] = mask(secret)
+    elif not row.secret_encrypted:
+        if keyless and str(meta.get("model") or "").strip():
+            # Local AI servers (Ollama, LM Studio, ...) need no API key.
+            row.status = "CONFIGURED"
+        elif keyless:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "invalid",
+                    "message": (
+                        f"A model is required for {provider}: local AI providers need no API key."
+                    ),
+                },
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "invalid",
+                    "message": f"An API key (secret) is required for {provider}.",
+                },
+            )
+    row.meta = meta
     db.commit()
     db.refresh(row)
     record_event(

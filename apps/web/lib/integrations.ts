@@ -16,6 +16,7 @@ export interface CredentialInput {
   label: string;
   apiKey: string;
   model?: string;
+  baseUrl?: string;
 }
 
 export interface IntegrationProvider {
@@ -26,34 +27,14 @@ export interface IntegrationProvider {
   configured: boolean;
 }
 
-export interface CredentialsProbe {
-  available: boolean;
-  credentials: IntegrationCredential[];
-  providers: IntegrationProvider[];
-  /** Set when the endpoint responded with something other than 404. */
-  error: unknown;
+/** The credentials the backend currently stores for this workspace. */
+export async function loadCredentials(): Promise<IntegrationCredential[]> {
+  return apiClient.get<IntegrationCredential[]>(CREDENTIALS_PATH);
 }
 
-function isMissing(error: unknown): boolean {
-  const status = (error as { status?: number } | null)?.status;
-  return status === 404 || status === 405 || status === 501;
-}
-
-export async function probeCredentials(): Promise<CredentialsProbe> {
-  try {
-    const [credentials, providers] = await Promise.all([
-      apiClient.get<IntegrationCredential[]>(CREDENTIALS_PATH),
-      api.integrations
-        .providers(apiClient)
-        .catch(() => [] as IntegrationProvider[]),
-    ]);
-    return { available: true, credentials, providers, error: null };
-  } catch (error) {
-    if (isMissing(error)) {
-      return { available: false, credentials: [], providers: [], error: null };
-    }
-    return { available: false, credentials: [], providers: [], error };
-  }
+/** The providers the backend knows about and whether a secret is stored. */
+export async function loadProviders(): Promise<IntegrationProvider[]> {
+  return api.integrations.providers(apiClient);
 }
 
 export async function saveCredential(input: CredentialInput): Promise<IntegrationCredential> {
@@ -62,6 +43,7 @@ export async function saveCredential(input: CredentialInput): Promise<Integratio
     label: input.label,
     api_key: input.apiKey,
     ...(input.model ? { model: input.model } : {}),
+    ...(input.baseUrl ? { base_url: input.baseUrl } : {}),
   });
 }
 
@@ -70,4 +52,24 @@ export async function deleteCredential(id: string): Promise<void> {
 }
 
 /** Providers that expose a model setting (AI backends). */
-export const AI_PROVIDER_KEYS = ["openai", "anthropic", "gemini", "ollama", "azure-openai"];
+export const AI_PROVIDER_KEYS = [
+  "openai",
+  "anthropic",
+  "openrouter",
+  "ollama",
+  "groq",
+  "lmstudio",
+  "local",
+];
+
+/**
+ * Local AI backends (Ollama, LM Studio, a local OpenAI compatible server)
+ * run on this machine and need no API key - a model name is enough.
+ */
+export const KEYLESS_AI_PROVIDERS = ["ollama", "lmstudio", "local"] as const;
+
+export function isKeylessAiProvider(provider: string): boolean {
+  return (KEYLESS_AI_PROVIDERS as readonly string[]).includes(
+    provider.trim().toLowerCase(),
+  );
+}

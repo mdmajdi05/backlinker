@@ -37,7 +37,7 @@ export function SettingsPage() {
     setEnabled: setNotificationsEnabled,
   } = useNotifications();
   const { mode, user, logout } = useAuth();
-  const [cloudUrl, setCloudUrl] = React.useState(apiClient.baseUrl);
+  const [backendUrl, setBackendUrl] = React.useState(apiClient.baseUrl);
   const [port, setPort] = React.useState(
     String(backend.status?.port ?? 8765),
   );
@@ -95,13 +95,13 @@ export function SettingsPage() {
     return () => window.clearInterval(timer);
   }, [native, refreshLogs]);
 
-  function switchToCloud() {
-    const url = cloudUrl.trim();
+  function switchToHostedBackend() {
+    const url = backendUrl.trim();
     if (!url) return;
     setApiBaseUrl(url);
     setSessionMode("cloud");
     logout();
-    toast.push("Switched to the cloud backend - sign in to continue", "info");
+    toast.push("Switched to the hosted backend - sign in to continue", "info");
   }
 
   function switchToLocal() {
@@ -118,7 +118,7 @@ export function SettingsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Settings"
-        description="Local backend, notifications, appearance and cloud synchronisation."
+        description="Local backend, optional hosted backend, notifications and appearance."
       />
 
       <Card>
@@ -315,34 +315,34 @@ export function SettingsPage() {
 
       <Card>
         <CardHeader
-          title="Cloud synchronisation"
-          description="Point the desktop client at a hosted backend to sync projects and tasks."
+          title="Optional hosted backend"
+          description="Point this client at a different Auto Backlinker backend. This only changes where the client sends requests - it does not copy or synchronise local data. The bundled local backend stays the default."
           action={
             <Badge tone={mode === "cloud" ? "accent" : "neutral"}>
-              {mode === "cloud" ? "Cloud" : "Local"}
+              {mode === "cloud" ? "Hosted" : "Local"}
             </Badge>
           }
         />
         <CardBody>
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-96">
-              <Field label="Backend URL">
+              <Field label="Backend URL" hint="Must expose the same API as the local backend.">
                 <Input
-                  value={cloudUrl}
-                  onChange={(event) => setCloudUrl(event.target.value)}
+                  value={backendUrl}
+                  onChange={(event) => setBackendUrl(event.target.value)}
                   placeholder="https://backlinks.example.com"
                 />
               </Field>
             </div>
-            <Button onClick={switchToCloud}>Use this backend</Button>
+            <Button onClick={switchToHostedBackend}>Use this backend</Button>
             <Button variant="outline" onClick={switchToLocal}>
               Back to local backend
             </Button>
           </div>
           <p className="mt-3 text-xs text-content-muted">
             {mode === "cloud"
-              ? `Signed in as ${user?.email ?? "an unknown user"}.`
-              : "The desktop app is currently connected to the local sidecar."}
+              ? `Signed in as ${user?.email ?? "an unknown user"} on the hosted backend. Data already stored locally is not transferred.`
+              : "The desktop app is currently connected to the local sidecar, which is the default."}
           </p>
         </CardBody>
       </Card>
@@ -360,10 +360,6 @@ export function SettingsPage() {
                 ["Mode", storage.data?.mode ?? "-"],
                 ["Database", storage.data?.database_type ?? "-"],
                 ["Connection", storage.data?.database_url_masked ?? "-"],
-                ["Connected", storage.data?.connected ? "yes" : "no"],
-                ["Cloud connected", storage.data?.cloud_connected ? "yes" : "no"],
-                ["Pending changes", String(storage.data?.pending_sync_changes ?? 0)],
-                ["Conflicts", String(storage.data?.conflicts ?? 0)],
                 ["Last backup", formatDate(storage.data?.last_backup_at)],
                 ["Schema", storage.data?.schema_version ?? "-"],
               ]}

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.db.models import Opportunity, Website
+from app.db.models import Opportunity, Task, Website
 from tests.conftest import API
 
 
@@ -145,6 +145,64 @@ def test_bulk_action_on_unknown_ids_affects_nothing(authenticated_client) -> Non
 
     assert response.status_code == 200, response.text
     assert response.json()["affected"] == 0
+
+
+def test_bulk_queue_approves_and_queues_each_opportunity_once(
+    authenticated_client, db_session, project_id
+) -> None:
+    ids = [
+        _create_opportunity(
+            authenticated_client, f"https://queue{index}.example.org/add", project_id
+        )["id"]
+        for index in range(2)
+    ]
+
+    first = authenticated_client.post(
+        f"{API}/opportunities/bulk", json={"opportunity_ids": ids, "action": "queue"}
+    )
+    assert first.status_code == 200, first.text
+    assert first.json() == {"affected": 2, "queued": 2, "skipped": 0}
+
+    db_session.rollback()
+    tasks = db_session.query(Task).filter(Task.type == "SUBMIT").all()
+    assert len(tasks) == 2
+    assert {task.opportunity_id for task in tasks} == set(ids)
+    assert all(task.status == "QUEUED" for task in tasks)
+    statuses = {item.id: item.status for item in db_session.query(Opportunity).all()}
+    assert statuses == {ids[0]: "QUEUED", ids[1]: "QUEUED"}
+
+    # The second call is honest: nothing was queued again, everything was
+    # skipped because an open submission task already exists.
+    second = authenticated_client.post(
+        f"{API}/opportunities/bulk", json={"opportunity_ids": ids, "action": "queue"}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json() == {"affected": 0, "queued": 0, "skipped": 2}
+
+    db_session.rollback()
+    assert db_session.query(Task).filter(Task.type == "SUBMIT").count() == 2
+
+
+def test_bulk_queue_skips_the_opportunities_of_a_paused_project(
+    authenticated_client, db_session, project_id
+) -> None:
+    opportunity = _create_opportunity(
+        authenticated_client, "https://paused-queue.example.org/add", project_id
+    )
+    paused = authenticated_client.patch(
+        f"{API}/projects/{project_id}", json={"status": "PAUSED"}
+    )
+    assert paused.status_code == 200, paused.text
+
+    response = authenticated_client.post(
+        f"{API}/opportunities/bulk",
+        json={"opportunity_ids": [opportunity["id"]], "action": "queue"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"affected": 0, "queued": 0, "skipped": 1}
+    db_session.rollback()
+    assert db_session.query(Task).count() == 0
 
 
 def test_update_opportunity(authenticated_client, opportunity_id) -> None:

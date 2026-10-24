@@ -75,7 +75,7 @@ export function QueuePage() {
         page,
         page_size: PAGE_SIZE,
         status: status || undefined,
-        execution_environment: environment || undefined,
+        environment: environment || undefined,
       }),
     [page, status, environment],
   );

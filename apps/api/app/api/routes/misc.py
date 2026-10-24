@@ -60,6 +60,7 @@ def list_activity(
     level: str | None = Query(default=None),
     event_type: str | None = Query(default=None),
     since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
 ) -> PaginatedResponse:
     stmt = select(TaskEvent)
     count_stmt = select(func.count()).select_from(TaskEvent)
@@ -75,6 +76,8 @@ def list_activity(
         conditions.append(TaskEvent.event_type == event_type)
     if since:
         conditions.append(TaskEvent.created_at >= since)
+    if until:
+        conditions.append(TaskEvent.created_at <= until)
     if conditions:
         stmt = stmt.where(*conditions)
         count_stmt = count_stmt.where(*conditions)

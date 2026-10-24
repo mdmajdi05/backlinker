@@ -25,7 +25,6 @@ from app.db.base import utcnow
 from app.db.models import (
     BusinessProfile,
     DiscoveryRun,
-    IntegrationCredential,
     Project,
     Task,
     Website,
@@ -37,6 +36,7 @@ from app.services.discovery.base import (
     get_provider,
 )
 from app.services.events import record_event
+from app.services.integration_credentials import stored_config
 from app.services.opportunities import (
     create_website,
     extract_domain,
@@ -188,17 +188,10 @@ def _build_criteria(
 def _with_credentials(
     db: Session, provider: DiscoveryProvider, config: dict[str, Any]
 ) -> dict[str, Any]:
-    """Add the stored integration credential of a provider to the config."""
+    """Add the decrypted stored integration credential to the config."""
     merged = dict(config or {})
-    if merged.get("api_key"):
-        return merged
-    credential = db.execute(
-        select(IntegrationCredential)
-        .where(IntegrationCredential.provider == provider.key)
-        .order_by(IntegrationCredential.created_at)
-    ).scalars().first()
-    if credential is not None and credential.secret_encrypted:
-        merged["api_key"] = credential.secret_encrypted
+    for key, value in stored_config(db, provider.key).items():
+        merged.setdefault(key, value)
     return merged
 
 

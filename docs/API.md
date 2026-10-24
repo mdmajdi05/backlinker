@@ -109,7 +109,7 @@ countries, excluded domains, monthly target and campaign goals.
 | GET | `/api/v1/projects/{project_id}` | One project including its settings and counts. | yes |
 | PATCH | `/api/v1/projects/{project_id}` | Update name, description, target website, … | yes |
 | DELETE | `/api/v1/projects/{project_id}` | Move a project to the recycle bin (its opportunities, tasks and records stay). | yes |
-| GET | `/api/v1/projects/{project_id}/settings` | Concurrency, rate limits, retries, verification interval, approval policy, execution environment. | yes |
+| GET | `/api/v1/projects/{project_id}/settings` | Concurrency, backoff and verification interval (read by the worker), plus legacy stored fields. | yes |
 | PUT | `/api/v1/projects/{project_id}/settings` | Replace the settings. | yes |
 | GET | `/api/v1/projects/{project_id}/campaigns` | Campaigns of the project. | yes |
 | POST | `/api/v1/projects/{project_id}/campaigns` | Create a campaign. | yes |

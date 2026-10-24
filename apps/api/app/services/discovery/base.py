@@ -12,6 +12,16 @@ from typing import Any
 
 from app.db.models import BusinessProfile
 
+#: Config keys that carry a provider secret. They are accepted for the
+#: in-memory availability check but must never be persisted: secrets belong in
+#: the encrypted integration credentials (API keys & integrations).
+SECRET_CONFIG_KEYS: tuple[str, ...] = ("api_key", "apiKey", "token", "subscription_token")
+
+
+def strip_secrets(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return a copy of *config* without provider secret keys."""
+    return {key: value for key, value in (config or {}).items() if key not in SECRET_CONFIG_KEYS}
+
 
 @dataclass
 class DiscoveryCriteria:

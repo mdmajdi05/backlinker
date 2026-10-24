@@ -87,7 +87,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   {
     id: "settings",
     label: "Settings",
-    description: "Local backend, notifications, theme and cloud sync.",
+    description: "Local backend, optional hosted backend, notifications and theme.",
     group: "system",
     implemented: true,
   },
@@ -109,6 +109,13 @@ export const NAV_ENTRIES: NavEntry[] = [
     id: "automation",
     label: "Automation rules",
     description: "Adapters and automation settings.",
+    group: "advanced",
+    implemented: true,
+  },
+  {
+    id: "integrations",
+    label: "API keys & integrations",
+    description: "API keys for discovery and AI, plus submission adapters.",
     group: "advanced",
     implemented: true,
   },

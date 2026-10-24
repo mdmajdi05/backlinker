@@ -22,7 +22,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.net import html_text
-from app.services.discovery.base import DiscoveryCriteria
+from app.services.discovery.base import SECRET_CONFIG_KEYS, DiscoveryCriteria
 
 __all__ = [
     "brave_search",
@@ -70,7 +70,7 @@ def resolve_api_key(provider_key: str, config: Mapping[str, Any] | None) -> str 
     configured - the provider then reports itself as unavailable.
     """
     config = config or {}
-    for key in ("api_key", "apiKey", "token", "subscription_token"):
+    for key in SECRET_CONFIG_KEYS:
         value = config.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()

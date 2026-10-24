@@ -383,7 +383,7 @@ export const api = {
     update: (c: ApiClient, id: string, body: OpportunityUpdate) =>
       c.patch<Opportunity>(`/api/v1/opportunities/${id}`, body),
     bulk: (c: ApiClient, body: BulkActionRequest) =>
-      c.post<{ affected: number }>("/api/v1/opportunities/bulk", body),
+      c.post<BulkActionResult>("/api/v1/opportunities/bulk", body),
     excludeDomain: (c: ApiClient, domain: string, body: Omit<DomainExclusionRequest, "domain">) =>
       c.post<DomainExclusionResult>("/api/v1/registry/exclusions", { domain, ...body }),
     /** Merge duplicate registry entries into one primary record. */

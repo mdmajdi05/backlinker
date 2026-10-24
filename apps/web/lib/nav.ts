@@ -22,6 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/verification", label: "All backlinks", icon: "✓", group: "advanced" },
   { href: "/automation", label: "Automation rules", icon: "◈", group: "advanced" },
   { href: "/imports", label: "Import old report", icon: "↥", group: "advanced" },
+  { href: "/integrations", label: "API keys & integrations", icon: "⌘", group: "advanced" },
   { href: "/devices", label: "Devices", icon: "⌸", group: "advanced" },
   { href: "/activity", label: "Activity log", icon: "≡", group: "advanced" },
 ];

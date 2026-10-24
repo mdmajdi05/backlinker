@@ -15,8 +15,14 @@ from app.schemas import (
     PaginatedResponse,
 )
 from app.services import queue as queue_service
-from app.services.discovery.base import all_providers, get_provider
+from app.services.discovery.base import (
+    SECRET_CONFIG_KEYS,
+    all_providers,
+    get_provider,
+    strip_secrets,
+)
 from app.services.events import record_event
+from app.services.integration_credentials import stored_config
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
 
@@ -32,7 +38,8 @@ def list_providers(db: DbSession, user: CurrentUser) -> list[dict]:
     out: list[dict] = []
     for provider in all_providers():
         source = registry.get(provider.key)
-        available, reason = provider.available({})
+        config = stored_config(db, provider.key)
+        available, reason = provider.available(config)
         out.append(
             {
                 "key": provider.key,
@@ -65,7 +72,31 @@ def start_discovery(payload: DiscoveryRequest, db: DbSession, user: CurrentUser)
             status_code=400,
             detail={"code": "unknown_provider", "message": f"Unknown discovery provider: {payload.provider}"},
         )
-    available, reason = provider.available(payload.config)
+    # Credentials saved in Integrations are used even when the request does not
+    # carry them.  They are only merged into an in-memory config for the
+    # availability check: the run row and the task payload persist the
+    # caller's own config without secrets, so no plaintext key is ever stored.
+    # The worker re-adds (and decrypts) the stored credential when it executes.
+    requested_config = dict(payload.config or {})
+    per_run_secrets = sorted(key for key in SECRET_CONFIG_KEYS if requested_config.get(key))
+    if per_run_secrets:
+        names = ", ".join(per_run_secrets)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "provider_secret_in_request",
+                "message": (
+                    f"Per-run provider secrets are not supported ({names}). "
+                    "Save the key in API keys & integrations and start the run without it."
+                ),
+            },
+        )
+    run_config = strip_secrets(requested_config)
+    check_config = dict(run_config)
+    for key, value in stored_config(db, provider.key).items():
+        check_config.setdefault(key, value)
+
+    available, reason = provider.available(check_config)
     if not available:
         raise HTTPException(
             status_code=400,
@@ -78,7 +109,7 @@ def start_discovery(payload: DiscoveryRequest, db: DbSession, user: CurrentUser)
         status="PENDING",
         query=payload.query,
         keywords=payload.keywords,
-        config=payload.config,
+        config=run_config,
         requested_limit=payload.limit,
     )
     db.add(run)
@@ -98,7 +129,7 @@ def start_discovery(payload: DiscoveryRequest, db: DbSession, user: CurrentUser)
         "category": payload.category,
         "limit": payload.limit,
         "seeds": list(payload.seeds or []),
-        "config": dict(payload.config or {}),
+        "config": dict(run_config),
         "project_id": project.id,
         "excluded_domains": list(profile.excluded_domains) if profile else [],
     }

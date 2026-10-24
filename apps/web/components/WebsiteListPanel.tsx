@@ -615,11 +615,7 @@ export function WebsiteListPanel({
         <div className="px-3 pt-3">
           <Alert
             tone={statsUnavailable ? "neutral" : "danger"}
-            title={
-              statsUnavailable
-                ? "The statistics endpoint is not available yet"
-                : "The statistics could not be loaded"
-            }
+            title="The statistics could not be loaded"
             action={
               <Button variant="outline" size="sm" onClick={stats.reload}>
                 Try again

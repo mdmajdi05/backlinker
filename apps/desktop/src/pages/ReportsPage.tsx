@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  Alert,
   Badge,
   Button,
   Card,
@@ -15,13 +14,13 @@ import {
   Th,
   useToast,
 } from "@autobacklinker/ui";
-import { api, apiClient, isMissingEndpoint } from "../lib/api";
+import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { formatDate, formatNumber, truncate } from "../lib/format";
-import { saveBytes, sendNativeNotification } from "../lib/backend";
+import { saveBytes } from "../lib/backend";
 import { navigate } from "../lib/router";
-import { fetchWebsiteStats, retryFailedSubmissions } from "../lib/websites";
+import { fetchWebsiteStats } from "../lib/websites";
 import type { ExportJob, Project } from "@autobacklinker/shared-types";
 
 const PAGE_SIZE = 20;
@@ -49,12 +48,6 @@ export function ReportsPage() {
   const [generating, setGenerating] = React.useState(false);
   const [downloadingId, setDownloadingId] = React.useState<string | null>(null);
 
-  // The retry of the failed submissions works on a report - the operator
-  // picks the report the retry should use.
-  const [retryScope, setRetryScope] = React.useState("");
-  const [retrying, setRetrying] = React.useState<string | null>(null);
-  const [retrySupported, setRetrySupported] = React.useState<boolean | null>(null);
-
   const projects = useAsync(
     () => api.projects.list(apiClient, { page: 1, page_size: 100 }),
     [],
@@ -67,15 +60,6 @@ export function ReportsPage() {
         project_id: projectId || undefined,
       }),
     [page, projectId],
-  );
-  const scopeReports = useAsync(
-    () =>
-      api.reports.list(apiClient, {
-        page: 1,
-        page_size: 50,
-        project_id: projectId || undefined,
-      }),
-    [projectId],
   );
   const websiteStats = useAsync(
     () => fetchWebsiteStats(projectId || undefined),
@@ -94,15 +78,6 @@ export function ReportsPage() {
 
   const items = reports.data?.items ?? [];
 
-  // The newest report that is finished is the default scope of the retry.
-  React.useEffect(() => {
-    if (retryScope) return;
-    const candidates = scopeReports.data?.items ?? [];
-    const first =
-      candidates.find((job) => job.status === "COMPLETED") ?? candidates[0];
-    if (first) setRetryScope(first.id);
-  }, [scopeReports.data, retryScope]);
-
   async function generate() {
     setGenerating(true);
     try {
@@ -112,7 +87,6 @@ export function ReportsPage() {
       });
       toast.push("Report generation started", "success");
       reports.reload();
-      scopeReports.reload();
     } catch (err) {
       toast.push(
         err && typeof err === "object" && "message" in err
@@ -183,57 +157,28 @@ export function ReportsPage() {
     }
   }
 
-  async function retryFailed(domain?: string) {
-    if (!retryScope) return;
-    setRetrying(domain ?? "");
-    try {
-      const outcome = await retryFailedSubmissions(retryScope, {
-        domain,
-        project_id: projectId || undefined,
-      });
-      setRetrySupported(true);
-      const message =
-        outcome.retried !== null
-          ? `${outcome.retried} failed submission${
-              outcome.retried === 1 ? "" : "s"
-            } queued again`
-          : "The failed submissions were queued again";
-      toast.push(message, "success");
-      void sendNativeNotification("Auto Backlinker", `${message}.`);
-      websiteStats.reload();
-    } catch (err) {
-      if (isMissingEndpoint(err)) {
-        // The endpoint does not exist in this backend - the control stays
-        // disabled and says why.
-        setRetrySupported(false);
-        toast.push(
-          "This backend does not support the retry of failed submissions",
-          "error",
-        );
-      } else {
-        toast.push(
-          err && typeof err === "object" && "message" in err
-            ? String((err as { message: unknown }).message)
-            : "Could not retry the failed submissions",
-          "error",
-        );
-      }
-    } finally {
-      setRetrying(null);
-    }
-  }
-
   const statsRows = websiteStats.data ?? [];
-  const statsMissing =
-    Boolean(websiteStats.error) && isMissingEndpoint(websiteStats.error);
-  const scopeOptions = scopeReports.data?.items ?? [];
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Reports"
         description="Generated exports. Downloads are saved with the native dialog."
+        actions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("projects")}
+          >
+            Open My projects
+          </Button>
+        }
       />
+
+      <p className="text-xs text-content-muted">
+        To retry failed websites, open a project and press{" "}
+        <span className="font-medium text-content">Restart failed</span>.
+      </p>
 
       <Card>
         <CardHeader title="Generate a report" />
@@ -354,90 +299,20 @@ export function ReportsPage() {
         <CardHeader
           title="Per website"
           description="How many submissions succeeded on every website - and how many failed. The project filter above applies here as well."
-          action={
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                aria-label="The report the retry works on"
-                value={retryScope}
-                disabled={scopeOptions.length === 0}
-                onChange={(event) => setRetryScope(event.target.value)}
-                className="h-8 w-56 text-xs"
-              >
-                {scopeOptions.length === 0 ? (
-                  <option value="">No report yet</option>
-                ) : null}
-                {scopeOptions.map((job) => (
-                  <option key={job.id} value={job.id}>
-                    {job.file_name ?? job.id} · {formatDate(job.created_at)}
-                  </option>
-                ))}
-              </Select>
-              <Button
-                size="sm"
-                variant="outline"
-                loading={retrying === ""}
-                disabled={
-                  !retryScope ||
-                  retrySupported === false ||
-                  retrying !== null
-                }
-                onClick={() => void retryFailed()}
-              >
-                Retry all failed
-              </Button>
-            </div>
-          }
         />
         <CardBody className="p-0">
-          {retrySupported === false ? (
-            <div className="border-b border-line p-4">
-              <Alert
-                tone="warning"
-                title="This backend can not retry the failed submissions"
-              >
-                The endpoint <code>/api/v1/reports/{"{id}"}/retry-failed</code>{" "}
-                answers with 404. The button stays disabled until the backend
-                knows it - nothing was retried.
-              </Alert>
-            </div>
-          ) : null}
-
-          {!retryScope && scopeOptions.length === 0 ? (
-            <div className="border-b border-line p-4">
-              <Alert
-                tone="neutral"
-                title="The retry needs a report"
-              >
-                Generate a report first - the retry of the failed submissions
-                works on the rows of a report.
-              </Alert>
-            </div>
-          ) : null}
-
           {websiteStats.loading && !websiteStats.data ? (
             <div className="p-4">
               <LoadingBlock rows={4} />
             </div>
           ) : null}
 
-          {websiteStats.error && !statsMissing ? (
+          {websiteStats.error ? (
             <div className="p-4">
               <ErrorBlock
                 message={websiteStats.error}
                 onRetry={websiteStats.reload}
               />
-            </div>
-          ) : null}
-
-          {statsMissing ? (
-            <div className="p-4">
-              <Alert
-                tone="warning"
-                title="The backend does not report the per website statistics yet"
-              >
-                The endpoint <code>/api/v1/websites/stats</code> answers with
-                404. The counters of every website need a newer backend.
-              </Alert>
             </div>
           ) : null}
 
@@ -466,7 +341,6 @@ export function ReportsPage() {
                   <Th className="text-right">Pending</Th>
                   <Th className="text-right">Waiting</Th>
                   <Th>Last attempt</Th>
-                  <Th />
                 </tr>
               </thead>
               <tbody>
@@ -508,22 +382,6 @@ export function ReportsPage() {
                     </Td>
                     <Td className="whitespace-nowrap text-xs text-content-muted">
                       {formatDate(row.last_attempt_at)}
-                    </Td>
-                    <Td className="whitespace-nowrap text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        loading={retrying === row.domain}
-                        disabled={
-                          row.failed === 0 ||
-                          !retryScope ||
-                          retrySupported === false ||
-                          retrying !== null
-                        }
-                        onClick={() => void retryFailed(row.domain)}
-                      >
-                        Retry failed
-                      </Button>
                     </Td>
                   </tr>
                 ))}

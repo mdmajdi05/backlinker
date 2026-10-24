@@ -49,8 +49,8 @@ export default function ActivityPage() {
         level: level || undefined,
         event_type: debouncedType || undefined,
         project_id: projectId || undefined,
-        from: from ? new Date(from).toISOString() : undefined,
-        to: to ? new Date(to).toISOString() : undefined,
+        since: from ? new Date(from).toISOString() : undefined,
+        until: to ? new Date(to).toISOString() : undefined,
       }),
     [page, level, debouncedType, projectId, from, to],
   );

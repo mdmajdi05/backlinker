@@ -96,7 +96,7 @@ export function AutoPilotPanel({
       return (
         <Alert
           tone="neutral"
-          title="Automatic submission is not available yet"
+          title="The automatic submission state could not be loaded"
           action={
             <Button variant="outline" size="sm" onClick={state.reload}>
               Try again
@@ -105,7 +105,8 @@ export function AutoPilotPanel({
         >
           The backend answered 404 for{" "}
           <code className="font-mono text-[11px]">GET /api/v1/projects/{projectId}/autopilot</code>.
-          The switch stays disabled until the endpoint is available.
+          The project may have been removed, or it may not belong to this account. The switch
+          stays disabled until the state loads.
         </Alert>
       );
     }
@@ -235,7 +236,6 @@ export function useAutoPilotStates(projectIds: string[]): {
   const [states, setStates] = React.useState<Record<string, AutoPilotSummary>>({});
   const [nonce, setNonce] = React.useState(0);
   const cache = React.useRef(new Map<string, AutoPilotState>());
-  const unavailable = React.useRef<unknown>(null);
 
   const idsKey = Array.from(new Set(projectIds.filter(Boolean))).sort().join(",");
 
@@ -266,23 +266,12 @@ export function useAutoPilotStates(projectIds: string[]): {
           }));
           continue;
         }
-        if (unavailable.current) {
-          if (cancelled) return;
-          setStates((prev) => ({
-            ...prev,
-            [id]: { state: "unavailable", error: unavailable.current },
-          }));
-          continue;
-        }
         try {
           const data = await api.autoPilot.get(apiClient, id);
           cache.current.set(id, data);
           if (cancelled) return;
           setStates((prev) => ({ ...prev, [id]: { state: "ready", data } }));
         } catch (error) {
-          if (isNotFoundError(error)) {
-            unavailable.current = error;
-          }
           if (cancelled) return;
           setStates((prev) => ({
             ...prev,
@@ -300,7 +289,6 @@ export function useAutoPilotStates(projectIds: string[]): {
 
   const reload = React.useCallback(() => {
     cache.current.clear();
-    unavailable.current = null;
     setStates({});
     setNonce((value) => value + 1);
   }, []);

@@ -37,6 +37,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.integration_credentials import AI_PROVIDERS
 
 log = get_logger(__name__)
 
@@ -223,11 +224,13 @@ class AnthropicProvider(AIProvider):
         base_url: str,
         api_key: str,
         model: str,
+        provider: str = "anthropic",
         timeout: float = REQUEST_TIMEOUT,
     ):
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = (api_key or "").strip()
         self.model = (model or "").strip()
+        self.provider = provider
         self.timeout = timeout
 
     @property
@@ -284,43 +287,91 @@ class NullProvider(AIProvider):
         return self.MESSAGE
 
 
+def _env_config_complete(key: str, api_key: str, model: str) -> bool:
+    """Whether the environment alone configures a usable provider."""
+    if not key or not model or key not in AI_PROVIDERS:
+        return False
+    if key in KEYLESS_PROVIDERS:
+        return True
+    return bool(api_key)
+
+
+def _stored_ai_config() -> tuple[str, dict[str, Any]] | None:
+    """Load the newest stored AI credential without ever raising."""
+    from app.db.session import session_scope
+    from app.services.integration_credentials import credential_config, newest_ai_credential
+
+    session = session_scope()
+    try:
+        credential = newest_ai_credential(session)
+        if credential is None:
+            return None
+        config = credential_config(credential)
+        if not config.get("model"):
+            return None
+        return credential.provider, config
+    except Exception as exc:  # pragma: no cover - defensive, must never raise
+        log.warning(
+            "stored AI credential could not be read",
+            extra={"extra_fields": {"error": str(exc)}},
+        )
+        return None
+    finally:
+        session.close()
+
+
+def _build_provider(key: str, base_url: str, api_key: str, model: str) -> AIProvider:
+    """Build a provider from a resolved configuration."""
+    if key not in AI_PROVIDERS or not model:
+        return NullProvider()
+
+    if key in ANTHROPIC_COMPATIBLE:
+        if not api_key:
+            return NullProvider()
+        return AnthropicProvider(
+            base_url=base_url or DEFAULT_BASE_URLS["anthropic"],
+            api_key=api_key,
+            model=model,
+            provider=key,
+        )
+
+    if not api_key and key not in KEYLESS_PROVIDERS:
+        return NullProvider()
+    resolved_base = base_url or DEFAULT_BASE_URLS.get(key, DEFAULT_BASE_URLS["openai"])
+    return OpenAICompatibleProvider(
+        base_url=resolved_base,
+        api_key=api_key or key,
+        model=model,
+        provider=key,
+    )
+
+
 def get_provider() -> AIProvider:
     """Build the configured provider.
 
-    Never raises - a misconfigured environment degrades to :class:`NullProvider`.
+    A complete environment configuration wins; otherwise the newest stored AI
+    credential is used.  Never raises - a misconfigured installation degrades
+    to :class:`NullProvider`.
     """
     try:
         if not settings.ai_enabled:
             return NullProvider()
         key = (settings.ai_provider or "").strip().lower()
-        if not key:
-            return NullProvider()
         base_url = (settings.ai_base_url or "").strip()
         api_key = (settings.ai_api_key or "").strip()
         model = (settings.ai_model or "").strip()
-        if not model:
-            return NullProvider()
 
-        if key in ANTHROPIC_COMPATIBLE:
-            if not api_key:
+        if not _env_config_complete(key, api_key, model):
+            stored = _stored_ai_config()
+            if stored is None:
                 return NullProvider()
-            return AnthropicProvider(
-                base_url=base_url or DEFAULT_BASE_URLS["anthropic"],
-                api_key=api_key,
-                model=model,
-            )
+            key, config = stored
+            key = key.strip().lower()
+            base_url = str(config.get("base_url") or "").strip()
+            api_key = str(config.get("api_key") or "").strip()
+            model = str(config.get("model") or "").strip()
 
-        if key in OPENAI_COMPATIBLE or key:
-            if not api_key and key not in KEYLESS_PROVIDERS:
-                return NullProvider()
-            resolved_base = base_url or DEFAULT_BASE_URLS.get(key, DEFAULT_BASE_URLS["openai"])
-            return OpenAICompatibleProvider(
-                base_url=resolved_base,
-                api_key=api_key or key,
-                model=model,
-                provider=key,
-            )
-        return NullProvider()
+        return _build_provider(key, base_url, api_key, model)
     except Exception:  # pragma: no cover - defensive, must never raise
         log.exception("failed to build the AI provider")
         return NullProvider()
@@ -329,11 +380,12 @@ def get_provider() -> AIProvider:
 def provider_status() -> dict[str, Any]:
     """Descriptive status of the configured AI stack (no secrets)."""
     provider = get_provider()
-    available = provider.is_available()
+    if not provider.is_available():
+        return {"configured": False, "provider": None, "model": None}
     return {
-        "configured": available,
-        "provider": (settings.ai_provider or None) if available else None,
-        "model": (settings.ai_model or None) if available else None,
+        "configured": True,
+        "provider": getattr(provider, "provider", provider.name),
+        "model": getattr(provider, "model", None),
     }
 
 

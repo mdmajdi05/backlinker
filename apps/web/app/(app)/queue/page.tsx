@@ -79,7 +79,7 @@ export default function QueuePage() {
         project_id: projectId || undefined,
         type: type || undefined,
         status: status || undefined,
-        execution_environment: environment || undefined,
+        environment: environment || undefined,
       }),
     [page, projectId, type, status, environment],
   );
@@ -538,18 +538,16 @@ function BulkQueueDialog({
   };
 
   const disabledReason =
-    selectedOpportunities.length === 0
-      ? "Select at least one opportunity to queue."
-      : selectedProjects.length === 0
-        ? "Select at least one project the tasks belong to."
-        : null;
+    selectedOpportunities.length === 0 && selectedProjects.length === 0
+      ? "Select at least one opportunity or project to queue."
+      : null;
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
       title="Create queue tasks"
-      description="Queue approved opportunities for execution."
+      description="Queue approved opportunities, or whole projects when no opportunity is selected."
       width="lg"
       footer={
         <>

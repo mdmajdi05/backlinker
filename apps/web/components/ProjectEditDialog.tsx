@@ -37,9 +37,9 @@ interface LandingDraft {
 /**
  * The body of the PATCH request.
  *
- * `landing_pages` is not part of the project record of the backend - it is sent
- * nevertheless, because the endpoint is supposed to store it.  Whether it did
- * is checked afterwards (see `readStoredState`).
+ * `landing_pages` is part of the project record of the backend - it is sent
+ * with the request. Whether the backend stored it is checked afterwards
+ * (see `readStoredState`).
  */
 interface ProjectEditBody {
   name: string;
@@ -284,58 +284,39 @@ export function ProjectEditDialog({
 
     const problems: string[] = [];
 
-    /* The details live in the business profile - saving them is a second call. */
+    /* The company details and anchors are saved separately. */
     if (details) {
       const stored = await action.run(() =>
         api.projects.saveDetails(apiClient, projectId, details),
       );
       if (!stored.ok) {
-        problems.push("The backlink details could not be saved - the project fields were saved.");
+        problems.push("The company details could not be saved - the other project fields were saved.");
       }
     }
 
-    const withLanding = await action.run(() =>
+    const saved = await action.run(() =>
       api.projects.update(apiClient, projectId, body),
     );
-    /* The landing pages are only stored when the backend accepts the field. */
-    const landingSent = withLanding.ok;
-    if (!withLanding.ok) {
-      /* Not every backend accepts the extra field - save the core fields alone. */
-      const core = await action.run(() =>
-        api.projects.update(apiClient, projectId, {
-          name: body.name,
-          description: body.description,
-          target_website: body.target_website,
-          business_profile_id: body.business_profile_id,
-          status: body.status,
-        }),
-      );
-      if (!core.ok) return;
-      problems.push(
-        "The backend rejected the landing pages in the request - only the other fields were saved.",
-      );
-    }
+    if (!saved.ok) return;
 
     /* Read the stored state back: nothing is claimed that was not stored. */
     const stored = await readStoredState(projectId);
     if (stored) {
       if (!body.business_profile_id && stored.project.business_profile_id) {
         problems.push(
-          "The business profile was not removed - the backend keeps the previous one.",
+          "The previous business profile is still linked - nothing was removed.",
         );
       }
-      if (landingSent && !sameLandingPages(body.landing_pages, stored.landingPages)) {
-        problems.push(
-          "The landing pages were not stored - the backend endpoint does not support changing them yet.",
-        );
+      if (!sameLandingPages(body.landing_pages, stored.landingPages)) {
+        problems.push("The landing pages could not be saved. Please try again.");
       }
     }
 
     setNotices(problems);
-    onSaved(stored?.project ?? withLanding.data ?? (project as Project));
+    onSaved(stored?.project ?? saved.data ?? (project as Project));
 
     if (problems.length > 0) {
-      toast.push("Project saved - the backend did not store everything", "info");
+      toast.push("Project saved - some details could not be stored", "info");
       return;
     }
     toast.push("Project saved", "success");
@@ -364,7 +345,7 @@ export function ProjectEditDialog({
     >
       <div className="space-y-4">
         {notices.length > 0 ? (
-          <Alert tone="warning" title="The backend did not store everything">
+          <Alert tone="warning" title="Some details were not stored">
             <ul className="list-inside list-disc space-y-0.5">
               {notices.map((notice) => (
                 <li key={notice}>{notice}</li>

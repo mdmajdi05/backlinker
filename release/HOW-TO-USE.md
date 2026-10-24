@@ -53,6 +53,10 @@ Ek hi file dono pe chalti hai.
    **Remove** sirf is project se hatata hai — website **Backlink websites** me
    rehti hai. Delete ki hui cheezein **Recycle bin** se wapas aa sakti hain.
 
+**Brave Search / SerpAPI / AI use karna hai?** **More tools → API keys &
+integrations** me key save karo. Key encrypted rehti hai aur discovery/AI use
+turant uthata hai. Adapters ko wahin se enable/disable kar sakte ho.
+
 ---
 
 ## 4. Kya offline chalta hai, kya internet chahta hai

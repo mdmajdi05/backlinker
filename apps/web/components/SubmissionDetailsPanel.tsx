@@ -529,7 +529,7 @@ export function SubmissionDetailsPanel({
       return (
         <Alert
           tone="neutral"
-          title="Submission details are not available yet"
+          title="These submission details could not be loaded"
           action={
             <Button variant="outline" size="sm" onClick={details.reload}>
               Try again
@@ -540,7 +540,8 @@ export function SubmissionDetailsPanel({
           <code className="font-mono text-[11px]">
             GET /api/v1/opportunities/{opportunityId}/details
           </code>
-          . The details of this site can not be shown or edited until the endpoint is available.
+          . The website may have been removed, or it may not belong to this account. Its
+          details can not be shown or edited.
         </Alert>
       );
     }
@@ -907,10 +908,10 @@ export function DetailsStateBadge({
 
   if (summary.state === "unavailable") {
     return (
-      <Tooltip label="The backend does not provide submission details for this opportunity yet.">
+      <Tooltip label="The backend returned 404 for this opportunity's details; it may have been removed.">
         <span>
           <Badge tone="neutral" className={className}>
-            Details not available
+            Details unavailable
           </Badge>
         </span>
       </Tooltip>

@@ -46,7 +46,8 @@ The product is built around three rules:
 | ---- | ---------- |
 | **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, assign websites from a category-filtered list, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. **Stop** pauses and Start resumes the same work; **Remove** takes a website out of the project without deleting it; **Download report** exports the table as CSV and **Restart failed** requeues only the failed rows. Manual directories can be marked submitted and verified from the same row. |
 | **Review websites** | A secondary review screen for discovery results: approve, exclude, add to a project or queue, merge duplicates and edit website fields. The normal flow does not need it - the project page assigns websites directly. |
-| **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. |
+| **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. Brave/SerpAPI keys saved in **API keys & integrations** are encrypted and used immediately. |
+| **API keys & integrations** | Save encrypted Brave Search, SerpAPI and AI provider keys, pick the AI model, delete keys, and enable or disable submission adapters. Discovery and AI read the stored configuration without a restart. |
 | **Queue** | Durable, database backed queue with idempotency keys, atomic claiming (conditional `UPDATE`), leases, exponential backoff with jitter, priority reordering, bulk control, cancel / retry / requeue, append-only attempt history. |
 | **Adapters** | Five shipped adapters: `generic_manual`, `http_form`, `playwright_form`, `email_outreach`, `json_api`. Each declares the categories, methods, required config, success signals and retryable errors it supports. |
 | **Submission** | Adapters resolve automatically (domain specific adapter wins over generic ones), manual packs are generated for non-automatable targets, evidence is stored per attempt. |
@@ -55,20 +56,20 @@ The product is built around three rules:
 | **Storage modes** | Local SQLite, cloud PostgreSQL and hybrid (local + synchronisation queue) with backup / restore of the active database. |
 | **Sync** | Change queue, push / pull, conflict detection and conflict resolution (`local` / `remote` strategy). |
 | **Events** | Every state change is persisted as an activity event and published live over SSE (`GET /api/v1/events/stream`). |
-| **AI layer** | Optional provider (OpenAI, OpenRouter, Groq, Ollama, LM Studio, Anthropic) with helpers for classification, relevance explanation, anchor suggestions, outreach drafts, directory descriptions, column mapping, error summaries, next actions, low-value detection and automation planning. Every helper degrades to a deterministic implementation when AI is off. |
+| **AI layer** | Optional provider (OpenAI, OpenRouter, Groq, Ollama, LM Studio, Anthropic) with helpers for classification, relevance explanation, anchor suggestions, outreach drafts, directory descriptions, column mapping, error summaries, next actions, low-value detection and automation planning. The provider, model and key can be saved in **API keys & integrations** and are used immediately. Every helper degrades to a deterministic implementation when AI is off. |
 | **Devices / local agents** | Devices register themselves, send heartbeats, claim `LOCAL` tasks and report the result.  A ready to use agent lives in `apps/local-agent`. |
 | **Schedules** | Periodic discovery and verification schedules; the worker ticks them every 30 iterations and queues the due work. |
 | **Celery dispatcher** | Optional: `app/workers/celery_app.py` exposes the same task handlers as Celery tasks for horizontally scaled cloud workers. |
 | **Clients** | Next.js web app (`apps/web`) and Tauri 2 desktop app (`apps/desktop`, with the API as a sidecar).  Both speak the same protocol as the API. |
-| **Reporting** | XLSX / CSV export with one sheet per section, CSV error report for imports. |
+| **Reporting** | XLSX / CSV export with one sheet per section, CSV error report for imports. The Reports screen shows exports and per-website counters; failed submissions are retried from the project with **Restart failed**. |
 
 ### Needs credentials
 
 | Feature | Missing piece |
 | ------- | ------------- |
-| Brave Search discovery | `AUTOBL_BRAVE_SEARCH_API_KEY` (or an `api_key` in the run configuration) |
-| SerpAPI discovery | `AUTOBL_SERPAPI_API_KEY` (or an `api_key` in the run configuration) |
-| AI assistance | `AUTOBL_AI_PROVIDER`, `AUTOBL_AI_API_KEY`, `AUTOBL_AI_MODEL` - the product works without it, the suggestions are then rule based |
+| Brave Search discovery | Save a Brave Search key in **API keys & integrations** (or set `AUTOBL_BRAVE_SEARCH_API_KEY`) |
+| SerpAPI discovery | Save a SerpAPI key in **API keys & integrations** (or set `AUTOBL_SERPAPI_API_KEY`) |
+| AI assistance | Save the provider, model and key in **API keys & integrations** (or set `AUTOBL_AI_PROVIDER`, `AUTOBL_AI_API_KEY`, `AUTOBL_AI_MODEL`) - the product works without it, the suggestions are then rule based |
 | Cloud / hybrid storage | A reachable PostgreSQL server (`AUTOBL_DATABASE_URL`) and the `psycopg[binary]` driver |
 | Celery dispatch | A reachable Redis broker (`AUTOBL_CELERY_BROKER_URL`) |
 | Automated form submissions | Per-target adapter configuration (form URL, field selectors, success selector) - the targets must allow programmatic submissions |
@@ -140,7 +141,7 @@ instead of being killed.
 | Backend instance | its own | **its own** - never the web one |
 | Database | SQLite (default) or PostgreSQL | SQLite in the application data directory |
 | Internet | needed for discovery, verification and submissions | not needed - everything except the live checks works offline |
-| Cloud | optional | optional, clearly labelled, the local token never leaves the machine |
+| Hosted backend | optional | optional, clearly labelled, no automatic sync, the local token never leaves the machine |
 
 Both talk to **the same API implementation** but run **their own instance** of
 it. The desktop never calls the web backend and the web backend never calls
@@ -532,11 +533,13 @@ builds the sidecar binary (PyInstaller) for the current platform, and
 `%APPDATA%\AutoBacklinker` on Windows and `$XDG_DATA_HOME/auto-backlinker` on
 Linux, so the SQLite database, the uploads and the backups stay with the user.
 
-**Cloud backend.**  The desktop and web clients are stateless views: they only
-need the base URL of the API and the credentials of an account.  In the
-desktop app switch the connection mode from *Local* to *Cloud* and enter the
-URL of the API (for example `https://api.example.com/api/v1`), then sign in.
-See `infrastructure/README.md` for the full walkthrough.
+**Hosted backend.**  The desktop and web clients are stateless views: they
+only need the base URL of the API and the credentials of an account.  In the
+desktop app open **Settings → Optional hosted backend**, enter the URL of the
+API (for example `https://api.example.com/api/v1`) and press **Use this
+backend**, then sign in.  This changes where the client sends requests; it
+does not copy or synchronise the local database.  See
+`infrastructure/README.md` for the full walkthrough.
 
 **Container image.**  `infrastructure/api.Dockerfile` builds a
 `python:3.12-slim` image that contains the API and the worker.  The

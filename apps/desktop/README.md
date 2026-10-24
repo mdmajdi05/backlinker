@@ -96,17 +96,17 @@ from the user interface** - and they are the only ones:
 | Provider driven discovery (`directory_index`, `brave_search`, `serpapi`) | the public pages of the platforms, plus an API key for Brave/SerpAPI | the provider reports that it cannot reach the catalogue; `manual_seed` works with the URLs you enter |
 | The browser runtime (Playwright + Chromium, ~150 MB, once) | the download in **Settings → Browser runtime** | the browser adapter asks for manual completion, every other feature is unaffected |
 
-### The optional cloud connection
+### The optional hosted backend
 
-The cloud connection is a **feature, not a requirement**.  It is used only
-when you switch to it explicitly:
+A hosted backend is a **feature, not a requirement**.  It is used only when
+you switch to it explicitly:
 
-1. open **Settings → Cloud synchronisation**,
+1. open **Settings → Optional hosted backend**,
 2. enter the base URL of the deployment (for example
    `https://backlinks.example.com`) - it replaces the local address that is
    shown in the field,
 3. press **Use this backend** - the client switches to that backend, the
-   badge in the card changes from *Local* to *Cloud* and the sign in screen
+   badge in the card changes from *Local* to *Hosted* and the sign in screen
    appears,
 4. sign in with the account of that deployment (the JWT is sent as
    `Authorization: Bearer ...`),
@@ -315,22 +315,26 @@ files/                managed uploads (imports, exports)
 The local agent keeps its own state in `~/.autobacklinker/agent.json` (mode
 `0600`) and its log in `~/.autobacklinker/logs/agent.log`.
 
-### Cloud synchronisation
+### Optional hosted backend
 
 The desktop app can talk to a hosted backend instead of the local sidecar:
 
-1. open **Settings → Cloud synchronisation**,
+1. open **Settings → Optional hosted backend**,
 2. enter the base URL of the deployment (`https://backlinks.example.com`),
 3. press **Use this backend** - the client switches to the remote API and
    shows the sign in screen,
-4. sign in with your cloud account (the JWT is sent as
+4. sign in with the account of that deployment (the JWT is sent as
    `Authorization: Bearer ...`).
 
-**Back to local backend** restores the loopback sidecar.  The cloud URL is
+**Back to local backend** restores the loopback sidecar.  The hosted URL is
 remembered (`autobacklinker.desktop.cloudUrl`), the *connection* is not: the
-application always starts on the local backend, so a stale cloud setting can
-never take over a start.  The full rules - and the limits of the packaged
-build - are described in [Runs completely on your machine](#runs-completely-on-your-machine).
+application always starts on the local backend, so a stale setting can never
+take over a start.
+
+This switch only changes where the client sends requests.  It does **not**
+copy or synchronise data between the local database and the hosted backend.
+The full rules - and the limits of the packaged build - are described in
+[Runs completely on your machine](#runs-completely-on-your-machine).
 
 ## 4. Production builds
 

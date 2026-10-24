@@ -116,7 +116,29 @@ export function RegistryPage() {
         action,
         project_id: projectId || undefined,
       });
-      toast.push(`${result.affected} opportunities updated`, "success");
+      if (action === "queue") {
+        // Report what really happened: a run that queued nothing must not look
+        // like a success.
+        const queued = result.queued ?? result.affected;
+        const skipped = result.skipped ?? 0;
+        if (queued === 0) {
+          toast.push(
+            skipped > 0
+              ? `Nothing queued - ${skipped} skipped (already queued, excluded or paused project)`
+              : "Nothing was queued",
+            "info",
+          );
+        } else if (skipped > 0) {
+          toast.push(
+            `${queued} queued, ${skipped} skipped (already queued or not eligible)`,
+            "success",
+          );
+        } else {
+          toast.push(`${queued} opportunities queued`, "success");
+        }
+      } else {
+        toast.push(`${result.affected} opportunities updated`, "success");
+      }
       setSelected([]);
       opportunities.reload();
     } catch (err) {
