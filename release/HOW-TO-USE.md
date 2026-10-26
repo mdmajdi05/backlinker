@@ -64,7 +64,7 @@ turant uthata hai. Adapters ko wahin se enable/disable kar sakte ho.
 | Feature | Internet? | Note |
 | ------- | --------- | ---- |
 | Projects, company details, settings | ❌ nahi | sab local DB me |
-| Review websites, approve/reject, notes | ❌ nahi | |
+| Review found websites, approve/reject, notes | ❌ nahi | |
 | Excel/CSV import + column mapping | ❌ nahi | |
 | Excel reports (9 sheets) | ❌ nahi | |
 | Queue, worker, task history, retries | ❌ nahi | |

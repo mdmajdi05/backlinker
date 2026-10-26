@@ -11,6 +11,7 @@ import {
   Select,
   StatusBadge,
   Table,
+  Tabs,
   Td,
   Th,
   useToast,
@@ -49,7 +50,7 @@ export function RegistryPage() {
   const [autoPilot, setAutoPilot] = React.useState<AutoPilotState | null>(null);
 
   const projects = useAsync(
-    () => api.projects.list(apiClient, { page: 1, page_size: 100 }),
+    () => api.projects.list(apiClient, { page: 1, page_size: 500 }),
     [],
   );
 
@@ -68,6 +69,14 @@ export function RegistryPage() {
     () => opportunities.data?.items ?? [],
     [opportunities.data],
   );
+
+  const projectNames = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const project of projects.data?.items ?? []) {
+      names.set(project.id, project.name);
+    }
+    return names;
+  }, [projects.data]);
 
   // The state of the details of every row - the backend answers per
   // opportunity.
@@ -156,9 +165,27 @@ export function RegistryPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Review websites"
-        description="Every website you can get a backlink from - its review and execution state."
+        title="Review found websites"
+        description="The review step of website discovery: approve, exclude or queue the websites a discovery run found."
       />
+
+      <Tabs
+        tabs={[
+          { id: "find", label: "Find new websites" },
+          { id: "review", label: "Review found websites" },
+        ]}
+        active="review"
+        onChange={(id) => {
+          if (id === "find") navigate("discovery");
+        }}
+      />
+
+      <Alert tone="neutral" title="This list belongs to website discovery">
+        A discovery run leaves its candidates here across projects. Approve, exclude or queue
+        them in bulk. To add a website directly to one project instead, open{" "}
+        <span className="font-medium text-content">My projects</span> → the project →{" "}
+        <span className="font-medium text-content">Add backlink websites</span>.
+      </Alert>
 
       <Card>
         <CardHeader
@@ -323,6 +350,7 @@ export function RegistryPage() {
                     />
                   </Th>
                   <Th>Opportunity</Th>
+                  <Th>Project</Th>
                   <Th>Category</Th>
                   <Th>Method</Th>
                   <Th className="text-right">Score</Th>
@@ -354,6 +382,9 @@ export function RegistryPage() {
                             {hostOf(item.opportunity_url)}
                           </p>
                         </div>
+                      </Td>
+                      <Td className="max-w-[160px] truncate text-xs">
+                        {projectNames.get(item.project_id) ?? "—"}
                       </Td>
                       <Td className="whitespace-nowrap text-xs">
                         {truncate(item.category.replace(/_/g, " "), 26)}

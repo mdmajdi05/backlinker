@@ -376,6 +376,13 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           <>
             <Button
               size="sm"
+              disabled={!data}
+              onClick={() => setChoosingWebsites(true)}
+            >
+              Add backlink websites
+            </Button>
+            <Button
+              size="sm"
               variant="outline"
               onClick={() => navigate("projects")}
             >
@@ -485,7 +492,8 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
                 </div>
               ) : (
                 <p className="text-[11px] text-content-muted">
-                  Assign websites below and this card shows which details they ask for.
+                  Use Add backlink websites above and this card shows which details they ask
+                  for.
                 </p>
               )}
             </div>

@@ -426,7 +426,7 @@ ROUTES = [
     ("overview", "Dashboard"),
     ("projects", "My projects"),
     ("discovery", "Find new websites"),
-    ("registry", "Review websites"),
+    ("registry", "Review found websites"),
     ("websites", "Backlink websites"),
     ("queue", "Task queue"),
     ("automation", "Automation rules"),

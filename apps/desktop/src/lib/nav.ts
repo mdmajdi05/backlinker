@@ -47,14 +47,6 @@ export const NAV_ENTRIES: NavEntry[] = [
     implemented: true,
   },
   {
-    id: "registry",
-    label: "Review websites",
-    description:
-      "Approve, exclude or queue the websites a discovery run found.",
-    group: "advanced",
-    implemented: true,
-  },
-  {
     id: "websites",
     label: "Backlink websites",
     description: "The central list of websites where backlinks can be made.",

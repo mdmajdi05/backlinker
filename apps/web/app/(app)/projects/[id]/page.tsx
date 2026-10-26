@@ -81,6 +81,13 @@ export default function ProjectDetailPage() {
         }
         actions={
           <>
+            <Button
+              size="sm"
+              disabled={!data}
+              onClick={() => setAddOpen(true)}
+            >
+              Add backlink websites
+            </Button>
             <Link href="/projects">
               <Button variant="outline" size="sm">
                 Back to projects
@@ -163,8 +170,8 @@ export default function ProjectDetailPage() {
                       </div>
                     ) : (
                       <p className="text-[11px] text-content-muted">
-                        Add websites below and this card shows exactly which details they ask
-                        for.
+                        Use Add backlink websites above and this card shows exactly which
+                        details they ask for.
                       </p>
                     )}
                     {details.data.notes.map((note) => (

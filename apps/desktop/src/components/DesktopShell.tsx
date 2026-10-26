@@ -77,6 +77,8 @@ function routePath(route: string): string {
 
 function isActive(route: string, id: string): boolean {
   const path = routePath(route);
+  // The review tab is part of website discovery.
+  if (id === "discovery" && path === "registry") return true;
   return path === id || path.startsWith(`${id}/`);
 }
 
@@ -241,6 +243,15 @@ function routeHeadline(route: string): { title: string; description: string } {
     return {
       title: "Project",
       description: "Counters, execution settings and landing pages of one project.",
+    };
+  }
+  // Reviewing discovered websites is the second step of "Find new websites".
+  // The route exists for that step but is intentionally not a navigation item.
+  if (path === "registry") {
+    return {
+      title: "Review found websites",
+      description:
+        "Approve, exclude or queue the websites a discovery run found.",
     };
   }
   const extra = EXTRA_ENTRIES.find((entry) => entry.id === path);

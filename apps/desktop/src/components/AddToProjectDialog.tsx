@@ -7,13 +7,14 @@ import {
   Dialog,
   Field,
   Input,
+  Label,
   Table,
   Td,
   Th,
   useToast,
 } from "@autobacklinker/ui";
 import { useAsync } from "../lib/useAsync";
-import { isMissingEndpoint } from "../lib/api";
+import { api, apiClient, isMissingEndpoint } from "../lib/api";
 import { sendNativeNotification } from "../lib/backend";
 import { truncate } from "../lib/format";
 import {
@@ -77,12 +78,25 @@ export function AddToProjectDialog({
     skipped: number;
     tasks_created: number;
   } | null>(null);
+  const newUrlId = React.useId();
+  const [newUrl, setNewUrl] = React.useState("");
+  const [newMessage, setNewMessage] = React.useState<string | null>(null);
+  const [newError, setNewError] = React.useState<string | null>(null);
+  const [addingUrl, setAddingUrl] = React.useState(false);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setNewUrl("");
+      setNewMessage(null);
+      setNewError(null);
+      return;
+    }
     setSelected([]);
     setError(null);
     setResult(null);
+    setNewMessage(null);
+    setNewError(null);
+    setAddingUrl(false);
     setAnchorText(defaultAnchorText);
     setLandingPage(defaultTargetLandingPage);
   }, [open, defaultAnchorText, defaultTargetLandingPage]);
@@ -114,6 +128,39 @@ export function AddToProjectDialog({
         ? previous.filter((item) => item !== id)
         : [...previous, id],
     );
+  }
+
+  async function addByUrl() {
+    const value = newUrl.trim();
+    if (!value) return;
+    setAddingUrl(true);
+    setNewError(null);
+    setNewMessage(null);
+    try {
+      const data = await api.campaign.add(apiClient, projectId, value);
+      const message = [
+        data.added ? `${data.added} added to the list and this project` : "",
+        data.linked ? `${data.linked} existing site(s) linked to this project` : "",
+        data.existing ? `${data.existing} already in this project` : "",
+        data.invalid ? `${data.invalid} invalid` : "",
+        data.deleted ? `${data.deleted} in the recycle bin` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      if (data.added + data.linked === 0) {
+        setNewError(`Nothing was added or linked. ${message}`);
+        return;
+      }
+      setNewMessage(message);
+      setNewUrl("");
+      toast.push(message, data.invalid + data.deleted > 0 ? "info" : "success");
+      websites.reload();
+      onAdded?.();
+    } catch (err) {
+      setNewError(errorText(err, "Could not add the website"));
+    } finally {
+      setAddingUrl(false);
+    }
   }
 
   async function add() {
@@ -150,11 +197,11 @@ export function AddToProjectDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title="Add websites from the website list"
+      title="Assign backlink websites"
       description={
         projectName
-          ? `The chosen sites join the project ${projectName}.`
-          : "The chosen sites join the project."
+          ? `Pick websites from the central list or add a new one by URL. The chosen sites join the project ${projectName}.`
+          : "Pick websites from the central list or add a new one by URL. The chosen sites join the project."
       }
       width="lg"
       footer={
@@ -174,6 +221,44 @@ export function AddToProjectDialog({
       }
     >
       <div className="flex flex-col gap-3">
+        <div className="rounded-lg border border-line bg-surface-raised/40 p-3">
+          <Label htmlFor={newUrlId}>Add a website that is not in the list</Label>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Input
+              id={newUrlId}
+              className="min-w-64 flex-1"
+              aria-describedby={`${newUrlId}-hint`}
+              value={newUrl}
+              onChange={(event) => setNewUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void addByUrl();
+                }
+              }}
+              placeholder="https://example.com/add-your-business"
+            />
+            <Button
+              variant="outline"
+              loading={addingUrl}
+              disabled={!newUrl.trim()}
+              onClick={() => void addByUrl()}
+            >
+              Add and link
+            </Button>
+          </div>
+          <p id={`${newUrlId}-hint`} className="mt-1 text-xs text-content-muted">
+            Paste the exact submission page. It is added to the central list once and
+            linked to this project.
+          </p>
+          {newError ? (
+            <p className="mt-2 text-xs text-danger">{newError}</p>
+          ) : null}
+          {newMessage ? (
+            <p className="mt-2 text-xs text-success">{newMessage}</p>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-56">
             <Field label="Search">
@@ -230,8 +315,8 @@ export function AddToProjectDialog({
             </p>
           ) : items.length === 0 ? (
             <p className="p-4 text-xs text-content-subtle">
-              No website matches the filter. The list is filled on the
-              &quot;Websites&quot; page.
+              No website matches the filter. Add one by URL above, or clear the
+              filters.
             </p>
           ) : (
             <Table>

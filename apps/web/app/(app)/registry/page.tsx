@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { Opportunity } from "@autobacklinker/shared-types";
 import {
@@ -17,6 +18,7 @@ import {
   Skeleton,
   StatusBadge,
   Table,
+  Tabs,
   Td,
   Th,
   Textarea,
@@ -57,6 +59,7 @@ const DESTRUCTIVE: BulkAction[] = ["reject", "exclude", "delete"];
 export default function RegistryPage() {
   const toast = useToast();
   const action = useAction();
+  const router = useRouter();
 
   const [page, setPage] = React.useState(1);
   const [projectId, setProjectId] = React.useState("");
@@ -86,6 +89,15 @@ export default function RegistryPage() {
   });
   const [addError, setAddError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
+
+  // A campaign script links directly to the review list of its project.
+  React.useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("project_id");
+    if (fromUrl) {
+      setProjectId(fromUrl);
+      setPage(1);
+    }
+  }, []);
 
   const resetAddForm = () =>
     setAddForm({
@@ -119,7 +131,7 @@ export default function RegistryPage() {
         description: addForm.description.trim() || undefined,
         target_landing_page: addForm.target_landing_page.trim() || undefined,
       });
-      toast.push("Website added to the registry", "success");
+      toast.push("Website added to the review list", "success");
       setAddOpen(false);
       resetAddForm();
       opportunities.reload();
@@ -133,7 +145,7 @@ export default function RegistryPage() {
   const debouncedSearch = useDebounced(search, 400);
   const debouncedDomain = useDebounced(domain, 400);
 
-  const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 100 }), []);
+  const projects = useResource(() => api.projects.list(apiClient, { page: 1, page_size: 500 }), []);
 
   const opportunities = useResource(
     () =>
@@ -153,6 +165,12 @@ export default function RegistryPage() {
   );
 
   const rows = opportunities.data?.items ?? [];
+
+  const projectNames = React.useMemo(() => {
+    const names = new Map<string, string>();
+    for (const project of projects.data?.items ?? []) names.set(project.id, project.name);
+    return names;
+  }, [projects.data]);
 
   // The submission details and the automatic submission state decide whether a
   // row can be submitted without asking the user for more information.
@@ -267,8 +285,8 @@ export default function RegistryPage() {
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Review websites"
-        description="Every website you can get a backlink from - its state, score and submission readiness."
+        title="Review found websites"
+        description="The review step of website discovery: approve, exclude or queue the websites a discovery run found."
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -288,6 +306,24 @@ export default function RegistryPage() {
           </div>
         }
       />
+
+      <Tabs
+        tabs={[
+          { id: "find", label: "Find new websites" },
+          { id: "review", label: "Review found websites" },
+        ]}
+        active="review"
+        onChange={(id) => {
+          if (id === "find") router.push("/discovery");
+        }}
+      />
+
+      <Alert tone="neutral" title="This list belongs to website discovery">
+        A discovery run leaves its candidates here across projects. Approve, exclude or queue
+        them in bulk. To add a website directly to one project instead, open{" "}
+        <span className="font-medium text-content">My projects</span> → the project →{" "}
+        <span className="font-medium text-content">Add backlink websites</span>.
+      </Alert>
 
       {selectedAutoPilot?.state === "ready" && selectedAutoPilot.data?.enabled ? (
         <Alert tone="accent" title="Automatic submission is on">
@@ -314,8 +350,8 @@ export default function RegistryPage() {
       {selectedAutoPilot?.state === "unavailable" ? (
         <Alert tone="neutral" title="The automatic submission state could not be loaded">
           The backend answered 404 for the auto pilot endpoint of this project. The project may
-          have been removed, or it may not belong to this account, so the registry can not show
-          whether approving queues the submission.
+          have been removed, or it may not belong to this account, so the review list can not
+          show whether approving queues the submission.
         </Alert>
       ) : null}
 
@@ -500,8 +536,8 @@ export default function RegistryPage() {
             onRetry={opportunities.reload}
             isEmpty={rows.length === 0}
             emptyTitle="No websites match these filters"
-            emptyDescription="Adjust the filters or run a discovery to populate the registry."
-            skeleton={<TableSkeleton rows={8} columns={9} />}
+            emptyDescription="Adjust the filters, add a website above, or run a discovery to fill the review list."
+            skeleton={<TableSkeleton rows={8} columns={10} />}
           >
             <Table>
               <thead>
@@ -525,6 +561,7 @@ export default function RegistryPage() {
                     </button>
                   </Th>
                   <Th>Category</Th>
+                  <Th>Project</Th>
                   <Th>
                     <button type="button" onClick={() => toggleSort("score")} className="font-semibold uppercase">
                       Score{sortIndicator("score")}
@@ -568,6 +605,9 @@ export default function RegistryPage() {
                       <Badge tone="neutral">
                         {CATEGORY_LABELS[row.category] ?? row.category}
                       </Badge>
+                    </Td>
+                    <Td className="max-w-40 truncate text-xs">
+                      {projectNames.get(row.project_id) ?? "—"}
                     </Td>
                     <Td className="tabular-nums">{formatDecimal(row.score, 1)}</Td>
                     <Td>

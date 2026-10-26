@@ -179,7 +179,7 @@ def main() -> int:
     opportunities = get(
         "/opportunities", token, {"project_id": project["id"], "page_size": 100}
     )["items"]
-    print(f"\n5. {len(opportunities)} opportunities are now in the registry:\n")
+    print(f"\n5. {len(opportunities)} opportunities are now in the review list:\n")
     print(f"   {'score':>5}  {'domain':34} {'category':22} {'method':12} url")
     for item in sorted(opportunities, key=lambda row: -row["score"]):
         print(

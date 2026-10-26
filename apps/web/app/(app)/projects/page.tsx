@@ -184,6 +184,13 @@ export default function ProjectsPage() {
                       </Td>
                       <Td>
                         <div className="flex items-center justify-end gap-1">
+                          <Link
+                            href={`/projects/${project.id}`}
+                            aria-label={`Open the project ${project.name}`}
+                            className="inline-flex h-8 items-center justify-center rounded-md bg-accent px-2.5 text-xs font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-hover"
+                          >
+                            Open
+                          </Link>
                           <Button
                             size="sm"
                             variant="outline"

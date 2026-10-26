@@ -95,7 +95,7 @@ one project can never change another.
 | Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start`, `.../stop`, `.../report.csv` |
 | Onboarding wizard | yes | yes | `/profiles`, `/projects` |
 | Find new websites | yes | yes | `/discovery/providers`, `/discovery/runs` |
-| Review websites | yes | yes | `/opportunities`, `/opportunities/bulk` |
+| Review found websites (tab of Find new websites) | yes | yes | `/opportunities`, `/opportunities/bulk` |
 | Task queue | yes | yes | `/queue`, `/queue/reorder`, `/queue/{id}/control` |
 | Live automation | yes | yes | `/queue`, `/tasks/{id}/attempts`, `/events/stream` |
 | Execution control (pause/resume/stop, resources) | yes | yes | `/worker/*`, `/resources` |

@@ -616,7 +616,8 @@ function BulkQueueDialog({
             ))}
             {(opportunities.data?.items ?? []).length === 0 ? (
               <p className="text-xs text-content-subtle">
-                No approved opportunities found. Approve opportunities in the registry first.
+                No approved opportunities found. Approve opportunities in Review found websites
+                first.
               </p>
             ) : null}
           </div>

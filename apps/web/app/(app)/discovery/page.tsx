@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
 import type { DiscoveryRun, Opportunity, OpportunityCategory } from "@autobacklinker/shared-types";
 import {
@@ -16,6 +16,7 @@ import {
   Select,
   StatusBadge,
   Table,
+  Tabs,
   Td,
   Th,
   useToast,
@@ -32,6 +33,7 @@ const PAGE_SIZE = 20;
 export default function DiscoveryPage() {
   const toast = useToast();
   const action = useAction();
+  const router = useRouter();
 
   const [page, setPage] = React.useState(1);
   const [selectedRun, setSelectedRun] = React.useState<DiscoveryRun | null>(null);
@@ -119,19 +121,23 @@ export default function DiscoveryPage() {
     <div className="space-y-4">
       <PageHeader
         title="Find new websites"
-        description="Find new websites with a provider search, then review them under Review websites."
+        description="Find new websites with a provider search. Review what a run found in the second tab."
         actions={
-          <div className="flex items-center gap-2">
-            <Link href="/registry">
-              <Button variant="primary" size="sm">
-                Review websites
-              </Button>
-            </Link>
-            <Button variant="outline" size="sm" onClick={runs.reload} loading={runs.refreshing}>
-              Refresh
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={runs.reload} loading={runs.refreshing}>
+            Refresh
+          </Button>
         }
+      />
+
+      <Tabs
+        tabs={[
+          { id: "find", label: "Find new websites" },
+          { id: "review", label: "Review found websites" },
+        ]}
+        active="find"
+        onChange={(id) => {
+          if (id === "review") router.push("/registry");
+        }}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -272,7 +278,7 @@ export default function DiscoveryPage() {
             onRetry={runs.reload}
             isEmpty={(runs.data?.items ?? []).length === 0}
             emptyTitle="No discovery runs yet"
-            emptyDescription="Start a discovery run to populate the registry."
+            emptyDescription="Start a discovery run, then review its findings in the second tab."
             skeleton={<TableSkeleton rows={6} columns={7} />}
           >
             <Table>
@@ -353,7 +359,7 @@ export default function DiscoveryPage() {
               onRetry={runOpportunities.reload}
               isEmpty={produced.length === 0}
               emptyTitle="No opportunities stored for this run"
-              emptyDescription="The registry does not contain matching opportunities for this provider and project."
+              emptyDescription="The review list does not contain matching opportunities for this provider and project."
               skeleton={<TableSkeleton rows={5} columns={5} />}
             >
               <Table>

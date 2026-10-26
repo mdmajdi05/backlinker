@@ -10,6 +10,7 @@ import {
   Dialog,
   Field,
   Input,
+  Label,
   Pagination,
   Select,
   Skeleton,
@@ -48,7 +49,12 @@ export function AddToProjectDialog({
 }) {
   const toast = useToast();
   const action = useAction();
+  const addUrlAction = useAction();
 
+  const newUrlId = React.useId();
+  const [newUrl, setNewUrl] = React.useState("");
+  const [newAddMessage, setNewAddMessage] = React.useState<string | null>(null);
+  const [newAddError, setNewAddError] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(1);
   const [search, setSearch] = React.useState("");
   const [category, setCategory] = React.useState("");
@@ -123,6 +129,46 @@ export function AddToProjectDialog({
     setResult(null);
   }, [projectId]);
 
+  React.useEffect(() => {
+    if (open) return;
+    setNewUrl("");
+    setNewAddMessage(null);
+    setNewAddError(null);
+  }, [open]);
+
+  const addByUrl = async () => {
+    const value = newUrl.trim();
+    if (!value) return;
+    setNewAddMessage(null);
+    setNewAddError(null);
+    const outcome = await addUrlAction.run(() =>
+      api.campaign.add(apiClient, projectId, value),
+    );
+    if (!outcome.ok || !outcome.data) {
+      setNewAddError(errorMessage(outcome.error));
+      return;
+    }
+    const data = outcome.data;
+    const message = [
+      data.added ? `${data.added} added to the list and this project` : "",
+      data.linked ? `${data.linked} existing site(s) linked to this project` : "",
+      data.existing ? `${data.existing} already in this project` : "",
+      data.invalid ? `${data.invalid} invalid` : "",
+      data.deleted ? `${data.deleted} in the recycle bin` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    if (data.added + data.linked === 0) {
+      setNewAddError(`Nothing was added or linked. ${message}`);
+      return;
+    }
+    setNewAddMessage(message);
+    toast.push(message, data.invalid + data.deleted > 0 ? "info" : "success");
+    setNewUrl("");
+    websites.reload();
+    onChanged?.();
+  };
+
   const toggleOne = (id: string) => {
     setSelected((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
@@ -166,7 +212,7 @@ export function AddToProjectDialog({
       open={open}
       onClose={onClose}
       title="Assign backlink websites"
-      description="Filter the central list by category and pick the websites for this project."
+      description="Pick websites from the central list, or add a new one by URL. Every website is linked to this project once."
       width="xl"
       footer={
         <>
@@ -208,6 +254,44 @@ export function AddToProjectDialog({
               : "No queue task was created - the auto pilot or the queue picks the websites up."}
           </Alert>
         ) : null}
+
+        <div className="rounded-lg border border-line bg-surface-raised/40 p-3">
+          <Label htmlFor={newUrlId}>Add a website that is not in the list</Label>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Input
+              id={newUrlId}
+              className="min-w-64 flex-1"
+              aria-describedby={`${newUrlId}-hint`}
+              value={newUrl}
+              onChange={(event) => setNewUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void addByUrl();
+                }
+              }}
+              placeholder="https://example.com/add-your-business"
+            />
+            <Button
+              variant="outline"
+              loading={addUrlAction.pending}
+              disabled={!newUrl.trim()}
+              onClick={() => void addByUrl()}
+            >
+              Add and link
+            </Button>
+          </div>
+          <p id={`${newUrlId}-hint`} className="mt-1 text-xs text-content-muted">
+            Paste the exact submission page. It is added to the central list once and
+            linked to this project.
+          </p>
+          {newAddError ? (
+            <p className="mt-2 text-xs text-danger">{newAddError}</p>
+          ) : null}
+          {newAddMessage ? (
+            <p className="mt-2 text-xs text-success">{newAddMessage}</p>
+          ) : null}
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field
@@ -323,7 +407,7 @@ export function AddToProjectDialog({
           onRetry={websites.reload}
           isEmpty={rows.length === 0}
           emptyTitle="No websites match these filters"
-          emptyDescription="Add websites to the central list first."
+          emptyDescription="No website matches these filters. Add one by URL above, or clear the filters."
           skeleton={<TableSkeleton rows={6} columns={5} />}
         >
           <Table>

@@ -25,6 +25,7 @@ import {
 } from "../components/ProjectEditDialog";
 import { sendNativeNotification } from "../lib/backend";
 import { formatDate, formatNumber } from "../lib/format";
+import { navigate } from "../lib/router";
 import type {
   BacklinkDetailsUpdate,
   Project,
@@ -259,9 +260,14 @@ export function ProjectsPage() {
                   <tr key={project.id}>
                     <Td className="max-w-[240px]">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-content">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`projects/${project.id}`)}
+                          className="max-w-full truncate text-left text-sm font-medium text-accent hover:underline"
+                          aria-label={`Open project details for ${project.name}`}
+                        >
                           {project.name}
-                        </p>
+                        </button>
                         <p className="truncate text-xs text-content-subtle">
                           {project.description ?? "-"}
                         </p>
@@ -295,6 +301,13 @@ export function ProjectsPage() {
                     </Td>
                     <Td className="text-right">
                       <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          onClick={() => navigate(`projects/${project.id}`)}
+                          aria-label={`Open the project ${project.name}`}
+                        >
+                          Open
+                        </Button>
                         <Button
                           size="sm"
                           variant="outline"

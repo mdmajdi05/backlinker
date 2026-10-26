@@ -18,7 +18,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/settings", label: "Settings", icon: "⚙", group: "system" },
   // Everything that is useful once in a while, kept out of the daily way.
   { href: "/discovery", label: "Find new websites", icon: "◎", group: "advanced" },
-  { href: "/registry", label: "Review websites", icon: "▦", group: "advanced" },
   { href: "/verification", label: "All backlinks", icon: "✓", group: "advanced" },
   { href: "/automation", label: "Automation rules", icon: "◈", group: "advanced" },
   { href: "/imports", label: "Import old report", icon: "↥", group: "advanced" },
@@ -37,6 +36,11 @@ export const NAV_GROUPS: Array<{ id: NavItem["group"]; label: string }> = [
 /** Resolves the page title for a pathname. */
 export function navTitleFor(pathname: string): string {
   if (pathname === "/") return "Dashboard";
+  // Reviewing discovered websites is the second step of "Find new websites";
+  // it is not a separate destination in the navigation.
+  if (pathname.startsWith("/registry")) return "Review found websites";
+  // A project detail page is a page of its own, not the project list.
+  if (/^\/projects\/[^/]+/.test(pathname)) return "Project";
   const match = NAV_ITEMS.find((item) => item.href !== "/" && pathname.startsWith(item.href));
   return match?.label ?? "Auto Backlinker";
 }

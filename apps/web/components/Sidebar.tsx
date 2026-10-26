@@ -11,6 +11,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
+    // The review tab is part of website discovery.
+    if (href === "/discovery" && pathname.startsWith("/registry")) return true;
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 

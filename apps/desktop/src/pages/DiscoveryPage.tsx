@@ -11,6 +11,7 @@ import {
   Select,
   StatusBadge,
   Table,
+  Tabs,
   Td,
   Th,
   useToast,
@@ -145,7 +146,7 @@ export function DiscoveryPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Find new websites"
-        description="Run provider searches and inspect what they produced."
+        description="Run provider searches and inspect what they produced. Review the findings in the second tab."
         actions={
           <Button
             size="sm"
@@ -156,6 +157,17 @@ export function DiscoveryPage() {
             Refresh
           </Button>
         }
+      />
+
+      <Tabs
+        tabs={[
+          { id: "find", label: "Find new websites" },
+          { id: "review", label: "Review found websites" },
+        ]}
+        active="find"
+        onChange={(id) => {
+          if (id === "review") navigate("registry");
+        }}
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -386,7 +398,7 @@ export function DiscoveryPage() {
           ) : runItems.length === 0 ? (
             <NothingYet
               title="No discovery runs yet"
-              description="Start a discovery run to populate the registry."
+              description="Start a discovery run, then review its findings in the second tab."
             />
           ) : (
             <>
@@ -499,7 +511,7 @@ export function DiscoveryPage() {
             ) : produced.length === 0 ? (
               <NothingYet
                 title="No opportunities stored for this run"
-                description="The registry does not contain matching opportunities for this provider and project."
+                description="The review list does not contain matching opportunities for this provider and project."
               />
             ) : (
               <Table>
