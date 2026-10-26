@@ -45,6 +45,7 @@ const STATUS_LABELS: Record<CampaignRowStatus, string> = {
   SUBMITTING: "Submitting…",
   PAUSED: "Stopped",
   WAITING_MANUAL: "Submit by hand",
+  LOGIN_NEEDED: "Login needed",
   SUBMITTED: "Submitted",
   VERIFIED: "Verified",
   FAILED: "Failed",
@@ -60,6 +61,7 @@ const STATUS_TONES: Record<CampaignRowStatus, BadgeTone> = {
   SUBMITTING: "info",
   PAUSED: "neutral",
   WAITING_MANUAL: "warning",
+  LOGIN_NEEDED: "warning",
   SUBMITTED: "accent",
   VERIFIED: "success",
   FAILED: "danger",
@@ -109,6 +111,8 @@ export function CampaignPanel({
   const [submitVerify, setSubmitVerify] = React.useState(true);
   const [stopOpen, setStopOpen] = React.useState(false);
   const [removeRow, setRemoveRow] = React.useState<CampaignRow | null>(null);
+  /** The row whose login window is open and waits for "save". */
+  const [loginRow, setLoginRow] = React.useState<CampaignRow | null>(null);
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
   const fileRef = React.useRef<HTMLInputElement | null>(null);
@@ -320,6 +324,48 @@ export function CampaignPanel({
     }
   };
 
+  /** Reopen the visible Google window of the project for this row. */
+  const relogin = async (row: CampaignRow) => {
+    const outcome = await rowAction.run(() =>
+      api.projectLogin.openSite(apiClient, projectId, row.website_id),
+    );
+    if (outcome.ok && outcome.data?.running) {
+      setLoginRow(row);
+      toast.push(
+        "Login window opened for this website. Sign in, then press Save login.",
+        "success",
+      );
+      refresh();
+    } else if (outcome.ok) {
+      toast.push(outcome.data?.message ?? "The login window could not be opened.", "info");
+    } else {
+      toast.push(errorMessage(outcome.error), "error");
+    }
+  };
+
+  /** Save the session of the open window and resume the paused tasks. */
+  const saveLogin = async () => {
+    if (!loginRow) return;
+    const outcome = await rowAction.run(() =>
+      api.projectLogin.finishSite(apiClient, projectId, loginRow.website_id),
+    );
+    if (outcome.ok) {
+      const result = outcome.data;
+      toast.push(
+        result?.saved
+          ? result.resumed
+            ? `Login saved. ${result.resumed} paused task(s) queued again.`
+            : "Login saved."
+          : result?.message ?? "No new session was saved.",
+        result?.saved ? "success" : "info",
+      );
+      setLoginRow(null);
+      refresh();
+    } else {
+      toast.push(errorMessage(outcome.error), "error");
+    }
+  };
+
   const verifyRow = async (row: CampaignRow) => {
     const outcome = await rowAction.run(() =>
       api.campaign.verify(apiClient, projectId, row.opportunity_id),
@@ -446,8 +492,13 @@ export function CampaignPanel({
                 />
                 <MetricTile
                   label="In progress"
-                  value={summary.in_progress + summary.waiting_manual + pausedCount}
-                  hint={`${summary.in_progress} running · ${summary.waiting_manual} manual · ${pausedCount} stopped`}
+                  value={
+                    summary.in_progress +
+                    summary.waiting_manual +
+                    summary.login_needed +
+                    pausedCount
+                  }
+                  hint={`${summary.in_progress} running · ${summary.waiting_manual} manual · ${summary.login_needed} login · ${pausedCount} stopped`}
                   tone="info"
                 />
                 <MetricTile
@@ -781,6 +832,25 @@ export function CampaignPanel({
                             <Button size="sm" onClick={() => setDetailsRow(row)}>
                               Fill details
                             </Button>
+                          ) : null}
+                          {row.status === "LOGIN_NEEDED" ? (
+                            loginRow?.opportunity_id === row.opportunity_id ? (
+                              <Button
+                                size="sm"
+                                loading={rowAction.pending}
+                                onClick={() => void saveLogin()}
+                              >
+                                Save login
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                loading={rowAction.pending}
+                                onClick={() => void relogin(row)}
+                              >
+                                Re-login
+                              </Button>
+                            )
                           ) : null}
                           {row.status === "WAITING_MANUAL" ? (
                             <>

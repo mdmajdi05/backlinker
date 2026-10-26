@@ -24,6 +24,7 @@ import { AutoPilotPanel } from "@/components/AutoPilotPanel";
 import { AddToProjectDialog } from "@/components/AddToProjectDialog";
 import { WebsiteListPanel } from "@/components/WebsiteListPanel";
 import { CampaignPanel } from "@/components/CampaignPanel";
+import { GoogleLoginCard } from "@/components/GoogleLoginCard";
 import { ProjectEditDialog } from "@/components/ProjectEditDialog";
 
 /**
@@ -113,6 +114,15 @@ export default function ProjectDetailPage() {
       >
         {data ? (
           <>
+            <GoogleLoginCard
+              projectId={projectId}
+              login={data.login}
+              onChanged={() => {
+                project.reload();
+                setCampaignReload((value) => value + 1);
+              }}
+            />
+
             <Card>
               <CardHeader
                 title="1. Project details"

@@ -45,7 +45,9 @@ The product is built around three rules:
 | Area | What works |
 | ---- | ---------- |
 | **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, assign websites from the category-filtered central list or add a new one by URL in the same dialog, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. **Stop** pauses and Start resumes the same work; **Remove** takes a website out of the project without deleting it; **Download report** exports the table as CSV and **Restart failed** requeues only the failed rows. Manual directories can be marked submitted and verified from the same row. |
-| **Per-website automation setup** | **Automate** on a project row opens a guided setup: form URL, **Detect fields** (static HTML), value-to-selector mapping and a success signal (page text, CSS selector or URL fragment). The setup is stored on the website itself, so two directories of the same project never share selectors. **Save and run now** requeues the row. Nothing is submitted without a success signal; a CAPTCHA or login pauses the task for a human. |
+| **Per-website automation setup** | **Automate** on a project row opens a guided setup: **Find submission page** follows the "add listing" links from the homepage, **Detect fields** reads the static HTML, then the form URL, the value-to-selector mapping and a success signal (page text, CSS selector or URL fragment) are stored on the website itself. Two directories of the same project never share selectors. **Save and run now** requeues the row. Nothing is submitted without a success signal; a CAPTCHA or login pauses the task for a human. |
+| **Per-project Google login** | A project owns one isolated browser profile. **Connect Google** opens a visible window once; the session is encrypted (`storage_state`) on the machine that runs the backend - the Mac itself in the desktop app - and reused automatically. When a website offers "Continue with Google", the app clicks the site's own button with that session - the Google password, 2FA and account chooser are never filled. An expired session pauses the row as **Login needed** (not failed), the project shows **Login expired**, and a fresh login resumes the paused tasks automatically. |
+| **Projects: card and list** | **My projects** opens in card view (name, target, Google state, counters, Open / Edit / Delete) and switches to the table view; the choice is remembered. |
 | **Review found websites** | The second tab of **Find new websites**: approve, exclude, add to a project or queue, merge duplicates and edit the websites a discovery run found. It is a cross-project review step, not a separate navigation destination. To add a website directly to one project, use **My projects → Open → Add backlink websites**. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. Brave/SerpAPI keys saved in **API keys & integrations** are encrypted and used immediately. |
 | **API keys & integrations** | Save encrypted Brave Search, SerpAPI and AI provider keys, pick the AI model, delete keys, and enable or disable submission adapters. Discovery and AI read the stored configuration without a restart. |
@@ -99,7 +101,7 @@ The platform never touches the browser a person uses during the day.
 | **Own browser build** | Chromium is downloaded into `<app data>/browsers` of this installation - it is never shared with the browser of the operating system. The Playwright package itself is not bundled (it weighs 135 MB per architecture because it contains its own Node runtime) - it is installed on demand into `<app data>/py`. | Settings → *Install browser runtime* |
 | **Runs in the background** | The browser is driven by the worker thread, never by an HTTP request, so the user interface never blocks. | `app/workers/runner.py` |
 | **Persistent queue** | The job history lives in the database - closing the application loses nothing and finished work is never repeated. | `app/services/queue.py` |
-| **Challenges pause the job** | A CAPTCHA, a login or a consent screen stops the job and asks the operator - nothing is bypassed. | `app/services/adapters/impl/playwright_form.py` |
+| **Challenges pause the job** | A CAPTCHA, a login or a consent screen stops the job and asks the operator - nothing is bypassed. A login wall marks the task `LOGIN_REQUIRED` and the project **Login expired**; a fresh login resumes it. | `app/services/adapters/impl/playwright_form.py`, `app/services/project_login.py` |
 | **Cloud or local** | Every job shows where it runs (`CLOUD` / `LOCAL`); eligible jobs can be moved to a cloud worker. | Live Automation page |
 
 ### Resource aware scheduling
@@ -376,14 +378,16 @@ make verify      # lint, tests, migrations, typecheck and production builds
 ## Environment variables
 
 All variables use the `AUTOBL_` prefix and are read by
-`app/core/config.py` (Pydantic settings).  `.env.example` in the repository
-root contains the complete, commented list - it is the authoritative
+`app/core/config.py` (Pydantic settings), except `AUTOBL_LOGIN_SECRET` which
+the login service reads straight from the environment.  `.env.example` in the
+repository root contains the complete, commented list - it is the authoritative
 reference.  The most important ones:
 
 | Variable | Default | Purpose |
 | -------- | ------- | ------- |
 | `AUTOBL_ENVIRONMENT` | `local` | `local`, `self_hosted`, `cloud`, `desktop` or `test` |
 | `AUTOBL_SECRET_KEY` | `dev-only-insecure-secret-key-change-me-please-000000` | Signs the JWT access tokens - **change it** |
+| `AUTOBL_LOGIN_SECRET` | generated local key file | Encrypts the per-project Google `storage_state`; the desktop app creates `<data>/files/login-profile.key` automatically |
 | `AUTOBL_ACCESS_TOKEN_EXPIRE_MINUTES` | `720` | Lifetime of an access token |
 | `AUTOBL_CORS_ORIGINS` | `["http://localhost:3000","tauri://localhost"]` | Allowed browser origins (JSON list) |
 | `AUTOBL_LOCAL_TOKEN` | *(empty)* | Shared token of the bundled desktop backend |

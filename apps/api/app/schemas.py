@@ -341,6 +341,8 @@ class ProjectOut(ORMModel):
 class ProjectDetailOut(ProjectOut):
     settings: ProjectSettingsOut | None = None
     counts: dict[str, int] = {}
+    #: The Google / login state of the project (see the project login routes).
+    login: dict[str, Any] | None = None
 
 
 # --------------------------------------------------------------------------
@@ -589,6 +591,15 @@ class WebsiteAutomationDetectOut(BaseModel):
     has_captcha: bool = False
     has_password: bool = False
     message: str = ""
+
+
+class WebsiteAutomationFindOut(WebsiteAutomationDetectOut):
+    """The result of looking for the submission page from the homepage."""
+
+    found: bool = False
+    start_url: str = ""
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    inspected: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class WebsiteImportRowOut(BaseModel):

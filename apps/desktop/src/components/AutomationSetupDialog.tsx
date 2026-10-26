@@ -124,6 +124,7 @@ export function AutomationSetupDialog({
   const [confirmClear, setConfirmClear] = React.useState(false);
   const [runNow, setRunNow] = React.useState(true);
   const [detecting, setDetecting] = React.useState(false);
+  const [finding, setFinding] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [clearing, setClearing] = React.useState(false);
 
@@ -174,6 +175,37 @@ export function AutomationSetupDialog({
       setError(errorText(err, "The form could not be inspected"));
     } finally {
       setDetecting(false);
+    }
+  }
+
+  async function findForm() {
+    setError(null);
+    setFinding(true);
+    try {
+      const result = await api.websites.findAutomationForm(apiClient, websiteId, {
+        form_url: formUrl.trim(),
+      });
+      setDetected(result);
+      if (result.found && result.form_url) {
+        setFormUrl(result.form_url);
+        setFields(
+          result.fields.map((field) => ({
+            key: newKey(),
+            selector: field.selector,
+            token: field.token,
+          })),
+        );
+        toast.push(
+          `Submission page found: ${result.form_url} - review the mapping`,
+          "success",
+        );
+      } else {
+        toast.push(result.message || "No submission form was found", "info");
+      }
+    } catch (err) {
+      setError(errorText(err, "The submission page could not be found"));
+    } finally {
+      setFinding(false);
     }
   }
 
@@ -321,6 +353,14 @@ export function AutomationSetupDialog({
           <Button
             variant="outline"
             size="sm"
+            onClick={() => void findForm()}
+            loading={finding}
+          >
+            Find submission page
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void detect()}
             loading={detecting}
             disabled={!formUrl.trim()}
@@ -328,7 +368,8 @@ export function AutomationSetupDialog({
             Detect fields
           </Button>
           <span className="text-[11px] text-content-muted">
-            Reads the static HTML and proposes CSS selectors. Nothing is submitted.
+            The finder follows the &quot;add listing&quot; links from the homepage.
+            Nothing is submitted.
           </span>
         </div>
 

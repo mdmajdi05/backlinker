@@ -85,6 +85,55 @@ one website out of this project and cancels its open work - the website stays in
 
 ---
 
+## Google login (one per project)
+
+Many directories accept **Continue with Google** instead of a form account.
+Each project has its own isolated browser profile, so one project's session can
+never leak into another project.
+
+1. Open the project. The **Google login** card shows **Not connected**.
+2. Press **Connect Google**. A visible Chromium window opens with the profile of
+   *this* project only.
+3. Sign in with the Google account you want this project to use. The app does
+   **not** type your password, solve a 2FA prompt or choose an account - those
+   are your decisions. When Google Chrome is installed the window uses it (with
+   the isolated project profile) because Chrome signs in to Google more
+   reliably; otherwise the bundled Chromium opens.
+4. The app detects the Google session and stores it **encrypted on the
+   machine that runs the backend** (in the desktop app that is this Mac).
+   The card then shows **Google: connected (your@email)**, and work that had
+   stopped at a login wall is queued again automatically. If the window is
+   still open you can press **I'm done - save session** to close it.
+5. Every later submission that finds a login wall tries the site's own
+   **Continue with Google** button with that session first.
+
+The login is per project and on demand - creating a project does not force a
+Google login.
+
+### When the login expires
+
+* The row that hit the wall becomes **Login needed** - it is **paused**, not
+  failed.
+* The project page's **Google login** card shows **Login expired** (the
+  projects list shows a **Google: login expired** badge).
+* Press **Re-login** on the project card or on the row. The same profile
+  opens again; sign in once.
+* The paused websites are queued again as soon as the session is detected.
+  On a row, **Save login** saves the window explicitly; on the project card
+  the button is **I'm done - save session**.
+
+**Forget** removes the stored session and the profile directory of the project.
+The exported session in the database is encrypted; the isolated profile
+directory also holds the browser's own cookie store, so it lives only on the
+machine that runs the backend (owner-only permissions) and is deleted by
+**Forget** and by a permanent project delete.
+
+> The visible window opens on the machine that runs the backend. In a hosted
+> deployment that machine has no screen, so nobody can sign in there - use the
+> desktop app for the login, or keep those sites on the manual path.
+
+---
+
 ## Status glossary
 
 | Status | What it means | What to do |
@@ -94,6 +143,7 @@ one website out of this project and cancels its open work - the website stays in
 | **Queued** | a task waits for the worker | wait - no action needed |
 | **Submitting…** | the worker is filling the form right now | wait |
 | **Stopped** | the row was paused with the Stop button | press **Resume backlinks** |
+| **Login needed** | the site answered with a login wall; the task is paused | press **Re-login**, sign in once, then **Save login** |
 | **Submit by hand** | no automation exists for this site; the details are ready | open the site, fill the form, press **Mark submitted** |
 | **Submitted** | the submission happened, the link is not verified yet | **Verify** or wait for the scheduled verification |
 | **Verified** | the link was found on the page | nothing - **View link** shows it |
@@ -178,3 +228,20 @@ hai aur wahan se **Restore** ho sakti hai.
 **Report chahiye?**
 **Download report** poora table CSV me deta hai. **Restart failed** sirf failed
 sites ko dobara queue karta hai.
+
+**Google login kaise kaam karta hai?**
+Har project ka apna alag browser profile hai. Project page par **Connect
+Google** dabao, khuli window me ek baar sign-in karo. Session encrypted form
+me us machine par save hoti hai jo backend chala rahi hai (desktop app me yeh
+Mac hai). Jaise hi session detect hoti hai, login wall par ruki hui websites
+apne aap dobara queue ho jati hain. Baad me jo site "Continue with Google"
+deti hai, app usi session se andar chali jati hai - password ya 2FA app kabhi
+nahi bharta.
+
+**Login expire ho gaya to?**
+Row **Login needed** ho jati hai (fail nahi hoti), project page ke Google
+login card par **Login expired** dikhta hai (projects list me **Google: login
+expired** badge). **Re-login** dabao, usi profile me dobara sign-in karo -
+paused kaam session detect hote hi apne aap dobara queue ho jata hai. Row par
+**Save login**, project card par **I'm done - save session** se window
+explicitly save hoti hai.

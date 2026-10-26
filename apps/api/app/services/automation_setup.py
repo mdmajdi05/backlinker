@@ -118,7 +118,11 @@ def detect_fields(db: Session, website: Website, form_url: str = "") -> dict[str
         url = validate_http_url(url)
     except ValueError as exc:
         raise AutomationSetupError(str(exc)) from exc
+    return inspect_form_url(url)
 
+
+def inspect_form_url(url: str) -> dict[str, Any]:
+    """Inspect one URL and propose selectors for a submission form."""
     response = safe_get(url, allow_robots=settings.respect_robots)
     result: dict[str, Any] = {
         "form_url": url,

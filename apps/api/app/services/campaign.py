@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.db.base import utcnow
 from app.db.models import BacklinkRecord, Opportunity, Project, Task, Website
 from app.services import opportunities as opportunity_service
+from app.services import project_login
 from app.services import queue as queue_service
 from app.services import site_details as details_service
 from app.services.automation_setup import automation_payload
@@ -61,6 +62,7 @@ ROW_STATUSES = (
     "SUBMITTING",
     "PAUSED",
     "WAITING_MANUAL",
+    "LOGIN_NEEDED",
     "SUBMITTED",
     "VERIFIED",
     "FAILED",
@@ -580,6 +582,7 @@ def _row_status(
     details_complete: bool,
     task: Task | None,
     record: BacklinkRecord | None,
+    login_status: str | None = None,
 ) -> str:
     if str(opportunity.status or "").upper() in HIDDEN_OPPORTUNITY_STATUSES:
         return "EXCLUDED"
@@ -603,11 +606,18 @@ def _row_status(
         if task.status in ("QUEUED", "RETRY_SCHEDULED", "PAUSED"):
             return "QUEUED"
         if task.status in ("WAITING_FOR_USER", "WAITING_FOR_APPROVAL"):
+            if str(task.last_error or "").startswith(project_login.LOGIN_REQUIRED_PREFIX):
+                return "LOGIN_NEEDED"
             return "WAITING_MANUAL" if details_complete else "NEEDS_DETAILS"
         if task.status == "FAILED":
             return "FAILED"
         if task.status in DONE_TASK_STATUSES:
             return "SUBMITTED"
+    if login_status in ("EXPIRED", "LOGIN_REQUIRED"):
+        # The site refused the last visit with a login wall.  Starting it again
+        # without a fresh login would only pause it again, so the row says what
+        # it needs instead of pretending to be ready.
+        return "NEEDS_DETAILS" if not details_complete else "LOGIN_NEEDED"
     if details_complete:
         return "READY"
     return "NEEDS_DETAILS"
@@ -635,6 +645,18 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
     )
     tasks = _latest_tasks(db, project.id)
     records = _latest_records(db, project.id)
+    from app.db.models import WebsiteLoginSession
+
+    login_rows = (
+        db.execute(
+            select(WebsiteLoginSession).where(
+                WebsiteLoginSession.project_id == project.id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    logins = {row.website_id: row for row in login_rows}
 
     rows: list[dict[str, Any]] = []
     counters = {
@@ -644,6 +666,7 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         "submitted": 0,
         "in_progress": 0,
         "waiting_manual": 0,
+        "login_needed": 0,
         "needs_details": 0,
         "not_started": 0,
         "paused": 0,
@@ -669,7 +692,11 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         details_percent = _percent(
             len(gap["filled"]) + len(derivable), len(required)
         )
-        status = _row_status(opportunity, not blocked, task, record)
+        login_row = logins.get(website.id)
+        login_status = login_row.status if login_row is not None else None
+        status = _row_status(
+            opportunity, not blocked, task, record, login_status
+        )
 
         last_update = max(
             [
@@ -696,6 +723,8 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
             counters["in_progress"] += 1
         elif status == "WAITING_MANUAL":
             counters["waiting_manual"] += 1
+        elif status == "LOGIN_NEEDED":
+            counters["login_needed"] += 1
         elif status == "NEEDS_DETAILS":
             counters["needs_details"] += 1
         elif status == "PAUSED":
@@ -729,6 +758,8 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "observed_anchor_text": record.observed_anchor_text if record else None,
                 "adapter_key": website.adapter.key if website.adapter else None,
                 "adapter_config": automation_payload(website),
+                "login_status": login_status,
+                "login_error": login_row.last_error if login_row is not None else None,
                 "last_update": last_update,
             }
         )

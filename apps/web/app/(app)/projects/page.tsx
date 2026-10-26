@@ -4,9 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@autobacklinker/api-client";
-import type { Project, ProjectCounts } from "@autobacklinker/shared-types";
+import type { Project, ProjectCounts, ProjectLogin } from "@autobacklinker/shared-types";
 import {
   Alert,
+  Badge,
   Button,
   Card,
   CardBody,
@@ -30,12 +31,49 @@ import { ProjectEditDialog } from "@/components/ProjectEditDialog";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 20;
+const VIEW_KEY = "autobacklinker.projects.view";
+type ProjectView = "cards" | "list";
+
+function readView(): ProjectView {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
+function googleState(login: ProjectLogin | null | undefined) {
+  switch (login?.status) {
+    case "CONNECTED":
+      return {
+        label: login.email ? `Google: connected (${login.email})` : "Google: connected",
+        tone: "success" as const,
+      };
+    case "EXPIRED":
+      return { label: "Google: login expired", tone: "warning" as const };
+    case "LOGIN_OPEN":
+      return { label: "Google: login window open", tone: "info" as const };
+    case "ERROR":
+      return { label: "Google: error", tone: "danger" as const };
+    default:
+      return { label: "Google: not connected", tone: "neutral" as const };
+  }
+}
 
 export default function ProjectsPage() {
   const toast = useToast();
   const router = useRouter();
   const deleteAction = useAction();
   const [page, setPage] = React.useState(1);
+  const [view, setView] = React.useState<ProjectView>(readView);
+  const chooseView = (next: ProjectView) => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // The view still changes for this session.
+    }
+  };
   const [wizardOpen, setWizardOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<Project | null>(null);
@@ -56,9 +94,14 @@ export default function ProjectsPage() {
         (projects.data?.items ?? []).map(async (row) => {
           try {
             const project = await api.projects.get(apiClient, row.id);
-            return { id: row.id, counts: project.counts ?? null, failed: false };
+            return {
+              id: row.id,
+              counts: project.counts ?? null,
+              login: project.login ?? null,
+              failed: false,
+            };
           } catch {
-            return { id: row.id, counts: null, failed: true };
+            return { id: row.id, counts: null, login: null, failed: true };
           }
         }),
       ),
@@ -76,6 +119,12 @@ export default function ProjectsPage() {
     [details.data],
   );
 
+  const loginById = React.useMemo(() => {
+    const map: Record<string, ProjectLogin | null> = {};
+    for (const entry of details.data ?? []) map[entry.id] = entry.login;
+    return map;
+  }, [details.data]);
+
   const remove = async () => {
     if (!deleteTarget) return;
     const outcome = await deleteAction.run(() => api.projects.remove(apiClient, deleteTarget.id));
@@ -92,9 +141,33 @@ export default function ProjectsPage() {
         title="My projects"
         description="Open a project to add its backlink websites, press Start and see the report."
         actions={
-          <Button size="sm" onClick={() => setWizardOpen(true)}>
-            New project
-          </Button>
+          <>
+            <div
+              className="flex items-center rounded-md border border-line p-0.5"
+              role="group"
+              aria-label="Project view"
+            >
+              <Button
+                size="sm"
+                variant={view === "cards" ? "primary" : "ghost"}
+                aria-pressed={view === "cards"}
+                onClick={() => chooseView("cards")}
+              >
+                Cards
+              </Button>
+              <Button
+                size="sm"
+                variant={view === "list" ? "primary" : "ghost"}
+                aria-pressed={view === "list"}
+                onClick={() => chooseView("list")}
+              >
+                List
+              </Button>
+            </div>
+            <Button size="sm" onClick={() => setWizardOpen(true)}>
+              New project
+            </Button>
+          </>
         }
       />
 
@@ -115,6 +188,118 @@ export default function ProjectsPage() {
             }
             skeleton={<TableSkeleton rows={6} columns={6} />}
           >
+            {view === "cards" ? (
+              <>
+              <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+                {rows.map((project: Project) => {
+                  const counts = countsById[project.id];
+                  const countersLoading = details.loading && !details.data;
+                  const google =
+                    countersLoading && loginById[project.id] === undefined
+                      ? { label: "Google: checking…", tone: "neutral" as const }
+                      : googleState(loginById[project.id]);
+                  return (
+                    <Card key={project.id} className="h-full shadow-none">
+                      <CardBody className="flex h-full flex-col gap-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <Link
+                              href={`/projects/${project.id}`}
+                              className="block truncate text-sm font-semibold text-content hover:text-accent"
+                            >
+                              {project.name}
+                            </Link>
+                            <p
+                              className="truncate text-[11px] text-content-subtle"
+                              title={project.target_website}
+                            >
+                              {project.target_website}
+                            </p>
+                          </div>
+                          <StatusBadge status={project.status} />
+                        </div>
+
+                        <p className="line-clamp-2 min-h-[2rem] text-xs text-content-muted">
+                          {project.description || "No description yet."}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge tone={google.tone}>{google.label}</Badge>
+                          {loginById[project.id]?.paused_tasks ? (
+                            <Badge tone="warning">
+                              {loginById[project.id]?.paused_tasks} paused
+                            </Badge>
+                          ) : null}
+                          {countersLoading ? (
+                            <Skeleton className="h-4 w-16" />
+                          ) : null}
+                        </div>
+
+                        <div className="grid grid-cols-4 gap-2 rounded-md border border-line px-3 py-2 text-center">
+                          {[
+                            ["Sites", counts?.opportunities],
+                            ["Queued", counts?.queued],
+                            ["Verified", counts?.verified_live],
+                            ["Failed", counts?.failed],
+                          ].map(([label, value]) => (
+                            <div key={String(label)}>
+                              <p className="text-[10px] uppercase tracking-wide text-content-subtle">
+                                {label}
+                              </p>
+                              <p className="text-sm font-semibold tabular-nums text-content">
+                                {formatNumber(value as number | undefined)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <p className="text-[10px] text-content-subtle">
+                          Updated {formatDateTime(project.updated_at)}
+                        </p>
+
+                        <div className="mt-auto flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`/projects/${project.id}`}
+                            aria-label={`Open the project ${project.name}`}
+                            className="inline-flex h-8 items-center justify-center rounded-md bg-accent px-2.5 text-xs font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-hover"
+                          >
+                            Open
+                          </Link>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setEditTarget(project)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-danger hover:bg-danger-soft"
+                            onClick={() => {
+                              deleteAction.reset();
+                              setDeleteTarget(project);
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  );
+                })}
+              </div>
+              {projects.data ? (
+                <Pagination
+                  page={projects.data.page}
+                  pages={projects.data.pages}
+                  total={projects.data.total}
+                  onPageChange={setPage}
+                />
+              ) : null}
+              </>
+            ) : (
+              <>
             <Table>
               <thead>
                 <tr>
@@ -226,6 +411,8 @@ export default function ProjectsPage() {
                 onPageChange={setPage}
               />
             ) : null}
+              </>
+            )}
           </AsyncSection>
         </CardBody>
       </Card>

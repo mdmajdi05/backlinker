@@ -9,6 +9,7 @@ unverified until the verification engine confirms the link).
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
@@ -26,6 +27,7 @@ from app.db.models import (
     Task,
     Website,
 )
+from app.services import project_login
 from app.services.adapters.base import (
     RESULT_FAILED,
     RESULT_PUBLISHED,
@@ -221,6 +223,18 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
             metadata=metadata,
         )
 
+    refreshed_state: dict[str, Any] = {}
+
+    def remember_login_state(state: dict[str, Any]) -> None:
+        """Keep a refreshed session until the adapter is done.
+
+        The adapter runs inside the worker session; writing from a second
+        SQLite connection while that transaction is open could lose the
+        refresh, so the state is saved with the same session afterwards.
+        """
+        refreshed_state.clear()
+        refreshed_state.update(state)
+
     ctx = SubmissionContext(
         db=db,
         task=task,
@@ -235,6 +249,8 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
         should_cancel=lambda: _cancel_requested(db, task.id),
         timeout_seconds=execution_settings.task_timeout_seconds,
         headless=execution_settings.headless,
+        login_state=project_login.load_storage_state(db, project.id) if project else None,
+        save_login_state=remember_login_state if project else None,
     )
 
     try:
@@ -252,14 +268,35 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     try:
         result = adapter.submit(ctx)
     except Exception as exc:
+        _save_refreshed_login(db, project, refreshed_state)
         return TaskOutcome(
             status=RESULT_FAILED,
             error=f"{type(exc).__name__}: {exc}",
             message=f"Submission failed for {website.domain}",
             retryable=True,
         )
+    _save_refreshed_login(db, project, refreshed_state)
 
     outcome = _outcome_from_result(result)
+    if project is not None:
+        if outcome.error and outcome.error.startswith(project_login.LOGIN_REQUIRED_PREFIX):
+            project_login.pause_for_login(db, project.id, website.id, outcome.error)
+        elif outcome.status in (RESULT_SUBMITTED, RESULT_PUBLISHED):
+            # A successful submission behind an earlier login wall proves the
+            # session works again.  A site that never asked for a login keeps
+            # its UNKNOWN state instead of pretending to be connected.
+            site_row = project_login.get_site_session(db, project.id, website.id)
+            if site_row is not None and site_row.status in (
+                project_login.SITE_LOGIN_REQUIRED,
+                project_login.SITE_EXPIRED,
+            ):
+                project_login.mark_site(
+                    db,
+                    project.id,
+                    website.id,
+                    project_login.SITE_CONNECTED,
+                    method="SESSION",
+                )
     if result.succeeded:
         _persist_backlink_record(db, task, website, opportunity, project, result)
     elif result.status in (RESULT_WAITING_USER, RESULT_WAITING_APPROVAL):
@@ -291,6 +328,20 @@ def result_utcnow():
     from app.db.base import utcnow
 
     return utcnow()
+
+
+def _save_refreshed_login(
+    db: Session, project: Project | None, state: dict[str, Any]
+) -> None:
+    """Store a refreshed browser session with the worker's own session.
+
+    A lost cookie refresh must never fail a task that just succeeded, so the
+    write is best effort.
+    """
+    if project is None or not state:
+        return
+    with suppress(Exception):
+        project_login.save_storage_state(db, project.id, state)
 
 
 def _outcome_from_result(result: SubmissionResult) -> TaskOutcome:

@@ -14,11 +14,13 @@ works with JavaScript. It is deliberately conservative:
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar
 
 from app.core.config import settings
 from app.core.net import UnsafeUrlError, assert_public_url
+from app.services import project_login
 from app.services.adapters.base import (
     RESULT_SKIPPED,
     RESULT_SUBMITTED,
@@ -120,21 +122,25 @@ class PlaywrightFormAdapter(BaseAdapter):
                     # no profile of the personal browser of the user is used.
                     context = browser.new_context(
                         user_agent=settings.user_agent,
-                        storage_state=None,
+                        storage_state=ctx.login_state,
                     )
                     page = context.new_page()
                     page.set_default_timeout(timeout_ms)
-                    return self._run_form(
-                        ctx,
-                        page,
-                        form_url,
-                        fields,
-                        values,
-                        config,
-                        timeout_ms,
-                        PlaywrightError,
-                        PlaywrightTimeoutError,
-                    )
+                    try:
+                        return self._run_form(
+                            ctx,
+                            context,
+                            page,
+                            form_url,
+                            fields,
+                            values,
+                            config,
+                            timeout_ms,
+                            PlaywrightError,
+                            PlaywrightTimeoutError,
+                        )
+                    finally:
+                        self._persist_state(ctx, context)
                 finally:
                     browser.close()
         except PlaywrightTimeoutError as exc:  # pragma: no cover - timing dependent
@@ -146,6 +152,7 @@ class PlaywrightFormAdapter(BaseAdapter):
     def _run_form(
         self,
         ctx: SubmissionContext,
+        context: Any,
         page: Any,
         form_url: str,
         fields: dict[str, Any],
@@ -159,8 +166,32 @@ class PlaywrightFormAdapter(BaseAdapter):
         if ctx.cancelled():
             return self._cancelled()
         page.goto(form_url, wait_until="domcontentloaded", timeout=timeout_ms)
+
+        # A login wall is not a CAPTCHA: when the project carries a Google
+        # session the site's own "Continue with Google" button is clicked.
+        # The Google password / account chooser is never filled by the
+        # automation - a human finishes that in the project login window.
+        if project_login.page_requires_login(page):
+            if ctx.login_state and self._try_google_login(
+                context, page, form_url, timeout_ms
+            ):
+                if project_login.page_requires_login(page):
+                    return self._login_required(
+                        form_url, "The site still asks for a login after Google sign-in."
+                    )
+            else:
+                return self._login_required(
+                    form_url,
+                    "This website asks for a login. Connect Google for this project "
+                    "or log in to the website, then start the work again.",
+                )
+
         content = page.content()
         challenge = challenge_kind(content)
+        if challenge == "login":
+            return self._login_required(
+                form_url, "The site answered with a login challenge."
+            )
         if challenge is not None:
             screenshot = self._screenshot(ctx, page)
             return self._waiting(
@@ -304,6 +335,99 @@ class PlaywrightFormAdapter(BaseAdapter):
             except playwright_error:
                 return None
         return None
+
+    def _try_google_login(
+        self,
+        context: Any,
+        page: Any,
+        form_url: str,
+        timeout_ms: int,
+    ) -> bool:
+        """Click the site's Google button and see whether the wall disappears.
+
+        Only the site's own button is clicked.  Google's account chooser,
+        password field and two factor prompt are handled by the operator in the
+        visible login window; if they appear here the task is handed back.
+        """
+        import re
+
+        pattern = re.compile(
+            r"(continue|sign in|log in|login).{0,24}google|google.{0,24}(continue|sign in|log in|login)",
+            re.IGNORECASE,
+        )
+        locator = (
+            page.locator("button, a, input[type=submit]")
+            .filter(has_text=pattern)
+            .first
+        )
+        try:
+            if locator.count() == 0 or not locator.is_visible():
+                return False
+            popup = None
+            try:
+                with context.expect_page(timeout=8_000) as popup_info:
+                    locator.click(timeout=5_000)
+                popup = popup_info.value
+            except Exception:
+                popup = None
+
+            if popup is not None:
+                with suppress(Exception):
+                    popup.wait_for_load_state("domcontentloaded", timeout=15_000)
+                # Google may show an account chooser.  Wait briefly for an
+                # automatic continuation, then give the task back to the human.
+                deadline = 10
+                while deadline > 0 and "accounts.google.com" in str(popup.url or ""):
+                    with suppress(Exception):
+                        popup.wait_for_timeout(500)
+                    deadline -= 0.5
+                still_google = "accounts.google.com" in str(popup.url or "")
+                with suppress(Exception):
+                    popup.close()
+                if still_google:
+                    return False
+            else:
+                # The OAuth flow may stay in the same tab.  Give Google time to
+                # redirect back - and hand the task back when it still shows
+                # the account chooser instead of filling it.
+                deadline = 10.0
+                while deadline > 0 and "accounts.google.com" in str(page.url or ""):
+                    with suppress(Exception):
+                        page.wait_for_timeout(500)
+                    deadline -= 0.5
+                if "accounts.google.com" in str(page.url or ""):
+                    return False
+                with suppress(Exception):
+                    page.wait_for_timeout(1_000)
+
+            # The site usually redirects to a dashboard after the OAuth flow.
+            if str(page.url or "") != form_url:
+                page.goto(form_url, wait_until="domcontentloaded", timeout=timeout_ms)
+            try:
+                page.wait_for_timeout(1_000)
+            except Exception:
+                return False
+            return not project_login.page_requires_login(page)
+        except Exception:
+            return False
+
+    def _persist_state(self, ctx: SubmissionContext, context: Any) -> None:
+        """Store a refreshed session after the browser was used."""
+        if ctx.login_state is None or ctx.save_login_state is None:
+            return
+        with suppress(Exception):
+            # The browser may already be gone; a lost cookie refresh must not
+            # fail the submission that just succeeded.
+            ctx.save_login_state(context.storage_state())
+
+    def _login_required(self, form_url: str, message: str) -> SubmissionResult:
+        return SubmissionResult(
+            status=RESULT_WAITING_USER,
+            message=message,
+            error=f"{project_login.LOGIN_REQUIRED_PREFIX} {message}",
+            requires_human=True,
+            evidence={"login_required": True, "url": form_url},
+        )
 
     def _cancelled(self) -> SubmissionResult:
         """The task was cancelled (or the whole execution was stopped)."""

@@ -341,9 +341,66 @@ export interface Project {
   status: "ACTIVE" | "PAUSED" | "ARCHIVED";
   settings: ProjectSettings | null;
   counts?: ProjectCounts;
+  /** The Google / login state of the project (returned by the detail route). */
+  login?: ProjectLogin | null;
   created_at: string;
   updated_at: string;
   version: number;
+}
+
+export type ProjectLoginStatus =
+  | "NOT_CONNECTED"
+  | "LOGIN_OPEN"
+  | "CONNECTED"
+  | "EXPIRED"
+  | "ERROR";
+
+export type WebsiteLoginStatus =
+  | "UNKNOWN"
+  | "CONNECTED"
+  | "LOGIN_REQUIRED"
+  | "EXPIRED";
+
+export interface ProjectLoginSite {
+  website_id: string;
+  status: WebsiteLoginStatus;
+  method: string;
+  last_login_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+}
+
+/**
+ * The Google account of one project.  The browser profile and the session
+ * belong to this project only; the session is stored encrypted on the local
+ * machine.
+ */
+export interface ProjectLogin {
+  project_id: string;
+  provider: string;
+  status: ProjectLoginStatus;
+  email: string | null;
+  last_login_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+  /** A visible login window is currently open for this project. */
+  login_open: boolean;
+  /** Tasks that stopped at a login wall and resume after a fresh login. */
+  paused_tasks: number;
+  /** The detail route adds the per website states. */
+  sites?: ProjectLoginSite[];
+  browser_available?: boolean;
+}
+
+export interface ProjectLoginActionResult {
+  running: boolean;
+  saved: boolean;
+  status?: ProjectLoginStatus;
+  message?: string;
+  resumed?: number;
+  login?: ProjectLogin;
+  site?: ProjectLoginSite;
+  url?: string;
 }
 
 export interface ProjectCounts {
@@ -828,6 +885,22 @@ export interface WebsiteAutomationDetectResult {
   message: string;
 }
 
+export interface WebsiteAutomationCandidate {
+  url: string;
+  label: string;
+  score?: number;
+  fields?: number;
+  message?: string;
+}
+
+/** The result of following "add listing" links from the homepage. */
+export interface WebsiteAutomationFindResult extends WebsiteAutomationDetectResult {
+  found: boolean;
+  start_url: string;
+  candidates: WebsiteAutomationCandidate[];
+  inspected: WebsiteAutomationCandidate[];
+}
+
 /** One row of the central website list. */
 export interface WebsiteListItem {
   id: string;
@@ -1038,6 +1111,7 @@ export type CampaignRowStatus =
   | "SUBMITTING"
   | "PAUSED"
   | "WAITING_MANUAL"
+  | "LOGIN_NEEDED"
   | "SUBMITTED"
   | "VERIFIED"
   | "FAILED"
@@ -1067,6 +1141,9 @@ export interface CampaignRow {
   /** The explicit adapter configured for this website (if any). */
   adapter_key: string | null;
   adapter_config: WebsiteAutomationConfig | null;
+  /** The login state of this website inside the project. */
+  login_status: WebsiteLoginStatus | null;
+  login_error: string | null;
   last_update: string | null;
 }
 
@@ -1078,6 +1155,8 @@ export interface CampaignSummary {
   submitted: number;
   in_progress: number;
   waiting_manual: number;
+  /** Websites that stopped at a login wall and resume after a login. */
+  login_needed: number;
   needs_details: number;
   not_started: number;
   /** Websites paused with the Stop button. */

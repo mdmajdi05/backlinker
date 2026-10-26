@@ -19,6 +19,7 @@ from app.schemas import (
     PaginatedResponse,
     WebsiteAutomationDetectIn,
     WebsiteAutomationDetectOut,
+    WebsiteAutomationFindOut,
     WebsiteAutomationIn,
     WebsiteChooseIn,
     WebsiteChooseResult,
@@ -28,7 +29,7 @@ from app.schemas import (
     WebsiteStatsRow,
     WebsiteUpdateIn,
 )
-from app.services import access, automation_setup
+from app.services import access, automation_setup, form_finder
 from app.services import site_details as details_service
 from app.services import websites as website_service
 from app.services.audit import record_audit
@@ -256,6 +257,27 @@ def detect_website_automation_fields(
             detail={"code": "detect_failed", "message": exc.message},
         ) from exc
     return WebsiteAutomationDetectOut(**result)
+
+
+@router.post(
+    "/websites/{website_id}/automation/find-form",
+    response_model=WebsiteAutomationFindOut,
+)
+def find_website_submission_page(
+    website_id: str,
+    payload: WebsiteAutomationDetectIn,
+    db: DbSession,
+    user: CurrentUser,
+) -> WebsiteAutomationFindOut:
+    """Follow the "add listing" links from the homepage to the real form.
+
+    The finder reads static HTML only.  It proposes the form URL and the field
+    mapping; the operator still reviews them and saves the automation.
+    """
+    del user
+    website = _entry(db, website_id)
+    result = form_finder.find_submission_page(db, website, payload.form_url)
+    return WebsiteAutomationFindOut(**result)
 
 
 @router.delete("/websites/{website_id}", status_code=status.HTTP_204_NO_CONTENT)

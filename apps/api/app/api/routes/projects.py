@@ -30,7 +30,7 @@ from app.schemas import (
     ProjectSettingsOut,
     TargetWebsiteOut,
 )
-from app.services import backlink_details
+from app.services import backlink_details, project_login
 from app.services.audit import record_audit
 from app.services.queue import OPEN_TASK_STATUSES
 
@@ -152,6 +152,7 @@ def create_project(payload: ProjectIn, db: DbSession, user: CurrentUser) -> Proj
         **ProjectOut.model_validate(project).model_dump(),
         settings=ProjectSettingsOut.model_validate(project.settings) if project.settings else None,
         counts=_counts(db, project.id),
+        login=project_login.describe(db, project.id),
     )
 
 
@@ -162,6 +163,7 @@ def get_project(project_id: str, db: DbSession, user: CurrentUser) -> ProjectDet
         **ProjectOut.model_validate(project).model_dump(),
         settings=ProjectSettingsOut.model_validate(project.settings) if project.settings else None,
         counts=_counts(db, project.id),
+        login=project_login.describe(db, project.id),
     )
 
 

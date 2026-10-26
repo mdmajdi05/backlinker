@@ -47,13 +47,15 @@ The project page answers three questions on one screen - *which websites*,
 | ------- | ------------ |
 | Project details | company name, description, e-mail, phone, website, address, city, state, country, postal code, categories, year founded, employees and anchors - saved for this project, editable at any time |
 | Add websites | one URL, or many separated by a comma / space / new line; each is added to the central list once and linked to the project |
+| Google login | one isolated browser profile per project; **Connect Google** opens a visible window once, the session is encrypted on the machine that runs the backend (this Mac in the desktop app) and reused for the site's own **Continue with Google** button. An expired session pauses the row as **Login needed** and a fresh login resumes it. |
+| Projects view | **My projects** opens in **card** view (Google state, counters, Open / Edit / Delete) with a remembered **list** toggle |
 | Import Excel / CSV | the same spreadsheet columns as the central list; the imported rows are linked to the project in one step |
 | Choose websites | the central list with a category filter; tick the sites of this project |
 | Assigned websites | category and status filters, missing-field labels and **Remove** (the website stays in the central list) |
 | Start backlinks | fills the details from the project details, sets the project to ACTIVE and queues every website with complete details; a row that misses values is reported, never sent half filled |
 | Stop / Resume | Stop pauses the queued work (nothing is deleted), Start resumes exactly where it stopped; running tasks stop at the next safe step |
 | Speed | Slow / Normal / Fast - one plain choice instead of a wall of execution numbers |
-| Live table | website, data ready (%), missing fields, status (`Queued`, `Submitting`, `Stopped`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
+| Live table | website, data ready (%), missing fields, status (`Queued`, `Submitting`, `Stopped`, `Login needed`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
 | Download report | the live table as CSV |
 | Restart failed | queues only the failed submissions and failed verifications again |
 | Mark submitted | for directories without an automation: record the published page, complete the waiting task and queue the verification |
@@ -92,7 +94,7 @@ one project can never change another.
 | ------ | --- | ------- | ---------------- |
 | Dashboard (metrics + live activity) | yes | yes | `/dashboard/metrics`, `/activity` |
 | My projects | yes | yes | `/projects` |
-| Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start`, `.../stop`, `.../report.csv` |
+| Project detail (campaign cockpit) | yes | yes | `/projects/{id}/campaign`, `/projects/{id}/campaign/start`, `.../stop`, `.../report.csv`, `/projects/{id}/login*` |
 | Onboarding wizard | yes | yes | `/profiles`, `/projects` |
 | Find new websites | yes | yes | `/discovery/providers`, `/discovery/runs` |
 | Review found websites (tab of Find new websites) | yes | yes | `/opportunities`, `/opportunities/bulk` |

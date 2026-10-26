@@ -22,6 +22,7 @@ import { useAsync } from "../lib/useAsync";
 import { ErrorBlock, LoadingBlock, NothingYet, PageHeader } from "../components/common";
 import { AutoPilotPanel } from "../components/AutoPilotPanel";
 import { CampaignPanel } from "../components/CampaignPanel";
+import { GoogleLoginCard } from "../components/GoogleLoginCard";
 import { AddToProjectDialog } from "../components/AddToProjectDialog";
 import {
   ProjectDeleteDialog,
@@ -436,6 +437,15 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
           ) : null}
         </div>
       ) : null}
+
+      <GoogleLoginCard
+        projectId={projectId}
+        login={data?.login}
+        onChanged={() => {
+          project.reload();
+          setCampaignReload((value) => value + 1);
+        }}
+      />
 
       <Card>
         <CardHeader

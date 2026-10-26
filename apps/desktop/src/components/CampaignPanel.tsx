@@ -41,6 +41,7 @@ const STATUS_LABELS: Record<CampaignRowStatus, string> = {
   SUBMITTING: "Submitting…",
   PAUSED: "Stopped",
   WAITING_MANUAL: "Submit by hand",
+  LOGIN_NEEDED: "Login needed",
   SUBMITTED: "Submitted",
   VERIFIED: "Verified",
   FAILED: "Failed",
@@ -56,6 +57,7 @@ const STATUS_TONES: Record<CampaignRowStatus, BadgeTone> = {
   SUBMITTING: "info",
   PAUSED: "neutral",
   WAITING_MANUAL: "warning",
+  LOGIN_NEEDED: "warning",
   SUBMITTED: "accent",
   VERIFIED: "success",
   FAILED: "danger",
@@ -122,6 +124,8 @@ export function CampaignPanel({
   const [starting, setStarting] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [busyRow, setBusyRow] = React.useState<string | null>(null);
+  /** The row whose login window is open and waits for "save". */
+  const [loginRow, setLoginRow] = React.useState<CampaignRow | null>(null);
   const [stopping, setStopping] = React.useState(false);
   const [removeRow, setRemoveRow] = React.useState<CampaignRow | null>(null);
   const [removing, setRemoving] = React.useState(false);
@@ -326,6 +330,59 @@ export function CampaignPanel({
     }
   }
 
+  /** Reopen the visible Google window of the project for this row. */
+  async function relogin(row: CampaignRow) {
+    setBusyRow(row.opportunity_id);
+    try {
+      const result = await api.projectLogin.openSite(
+        apiClient,
+        projectId,
+        row.website_id,
+      );
+      if (result.running) {
+        setLoginRow(row);
+        toast.push(
+          "Login window opened for this website. Sign in, then press Save login.",
+          "success",
+        );
+      } else {
+        toast.push(result.message ?? "The login window could not be opened.", "info");
+      }
+      refresh();
+    } catch (error) {
+      toast.push(errorText(error, "Could not open the login window"), "error");
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
+  /** Save the session of the open window and resume the paused tasks. */
+  async function saveLogin() {
+    if (!loginRow) return;
+    setBusyRow(loginRow.opportunity_id);
+    try {
+      const result = await api.projectLogin.finishSite(
+        apiClient,
+        projectId,
+        loginRow.website_id,
+      );
+      toast.push(
+        result.saved
+          ? result.resumed
+            ? `Login saved. ${result.resumed} paused task(s) queued again.`
+            : "Login saved."
+          : result.message ?? "No new session was saved.",
+        result.saved ? "success" : "info",
+      );
+      setLoginRow(null);
+      refresh();
+    } catch (error) {
+      toast.push(errorText(error, "Could not save the login"), "error");
+    } finally {
+      setBusyRow(null);
+    }
+  }
+
   async function verifyRow(row: CampaignRow) {
     setBusyRow(row.opportunity_id);
     try {
@@ -448,8 +505,13 @@ export function CampaignPanel({
                   />
                   <MetricTile
                     label="In progress"
-                    value={summary.in_progress + summary.waiting_manual + pausedCount}
-                    hint={`${summary.in_progress} running · ${summary.waiting_manual} manual · ${pausedCount} stopped`}
+                    value={
+                      summary.in_progress +
+                      summary.waiting_manual +
+                      summary.login_needed +
+                      pausedCount
+                    }
+                    hint={`${summary.in_progress} running · ${summary.waiting_manual} manual · ${summary.login_needed} login · ${pausedCount} stopped`}
                     tone="info"
                   />
                   <MetricTile
@@ -773,6 +835,27 @@ export function CampaignPanel({
                               <Button size="sm" onClick={() => setDetailsRow(row)}>
                                 Fill details
                               </Button>
+                            ) : null}
+                            {row.status === "LOGIN_NEEDED" ? (
+                              <>
+                                {loginRow?.opportunity_id === row.opportunity_id ? (
+                                  <Button
+                                    size="sm"
+                                    loading={busyRow === row.opportunity_id}
+                                    onClick={() => void saveLogin()}
+                                  >
+                                    Save login
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    loading={busyRow === row.opportunity_id}
+                                    onClick={() => void relogin(row)}
+                                  >
+                                    Re-login
+                                  </Button>
+                                )}
+                              </>
                             ) : null}
                             {row.status === "WAITING_MANUAL" ? (
                               <>

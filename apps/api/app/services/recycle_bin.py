@@ -12,6 +12,7 @@ are only out of sight.  "Delete forever" is the explicit, irreversible way out.
 
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
@@ -20,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import utcnow
 from app.db.models import BusinessProfile, Opportunity, Project, Task, User, Website
-from app.services import access
+from app.services import access, project_login
 from app.services import websites as website_service
 
 #: The kinds of rows that can wait in the recycle bin.
@@ -317,6 +318,14 @@ def purge_item(db: Session, user: User | None, kind: str, item_id: str) -> dict[
         ).scalar_one()
         removed["tasks"] = int(task_count)
         db.execute(update(Task).where(Task.project_id == row.id).values(opportunity_id=None))
+        # The browser profile and its encrypted session belong to the project
+        # and must not outlive it on the disk.  Close a visible login window
+        # first so the profile directory is not in use.
+        with suppress(Exception):
+            from app.services import login_browser
+
+            login_browser.cancel(row.id)
+        project_login.clear_profile(db, row.id, delete_files=True)
         db.delete(row)
         db.commit()
         return removed

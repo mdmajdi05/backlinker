@@ -154,6 +154,65 @@ class ProjectSettings(IdMixin, TimestampMixin, Base):
     project: Mapped[Project] = relationship(back_populates="settings")
 
 
+class ProjectLoginProfile(IdMixin, TimestampMixin, Base):
+    """The isolated browser profile and Google session of one project.
+
+    Every project owns its own profile directory.  A cookie exported from that
+    profile is encrypted before it touches the database, so two projects never
+    share a session and a database dump never contains a usable login.
+    """
+
+    __tablename__ = "project_login_profiles"
+    __table_args__ = (
+        UniqueConstraint("project_id", name="uq_project_login_profiles_project_id"),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), default="google", nullable=False)
+    #: NOT_CONNECTED | LOGIN_OPEN | CONNECTED | EXPIRED | ERROR
+    status: Mapped[str] = mapped_column(
+        String(24), default="NOT_CONNECTED", nullable=False, index=True
+    )
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    profile_dir: Mapped[str] = mapped_column(String(800), default="", nullable=False)
+    #: Playwright ``storage_state`` JSON, encrypted with the local key file of
+    #: the installation (``<data>/files/login-profile.key``).
+    storage_state_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class WebsiteLoginSession(IdMixin, TimestampMixin, Base):
+    """The login state of one website inside one project."""
+
+    __tablename__ = "website_login_sessions"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "website_id", name="uq_website_login_sessions_project_website"
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    website_id: Mapped[str] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    #: UNKNOWN | CONNECTED | LOGIN_REQUIRED | EXPIRED
+    status: Mapped[str] = mapped_column(
+        String(24), default="UNKNOWN", nullable=False, index=True
+    )
+    method: Mapped[str] = mapped_column(String(24), default="UNKNOWN", nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
 class TargetWebsite(IdMixin, TimestampMixin, Base):
     __tablename__ = "target_websites"
 

@@ -53,6 +53,10 @@ class SubmissionContext:
     timeout_seconds: int = 240
     #: Headless is the default; a headed browser uses an isolated profile too.
     headless: bool = True
+    #: Playwright ``storage_state`` of the project (Google / directory login).
+    login_state: dict[str, Any] | None = None
+    #: Called with a fresh ``storage_state`` after the browser was used.
+    save_login_state: Callable[[dict[str, Any]], None] | None = None
 
     def cancelled(self) -> bool:
         if self.should_cancel is None:

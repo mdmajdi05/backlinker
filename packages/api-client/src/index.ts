@@ -59,6 +59,9 @@ import type {
   PageParams,
   Project,
   ProjectCreate,
+  ProjectLogin,
+  ProjectLoginActionResult,
+  ProjectLoginSite,
   ProjectSettings,
   QueueCreateRequest,
   QueueCreateResponse,
@@ -77,6 +80,7 @@ import type {
   SubmissionDetails,
   SubmissionDetailsUpdate,
   WebsiteAutomationDetectResult,
+  WebsiteAutomationFindResult,
   WebsiteAutomationSaveRequest,
   WebsiteChooseResult,
   WebsiteImportResult,
@@ -373,6 +377,43 @@ export const api = {
     /** The landing pages of the project (the targets a backlink may point to). */
     websites: (c: ApiClient, id: string, q?: PageParams) =>
       c.get<Paginated<TargetWebsite>>(`/api/v1/projects/${id}/websites`, { ...q }),
+  },
+
+  /**
+   * The Google login of one project.  A project has its own isolated browser
+   * profile; the visible login window is opened on the local machine only.
+   */
+  projectLogin: {
+    get: (c: ApiClient, projectId: string) =>
+      c.get<ProjectLogin>(`/api/v1/projects/${projectId}/login`),
+    /** Open the visible Google window of the project (desktop/local only). */
+    connectGoogle: (c: ApiClient, projectId: string, email?: string) =>
+      c.post<ProjectLoginActionResult>(`/api/v1/projects/${projectId}/login/google`, {
+        email: email ?? null,
+      }),
+    /** Save the session of the open window and resume the paused websites. */
+    finish: (c: ApiClient, projectId: string) =>
+      c.post<ProjectLoginActionResult>(`/api/v1/projects/${projectId}/login/finish`),
+    cancel: (c: ApiClient, projectId: string) =>
+      c.post<ProjectLoginActionResult>(`/api/v1/projects/${projectId}/login/cancel`),
+    /** Forget the session and delete the browser profile of the project. */
+    forget: (c: ApiClient, projectId: string) =>
+      c.delete<{ forgotten: boolean; login: ProjectLogin }>(
+        `/api/v1/projects/${projectId}/login`,
+      ),
+    /** Open the login page of a single website in the project's profile. */
+    openSite: (c: ApiClient, projectId: string, websiteId: string) =>
+      c.post<ProjectLoginActionResult>(
+        `/api/v1/projects/${projectId}/login/sites/${websiteId}`,
+      ),
+    finishSite: (c: ApiClient, projectId: string, websiteId: string) =>
+      c.post<ProjectLoginActionResult>(
+        `/api/v1/projects/${projectId}/login/sites/${websiteId}/finish`,
+      ),
+    markSiteExpired: (c: ApiClient, projectId: string, websiteId: string) =>
+      c.post<ProjectLoginSite>(
+        `/api/v1/projects/${projectId}/login/sites/${websiteId}/expired`,
+      ),
   },
 
   opportunities: {
@@ -720,6 +761,9 @@ export const api = {
     /** Inspect the static form HTML and propose CSS selectors. */
     detectAutomation: (c: ApiClient, id: string, body: { form_url?: string } = {}) =>
       c.post<WebsiteAutomationDetectResult>(`/api/v1/websites/${id}/automation/detect`, body),
+    /** Follow the "add listing" links of the homepage to the real form. */
+    findAutomationForm: (c: ApiClient, id: string, body: { form_url?: string } = {}) =>
+      c.post<WebsiteAutomationFindResult>(`/api/v1/websites/${id}/automation/find-form`, body),
   },
 
   /** The automatic submission of a project. */

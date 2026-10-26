@@ -30,9 +30,21 @@ import type {
   BacklinkDetailsUpdate,
   Project,
   ProjectCounts,
+  ProjectLogin,
 } from "@autobacklinker/shared-types";
 
 const PAGE_SIZE = 20;
+const VIEW_KEY = "autobacklinker.projects.view";
+type ProjectView = "cards" | "list";
+
+function readView(): ProjectView {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards";
+  } catch {
+    // Card view is the default even when storage is unavailable.
+    return "cards";
+  }
+}
 
 function errorText(error: unknown, fallback: string): string {
   if (error && typeof error === "object" && "message" in error) {
@@ -41,9 +53,37 @@ function errorText(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function googleState(login: ProjectLogin | null | undefined) {
+  switch (login?.status) {
+    case "CONNECTED":
+      return {
+        label: login.email ? `Google: connected (${login.email})` : "Google: connected",
+        tone: "success" as const,
+      };
+    case "EXPIRED":
+      return { label: "Google: login expired", tone: "warning" as const };
+    case "LOGIN_OPEN":
+      return { label: "Google: login window open", tone: "info" as const };
+    case "ERROR":
+      return { label: "Google: error", tone: "danger" as const };
+    default:
+      return { label: "Google: not connected", tone: "neutral" as const };
+  }
+}
+
 export function ProjectsPage() {
   const toast = useToast();
   const [page, setPage] = React.useState(1);
+  // Cards are the default; the choice is remembered per installation.
+  const [view, setView] = React.useState<ProjectView>(readView);
+  const chooseView = (next: ProjectView) => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // The view still changes for this session.
+    }
+  };
   const [creating, setCreating] = React.useState(false);
   const [name, setName] = React.useState("");
   const [targetWebsite, setTargetWebsite] = React.useState("");
@@ -78,7 +118,10 @@ export function ProjectsPage() {
   // page.  A project that does not answer keeps an empty counter: the view
   // shows a dash instead of a number it does not have.
   const [details, setDetails] = React.useState<
-    Record<string, { counts?: ProjectCounts; environment?: string }>
+    Record<
+      string,
+      { counts?: ProjectCounts; environment?: string; login?: ProjectLogin | null }
+    >
   >({});
   const [detailsNonce, setDetailsNonce] = React.useState(0);
 
@@ -98,6 +141,7 @@ export function ProjectsPage() {
             {
               counts: detail.counts,
               environment: detail.settings?.execution_environment,
+              login: detail.login ?? null,
             },
           ] as const;
         } catch {
@@ -211,7 +255,31 @@ export function ProjectsPage() {
         title="Projects"
         description="Campaigns tracked by this installation."
         actions={
-          <Button onClick={() => setCreating(true)}>New project</Button>
+          <>
+            <div
+              className="flex items-center rounded-md border border-line p-0.5"
+              role="group"
+              aria-label="Project view"
+            >
+              <Button
+                size="sm"
+                variant={view === "cards" ? "primary" : "ghost"}
+                aria-pressed={view === "cards"}
+                onClick={() => chooseView("cards")}
+              >
+                Cards
+              </Button>
+              <Button
+                size="sm"
+                variant={view === "list" ? "primary" : "ghost"}
+                aria-pressed={view === "list"}
+                onClick={() => chooseView("list")}
+              >
+                List
+              </Button>
+            </div>
+            <Button onClick={() => setCreating(true)}>New project</Button>
+          </>
         }
       />
 
@@ -230,7 +298,118 @@ export function ProjectsPage() {
         />
       ) : null}
 
-      {items.length > 0 ? (
+      {items.length > 0 && view === "cards" ? (
+        <>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((project) => {
+            const detail = details[project.id];
+            const counts = detail?.counts;
+            const google = detail
+              ? googleState(detail.login)
+              : { label: "Google: checking…", tone: "neutral" as const };
+            return (
+              <Card key={project.id} className="h-full">
+                <CardBody className="flex h-full flex-col gap-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`projects/${project.id}`)}
+                        className="max-w-full truncate text-left text-sm font-semibold text-content hover:text-accent"
+                        aria-label={`Open project details for ${project.name}`}
+                      >
+                        {project.name}
+                      </button>
+                      <p
+                        className="truncate text-[11px] text-content-subtle"
+                        title={project.target_website}
+                      >
+                        {project.target_website}
+                      </p>
+                    </div>
+                    <StatusBadge status={project.status} />
+                  </div>
+
+                  <p className="line-clamp-2 min-h-[2rem] text-xs text-content-muted">
+                    {project.description || "No description yet."}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone={google.tone}>{google.label}</Badge>
+                    {detail?.environment ? (
+                      <Badge tone="neutral">{detail.environment}</Badge>
+                    ) : null}
+                    {detail?.login?.paused_tasks ? (
+                      <Badge tone="warning">
+                        {detail.login.paused_tasks} paused
+                      </Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-2 rounded-md border border-line px-3 py-2 text-center">
+                    {[
+                      ["Sites", counts?.opportunities],
+                      ["Queued", counts?.queued],
+                      ["Verified", counts?.verified_live],
+                      ["Failed", counts?.failed],
+                    ].map(([label, value]) => (
+                      <div key={String(label)}>
+                        <p className="text-[10px] uppercase tracking-wide text-content-subtle">
+                          {label}
+                        </p>
+                        <p className="text-sm font-semibold tabular-nums text-content">
+                          {formatNumber(value as number | undefined)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-[10px] text-content-subtle">
+                    Updated {formatDate(project.updated_at)}
+                  </p>
+
+                  <div className="mt-auto flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => navigate(`projects/${project.id}`)}
+                      aria-label={`Open the project ${project.name}`}
+                    >
+                      Open
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setEditing(project)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-danger"
+                      onClick={() => {
+                        setDeleteError(null);
+                        setDeleting(project);
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardBody>
+              </Card>
+            );
+          })}
+          </div>
+          <Pagination
+            page={page}
+            pages={projects.data?.pages ?? 1}
+            total={projects.data?.total ?? 0}
+            onPageChange={setPage}
+          />
+        </>
+      ) : null}
+
+      {items.length > 0 && view === "list" ? (
         <Card>
           <CardHeader
             title="All projects"

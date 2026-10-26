@@ -113,6 +113,7 @@ export function AutomationSetupDialog({
   const toast = useToast();
   const saveAction = useAction();
   const detectAction = useAction();
+  const findAction = useAction();
   const clearAction = useAction();
 
   const [adapter, setAdapter] = React.useState("playwright_form");
@@ -173,6 +174,37 @@ export function AutomationSetupDialog({
       );
     } else {
       toast.push("No fields were found in the static HTML", "info");
+    }
+  };
+
+  const findForm = async () => {
+    setError(null);
+    const outcome = await findAction.run(() =>
+      api.websites.findAutomationForm(apiClient, websiteId, {
+        form_url: formUrl.trim(),
+      }),
+    );
+    if (!outcome.ok || !outcome.data) {
+      setError(errorMessage(outcome.error));
+      return;
+    }
+    const result = outcome.data;
+    setDetected(result);
+    if (result.found && result.form_url) {
+      setFormUrl(result.form_url);
+      setFields(
+        result.fields.map((field) => ({
+          key: newKey(),
+          selector: field.selector,
+          token: field.token,
+        })),
+      );
+      toast.push(
+        `Submission page found: ${result.form_url} - review the mapping`,
+        "success",
+      );
+    } else {
+      toast.push(result.message || "No submission form was found", "info");
     }
   };
 
@@ -321,6 +353,14 @@ export function AutomationSetupDialog({
           <Button
             variant="outline"
             size="sm"
+            onClick={() => void findForm()}
+            loading={findAction.pending}
+          >
+            Find submission page
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void detect()}
             loading={detectAction.pending}
             disabled={!formUrl.trim()}
@@ -328,7 +368,8 @@ export function AutomationSetupDialog({
             Detect fields
           </Button>
           <span className="text-[11px] text-content-muted">
-            Reads the static HTML and proposes CSS selectors. Nothing is submitted.
+            The finder follows the &quot;add listing&quot; links from the homepage.
+            Nothing is submitted.
           </span>
         </div>
 
