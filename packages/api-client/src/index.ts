@@ -62,6 +62,9 @@ import type {
   ProjectLogin,
   ProjectLoginActionResult,
   ProjectLoginSite,
+  ProjectLoginStreamConnection,
+  ProjectLoginStreamTicket,
+  ProjectLoginView,
   ProjectSettings,
   QueueCreateRequest,
   QueueCreateResponse,
@@ -171,6 +174,21 @@ export class ApiClient {
 
   setBaseUrl(url: string) {
     this.baseUrl = url.replace(/\/$/, "");
+  }
+
+  /**
+   * Build an absolute `ws://` / `wss://` URL for a backend route.
+   *
+   * A WebSocket cannot send an `Authorization` header, so the caller attaches
+   * a short lived ticket via `query` instead of the session token.
+   */
+  websocketUrl(path: string, query?: Query): string {
+    const origin =
+      this.baseUrl ||
+      (typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8000");
+    const url = new URL(`${origin.replace(/\/$/, "")}${path}${buildQuery(query)}`);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
   }
 
   private headers(extra?: HeadersInit): HeadersInit {
@@ -381,15 +399,22 @@ export const api = {
 
   /**
    * The Google login of one project.  A project has its own isolated browser
-   * profile; the visible login window is opened on the local machine only.
+   * profile; the visible login window opens on the machine that runs the
+   * backend and is streamed when the client asks for `view="remote"`.
    */
   projectLogin: {
     get: (c: ApiClient, projectId: string) =>
       c.get<ProjectLogin>(`/api/v1/projects/${projectId}/login`),
-    /** Open the visible Google window of the project (desktop/local only). */
-    connectGoogle: (c: ApiClient, projectId: string, email?: string) =>
+    /** Open the Google window of the project (native or streamed). */
+    connectGoogle: (
+      c: ApiClient,
+      projectId: string,
+      email?: string,
+      view?: ProjectLoginView,
+    ) =>
       c.post<ProjectLoginActionResult>(`/api/v1/projects/${projectId}/login/google`, {
         email: email ?? null,
+        view: view ?? null,
       }),
     /** Save the session of the open window and resume the paused websites. */
     finish: (c: ApiClient, projectId: string) =>
@@ -402,9 +427,15 @@ export const api = {
         `/api/v1/projects/${projectId}/login`,
       ),
     /** Open the login page of a single website in the project's profile. */
-    openSite: (c: ApiClient, projectId: string, websiteId: string) =>
+    openSite: (
+      c: ApiClient,
+      projectId: string,
+      websiteId: string,
+      view?: ProjectLoginView,
+    ) =>
       c.post<ProjectLoginActionResult>(
         `/api/v1/projects/${projectId}/login/sites/${websiteId}`,
+        { view: view ?? null },
       ),
     finishSite: (c: ApiClient, projectId: string, websiteId: string) =>
       c.post<ProjectLoginActionResult>(
@@ -414,6 +445,23 @@ export const api = {
       c.post<ProjectLoginSite>(
         `/api/v1/projects/${projectId}/login/sites/${websiteId}/expired`,
       ),
+    /**
+     * Ask for a one time ticket and return the ready-to-open WebSocket URL of
+     * the live login view.  The ticket is consumed on connect; ask for a new
+     * one for every (re)connect.
+     */
+    streamTicket: async (
+      c: ApiClient,
+      projectId: string,
+    ): Promise<ProjectLoginStreamConnection> => {
+      const ticket = await c.post<ProjectLoginStreamTicket>(
+        `/api/v1/projects/${projectId}/login/stream-ticket`,
+      );
+      return {
+        ...ticket,
+        url: c.websocketUrl(ticket.ws_path, { ticket: ticket.ticket }),
+      };
+    },
   },
 
   opportunities: {

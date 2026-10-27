@@ -6,6 +6,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  LoginViewer,
   useToast,
 } from "@autobacklinker/ui";
 import type { ProjectLogin } from "@autobacklinker/shared-types";
@@ -49,8 +50,10 @@ export function GoogleLoginCard({
   const [state, setState] = React.useState<ProjectLogin | null>(login ?? null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = React.useState(false);
   const onChangedRef = React.useRef(onChanged);
   const notifiedRef = React.useRef(false);
+  const dismissedRef = React.useRef(false);
 
   React.useEffect(() => {
     onChangedRef.current = onChanged;
@@ -64,6 +67,16 @@ export function GoogleLoginCard({
   // itself detects the Google cookies, stores the encrypted session and queues
   // the paused websites; this card only mirrors that state.
   const loginOpen = state?.login_open ?? false;
+  const streaming = loginOpen && state?.view === "remote";
+
+  React.useEffect(() => {
+    if (!loginOpen) {
+      dismissedRef.current = false;
+      setViewerOpen(false);
+      return;
+    }
+    if (streaming && !dismissedRef.current) setViewerOpen(true);
+  }, [loginOpen, streaming]);
   React.useEffect(() => {
     if (!loginOpen) return;
     let cancelled = false;
@@ -90,15 +103,19 @@ export function GoogleLoginCard({
     setBusy(true);
     setError(null);
     notifiedRef.current = false;
+    dismissedRef.current = false;
     try {
       const result = await api.projectLogin.connectGoogle(
         apiClient,
         projectId,
         state?.email ?? undefined,
+        "auto",
       );
       if (result.running) {
         toast.push(
-          "Login window opened. Sign in with Google there - this card updates itself.",
+          result.view === "remote"
+            ? "Login browser opened. Sign in in the live view."
+            : "Login window opened. Sign in with Google there - this card updates itself.",
           "success",
         );
       } else if (result.message) {
@@ -106,6 +123,7 @@ export function GoogleLoginCard({
       }
       const next = await api.projectLogin.get(apiClient, projectId);
       setState(next);
+      if (result.running && result.view === "remote") setViewerOpen(true);
     } catch (err) {
       setError(errorText(err, "The login window could not be opened"));
     } finally {
@@ -118,6 +136,7 @@ export function GoogleLoginCard({
     setError(null);
     try {
       const result = await api.projectLogin.finish(apiClient, projectId);
+      setViewerOpen(false);
       if (result.login) setState(result.login);
       if (result.saved) {
         toast.push(
@@ -145,6 +164,7 @@ export function GoogleLoginCard({
     setError(null);
     try {
       await api.projectLogin.cancel(apiClient, projectId);
+      setViewerOpen(false);
       const next = await api.projectLogin.get(apiClient, projectId);
       setState(next);
     } catch (err) {
@@ -159,6 +179,7 @@ export function GoogleLoginCard({
     setError(null);
     try {
       const result = await api.projectLogin.forget(apiClient, projectId);
+      setViewerOpen(false);
       setState(result.login);
       toast.push("The stored Google session was removed.", "success");
       onChanged?.();
@@ -167,6 +188,11 @@ export function GoogleLoginCard({
     } finally {
       setBusy(false);
     }
+  }
+
+  function closeViewer() {
+    dismissedRef.current = true;
+    setViewerOpen(false);
   }
 
   const status = state?.status ?? "NOT_CONNECTED";
@@ -178,7 +204,7 @@ export function GoogleLoginCard({
     <Card>
       <CardHeader
         title="Google login"
-        description="One Google account per project. It is stored encrypted on this Mac and reused on every website."
+        description="One Google account per project, stored encrypted on the machine that runs the backend."
         action={
           <Badge tone={connected ? "success" : expired ? "warning" : "neutral"}>
             {LOGIN_LABELS[status]}
@@ -206,6 +232,12 @@ export function GoogleLoginCard({
             </Alert>
           ) : null}
 
+          {loginOpen && state?.message ? (
+            <Alert tone="info" title="Preparing the login browser">
+              {state.message}
+            </Alert>
+          ) : null}
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm text-content">
@@ -217,7 +249,11 @@ export function GoogleLoginCard({
                 ) : expired ? (
                   "Google login expired - re-login to continue."
                 ) : status === "LOGIN_OPEN" ? (
-                  "Sign in in the browser window that just opened."
+                  state?.message ? (
+                    "Preparing the login browser…"
+                  ) : (
+                    "Sign in in the login view."
+                  )
                 ) : (
                   "Google is not connected for this project yet."
                 )}
@@ -234,6 +270,18 @@ export function GoogleLoginCard({
             <div className="flex flex-wrap items-center gap-2">
               {loginOpen ? (
                 <>
+                  {streaming && !viewerOpen ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        dismissedRef.current = false;
+                        setViewerOpen(true);
+                      }}
+                    >
+                      Open login view
+                    </Button>
+                  ) : null}
                   <Button size="sm" loading={busy} onClick={() => void finish()}>
                     I&apos;m done - save session
                   </Button>
@@ -284,6 +332,27 @@ export function GoogleLoginCard({
           </p>
         </div>
       </CardBody>
+
+      <LoginViewer
+        open={viewerOpen && streaming}
+        title="Google sign-in"
+        description="The browser runs on the machine that owns this project's profile. Type and click directly in the live view."
+        warning={state?.warning}
+        issueTicket={() => api.projectLogin.streamTicket(apiClient, projectId)}
+        onClose={closeViewer}
+        onClosed={() => {
+          setViewerOpen(false);
+          void api.projectLogin
+            .get(apiClient, projectId)
+            .then((next) => {
+              setState(next);
+              if (next.status === "CONNECTED") onChangedRef.current?.();
+            })
+            .catch(() => undefined);
+        }}
+        onSave={finish}
+        saving={busy}
+      />
     </Card>
   );
 }

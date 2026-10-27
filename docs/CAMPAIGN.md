@@ -92,12 +92,18 @@ Each project has its own isolated browser profile, so one project's session can
 never leak into another project.
 
 1. Open the project. The **Google login** card shows **Not connected**.
-2. Press **Connect Google**. A visible Chromium window opens with the profile of
-   *this* project only.
+2. Press **Connect Google**. The login browser opens with the profile of
+   *this* project only. In the desktop app it is a native window on this Mac.
+   In the **web app**, or in a desktop app pointed at a hosted backend, the
+   same window is streamed live into the page: click and type directly in the
+   live view (Back / Forward / Reload are in its toolbar).
+   The first time, the app downloads the Playwright runtime and the Chromium
+   build into its data directory (a few minutes, shown as **Preparing the
+   login browser**); later logins start immediately.
 3. Sign in with the Google account you want this project to use. The app does
    **not** type your password, solve a 2FA prompt or choose an account - those
-   are your decisions. When Google Chrome is installed the window uses it (with
-   the isolated project profile) because Chrome signs in to Google more
+   are your decisions. When Google Chrome is installed the browser uses it
+   (with the isolated project profile) because Chrome signs in to Google more
    reliably; otherwise the bundled Chromium opens.
 4. The app detects the **new** Google sign-in (the old cookies of an expired
    session are never counted as a login) and stores the session **encrypted on
@@ -131,9 +137,24 @@ directory also holds the browser's own cookie store, so it lives only on the
 machine that runs the backend (owner-only permissions) and is deleted by
 **Forget** and by a permanent project delete.
 
-> The visible window opens on the machine that runs the backend. In a hosted
-> deployment that machine has no screen, so nobody can sign in there - use the
-> desktop app for the login, or keep those sites on the manual path.
+> The browser always runs on the machine that runs the backend. The web client
+> shows a live stream of it - frames over a WebSocket and mouse / keyboard sent
+> back - so a hosted deployment can complete the same manual sign-in from the
+> browser. The stream uses a short-lived, single-use ticket bound to the
+> project and user; the session JWT never appears in the WebSocket URL.
+>
+> On a **Linux cloud host** install `Xvfb` and Google Chrome. The backend starts
+> Xvfb automatically when no `DISPLAY` is present and then runs a normal headed
+> browser inside it, which is what Google expects. Without Xvfb the browser is
+> headless and the viewer shows a warning: Google may refuse a headless
+> sign-in. A residential IP is not guaranteed - a login from a datacentre IP
+> can still be challenged by Google; that is a decision of Google, not
+> something the app can bypass.
+>
+> The login window and its stream live in the API process. Run **one** API
+> process (the default) or route every login request of a project to the same
+> worker (sticky sessions); a multi-worker deployment without sticky sessions
+> cannot share the in-memory window.
 
 ---
 

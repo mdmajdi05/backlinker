@@ -66,6 +66,48 @@ def test_the_environment_drops_browser_pointing_variables(monkeypatch) -> None:
     assert env["PLAYWRIGHT_BROWSERS_PATH"] == str(browser.browsers_dir())
 
 
+def test_the_on_demand_playwright_runtime_is_made_importable(tmp_path, monkeypatch) -> None:
+    """The desktop bundle installs Playwright into the data directory."""
+    import os
+    import sys
+
+    from app.core.config import settings
+    from app.services import browser
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    packages = tmp_path / "py"
+    packages.mkdir()
+    (tmp_path / "browsers" / "chromium-1248").mkdir(parents=True)
+
+    try:
+        browser.ensure_playwright_path()
+
+        assert str(packages) in sys.path
+        # The driver process must look in the data directory, or it would not
+        # find the browser that `install_runtime` downloaded there.
+        assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "browsers")
+    finally:
+        if str(packages) in sys.path:
+            sys.path.remove(str(packages))
+        os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+
+
+def test_an_empty_browser_directory_does_not_hide_the_default_cache(tmp_path, monkeypatch) -> None:
+    import os
+
+    from app.core.config import settings
+    from app.services import browser
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    (tmp_path / "browsers").mkdir()
+
+    browser.ensure_playwright_path()
+
+    assert "PLAYWRIGHT_BROWSERS_PATH" not in os.environ
+
+
 def test_the_playwright_adapter_uses_the_isolation_arguments() -> None:
     import inspect
 

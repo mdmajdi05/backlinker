@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     respect_robots: bool = True
     allow_browser_automation: bool = True
     playwright_headless: bool = True
+    # The login window: "auto" shows the native window when the backend has a
+    # display and streams it otherwise; "native" requires a display and
+    # "remote" always streams (the web client asks for this).
+    login_view_mode: Literal["auto", "native", "remote"] = "auto"
+    login_stream_width: int = 1280
+    login_stream_height: int = 900
+    login_stream_quality: int = 60
+    login_stream_fps: int = 10
+    login_stream_ticket_seconds: int = 90
     verification_interval_hours: int = 168
     verification_batch_size: int = 25
 

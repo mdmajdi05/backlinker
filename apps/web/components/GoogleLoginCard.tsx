@@ -3,7 +3,16 @@
 import * as React from "react";
 import { api } from "@autobacklinker/api-client";
 import type { ProjectLogin } from "@autobacklinker/shared-types";
-import { Alert, Badge, Button, Card, CardBody, CardHeader, useToast } from "@autobacklinker/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  LoginViewer,
+  useToast,
+} from "@autobacklinker/ui";
 import { apiClient, errorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 
@@ -35,8 +44,10 @@ export function GoogleLoginCard({
   const [state, setState] = React.useState<ProjectLogin | null>(login ?? null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = React.useState(false);
   const onChangedRef = React.useRef(onChanged);
   const notifiedRef = React.useRef(false);
+  const dismissedRef = React.useRef(false);
 
   React.useEffect(() => {
     onChangedRef.current = onChanged;
@@ -47,6 +58,19 @@ export function GoogleLoginCard({
   }, [login]);
 
   const loginOpen = state?.login_open ?? false;
+  const streaming = loginOpen && state?.view === "remote";
+
+  // A page reload (or a second tab) can join an already running stream, but a
+  // viewer the operator explicitly closed stays closed until they open it.
+  React.useEffect(() => {
+    if (!loginOpen) {
+      dismissedRef.current = false;
+      setViewerOpen(false);
+      return;
+    }
+    if (streaming && !dismissedRef.current) setViewerOpen(true);
+  }, [loginOpen, streaming]);
+
   React.useEffect(() => {
     if (!loginOpen) return;
     let cancelled = false;
@@ -84,23 +108,30 @@ export function GoogleLoginCard({
   const connect = () =>
     run(async () => {
       notifiedRef.current = false;
+      dismissedRef.current = false;
       const result = await api.projectLogin.connectGoogle(
         apiClient,
         projectId,
         state?.email ?? undefined,
+        "remote",
       );
       toast.push(
         result.running
-          ? "Login window opened. Sign in with Google there - this card updates itself."
+          ? result.view === "remote"
+            ? "Login browser opened. Sign in in the live view below."
+            : "Login window opened. Sign in with Google there - this card updates itself."
           : result.message ?? "The login window could not be opened.",
         result.running ? "success" : "info",
       );
-      setState(await api.projectLogin.get(apiClient, projectId));
+      const next = await api.projectLogin.get(apiClient, projectId);
+      setState(next);
+      if (result.running && result.view === "remote") setViewerOpen(true);
     }, "The login window could not be opened");
 
   const finish = () =>
     run(async () => {
       const result = await api.projectLogin.finish(apiClient, projectId);
+      setViewerOpen(false);
       if (result.login) setState(result.login);
       toast.push(
         result.saved
@@ -116,6 +147,7 @@ export function GoogleLoginCard({
   const forget = () =>
     run(async () => {
       const result = await api.projectLogin.forget(apiClient, projectId);
+      setViewerOpen(false);
       setState(result.login);
       toast.push("The stored Google session was removed.", "success");
       onChanged?.();
@@ -124,8 +156,14 @@ export function GoogleLoginCard({
   const cancel = () =>
     run(async () => {
       await api.projectLogin.cancel(apiClient, projectId);
+      setViewerOpen(false);
       setState(await api.projectLogin.get(apiClient, projectId));
     }, "The login window could not be closed");
+
+  const closeViewer = () => {
+    dismissedRef.current = true;
+    setViewerOpen(false);
+  };
 
   const status = state?.status ?? "NOT_CONNECTED";
   const connected = status === "CONNECTED";
@@ -159,6 +197,11 @@ export function GoogleLoginCard({
             {error}
           </Alert>
         ) : null}
+        {loginOpen && state?.message ? (
+          <Alert tone="info" title="Preparing the login browser">
+            {state.message}
+          </Alert>
+        ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
@@ -168,7 +211,9 @@ export function GoogleLoginCard({
                 : expired
                   ? "Google login expired - re-login to continue."
                   : status === "LOGIN_OPEN"
-                    ? "Sign in in the browser window that just opened."
+                    ? state?.message
+                      ? "Preparing the login browser…"
+                      : "Sign in in the login view."
                     : "Google is not connected for this project yet."}
             </p>
             <p className="text-[11px] text-content-subtle">
@@ -183,6 +228,18 @@ export function GoogleLoginCard({
           <div className="flex flex-wrap items-center gap-2">
             {loginOpen ? (
               <>
+                {streaming && !viewerOpen ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      dismissedRef.current = false;
+                      setViewerOpen(true);
+                    }}
+                  >
+                    Open login view
+                  </Button>
+                ) : null}
                 <Button size="sm" loading={busy} onClick={() => void finish()}>
                   I&apos;m done - save session
                 </Button>
@@ -226,6 +283,27 @@ export function GoogleLoginCard({
           </p>
         ) : null}
       </CardBody>
+
+      <LoginViewer
+        open={viewerOpen && streaming}
+        title="Google sign-in"
+        description="The browser runs on the machine that owns this project's profile. Type and click directly in the live view."
+        warning={state?.warning}
+        issueTicket={() => api.projectLogin.streamTicket(apiClient, projectId)}
+        onClose={closeViewer}
+        onClosed={() => {
+          setViewerOpen(false);
+          void api.projectLogin
+            .get(apiClient, projectId)
+            .then((next) => {
+              setState(next);
+              if (next.status === "CONNECTED") onChangedRef.current?.();
+            })
+            .catch(() => undefined);
+        }}
+        onSave={finish}
+        saving={busy}
+      />
     </Card>
   );
 }

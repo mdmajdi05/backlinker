@@ -46,7 +46,7 @@ The product is built around three rules:
 | ---- | ---------- |
 | **Campaign cockpit** | The project page is one screen: paste one or many URLs (comma / new line), import Excel / CSV, assign websites from the category-filtered central list or add a new one by URL in the same dialog, press **Start backlinks** and watch a live table with the data-ready percent, the row status and the last update. **Stop** pauses and Start resumes the same work; **Remove** takes a website out of the project without deleting it; **Download report** exports the table as CSV and **Restart failed** requeues only the failed rows. Manual directories can be marked submitted and verified from the same row. |
 | **Per-website automation setup** | **Automate** on a project row opens a guided setup: **Find submission page** follows the "add listing" links from the homepage, **Detect fields** reads the static HTML, then the form URL, the value-to-selector mapping and a success signal (page text, CSS selector or URL fragment) are stored on the website itself. Two directories of the same project never share selectors. **Save and run now** requeues the row. Nothing is submitted without a success signal; a CAPTCHA or login pauses the task for a human. |
-| **Per-project Google login** | A project owns one isolated browser profile. **Connect Google** opens a visible window once; the session is encrypted (`storage_state`) on the machine that runs the backend - the Mac itself in the desktop app - and reused automatically. When a website offers "Continue with Google", the app clicks the site's own button with that session - the Google password, 2FA and account chooser are never filled. An expired session pauses the row as **Login needed** (not failed), the project shows **Login expired**, and a fresh login resumes the paused tasks automatically. |
+| **Per-project Google login** | A project owns one isolated browser profile. **Connect Google** opens a visible window once; the session is encrypted (`storage_state`) on the machine that runs the backend - the Mac itself in the desktop app - and reused automatically. On the **web app** (or a desktop app pointed at a hosted backend) the same window is streamed live into the page, with mouse and keyboard forwarded, so the one manual sign-in works on every client. When a website offers "Continue with Google", the app clicks the site's own button with that session - the Google password, 2FA and account chooser are never filled. An expired session pauses the row as **Login needed** (not failed), the project shows **Login expired**, and a fresh login resumes the paused tasks automatically. |
 | **Projects: card and list** | **My projects** opens in card view (name, target, Google state, counters, Open / Edit / Delete) and switches to the table view; the choice is remembered. |
 | **Review found websites** | The second tab of **Find new websites**: approve, exclude, add to a project or queue, merge duplicates and edit the websites a discovery run found. It is a cross-project review step, not a separate navigation destination. To add a website directly to one project, use **My projects → Open → Add backlink websites**. |
 | **Discovery** | Pluggable providers: `manual_seed`, `directory_index` (built-in catalogue of publicly documented submission pages), `brave_search`, `serpapi`. Runs are queued as `DISCOVER` tasks, results are stored as websites and linked to the project. Brave/SerpAPI keys saved in **API keys & integrations** are encrypted and used immediately. |
@@ -153,7 +153,7 @@ at.
 
 The proof: `apps/desktop/scripts/check-offline.py` drives the packaged
 application with a headless browser while every non-loopback request is
-blocked - 41 checks, 0 external requests.
+blocked - 43 checks, 0 external requests.
 
 ---
 
@@ -388,6 +388,10 @@ reference.  The most important ones:
 | `AUTOBL_ENVIRONMENT` | `local` | `local`, `self_hosted`, `cloud`, `desktop` or `test` |
 | `AUTOBL_SECRET_KEY` | `dev-only-insecure-secret-key-change-me-please-000000` | Signs the JWT access tokens - **change it** |
 | `AUTOBL_LOGIN_SECRET` | generated local key file | Encrypts the per-project Google `storage_state`; the desktop app creates `<data>/files/login-profile.key` automatically |
+| `AUTOBL_LOGIN_VIEW_MODE` | `auto` | Surface of the login window: `auto`, `native` or `remote` (streamed) |
+| `AUTOBL_LOGIN_STREAM_WIDTH` / `HEIGHT` | `1280` / `900` | Viewport and streamed frame size |
+| `AUTOBL_LOGIN_STREAM_QUALITY` / `FPS` | `60` / `10` | JPEG quality and frame rate of the live login view |
+| `AUTOBL_LOGIN_STREAM_TICKET_SECONDS` | `90` | Lifetime of the single-use WebSocket ticket (never the JWT) |
 | `AUTOBL_ACCESS_TOKEN_EXPIRE_MINUTES` | `720` | Lifetime of an access token |
 | `AUTOBL_CORS_ORIGINS` | `["http://localhost:3000","tauri://localhost"]` | Allowed browser origins (JSON list) |
 | `AUTOBL_LOCAL_TOKEN` | *(empty)* | Shared token of the bundled desktop backend |
@@ -778,7 +782,7 @@ nodejs.org).  Everything below was actually run:
 | **Real browser automation** | `scripts/check_browser_automation.py` | pass - a real Chromium fills the form with the profile facts, submits it, the success signal is detected and the backlink record is created (never simulated) |
 | **Packaged desktop app** | `apps/desktop/scripts/check-desktop.py` | pass - first launch, second launch while the backend runs (no port conflict, no restart loop, one backend) and a full restart keep the local session valid (no 401) |
 | **Disk image** | mount `release/macos/*.dmg` and start the app from it | pass - the bundled backend starts from the mounted image, `/health` answers, the API accepts the local token and rejects a missing one |
-| **Desktop runs offline** | `apps/desktop/scripts/check-offline.py` | pass - 41 checks: every request is served by the local backend, **0 requests leave the machine**, no console error, the local token never travels to a remote host, and the cloud is only used after the operator selects it |
+| **Desktop runs offline** | `apps/desktop/scripts/check-offline.py` | pass - 43 checks: every request is served by the local backend, **0 requests leave the machine**, no console error, the local token never travels to a remote host, and the cloud is only used after the operator selects it |
 | Full product loop | `scripts/acceptance.py` | pass (profile → project → discovery → approve → queue → worker → activity → metrics → 9-sheet report → re-import preview → commit) |
 | Migrations | `alembic upgrade head → downgrade base → upgrade head` | pass (29 tables, both dialects) |
 | PostgreSQL dialect | `CreateTable(...).compile(postgresql)` for every table | pass (29/29) |

@@ -9,13 +9,27 @@ the login wall is queued again afterwards.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+import asyncio
+import json
+import time
+from contextlib import suppress
+from typing import Any
+
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
+from app.core.config import settings
 from app.db.models import Project, Website, WebsiteLoginSession
-from app.services import access, login_browser, project_login
+from app.services import access, login_browser, login_stream, project_login
 from app.services.events import record_event
 
 router = APIRouter(tags=["project-login"])
@@ -23,6 +37,11 @@ router = APIRouter(tags=["project-login"])
 
 class GoogleLoginIn(BaseModel):
     email: str | None = None
+    view: str | None = None
+
+
+class SiteLoginIn(BaseModel):
+    view: str | None = None
 
 
 def _project(db, project_id: str, user) -> Project:
@@ -75,8 +94,16 @@ def read_login(project_id: str, db: DbSession, user: CurrentUser) -> dict:
         .scalars()
         .all()
     )
+    window = login_browser.describe_window(project.id)
     return {
         **project_login.describe(db, project.id),
+        # The live surface of the open window, so a reload or a second tab can
+        # join the same stream (and the card knows whether to show the viewer).
+        "view": window.get("view") if window.get("running") else None,
+        "headless": bool(window.get("headless")),
+        "warning": window.get("warning"),
+        "message": window.get("message") if window.get("running") else None,
+        "stream_available": bool(window.get("stream_available")),
         "sites": [
             {
                 "website_id": row.website_id,
@@ -111,6 +138,7 @@ def open_google_login(
         login_browser.login_start_url(project.id),
         mode="google",
         email_hint=payload.email,
+        view=payload.view,
     )
     record_event(
         db,
@@ -164,7 +192,11 @@ def forget_login(project_id: str, db: DbSession, user: CurrentUser) -> dict:
 
 @router.post("/projects/{project_id}/login/sites/{website_id}")
 def open_site_login(
-    project_id: str, website_id: str, db: DbSession, user: CurrentUser
+    project_id: str,
+    website_id: str,
+    db: DbSession,
+    user: CurrentUser,
+    payload: SiteLoginIn | None = None,
 ) -> dict:
     """Open the login page of one website in the project's profile."""
     project = _project(db, project_id, user)
@@ -183,6 +215,7 @@ def open_site_login(
         url,
         mode="site",
         website_id=website.id,
+        view=payload.view if payload else None,
     )
     record_event(
         db,
@@ -228,3 +261,149 @@ def mark_site_expired(
         error="The website login expired.",
     )
     return project_login.describe_site(db, project.id, website.id)
+
+
+# ---------------------------------------------------------------------------
+# Remote view of the login browser (web client / hosted backend)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/projects/{project_id}/login/stream-ticket")
+def create_stream_ticket(
+    project_id: str, db: DbSession, user: CurrentUser
+) -> dict[str, Any]:
+    """Issue a short lived, single use ticket for the live login stream.
+
+    The WebSocket URL only carries this ticket, never the JWT of the user, so
+    the session token cannot leak into a proxy log or a browser history.
+    """
+    project = _project(db, project_id, user)
+    info = login_browser.describe_window(project.id)
+    if not info.get("running"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "login_window_closed",
+                "message": "No login window is open. Open the login window first.",
+            },
+        )
+    if info.get("view") != "remote":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stream_not_available",
+                "message": (
+                    "This login window opens natively on the backend machine; "
+                    "reopen it to stream it to this page."
+                ),
+            },
+        )
+    ticket = login_stream.issue_ticket(
+        project.id,
+        user.id,
+        ttl=settings.login_stream_ticket_seconds,
+    )
+    return {
+        **ticket,
+        "view": "remote",
+        "ws_path": f"{settings.api_prefix}/projects/{project.id}/login/stream",
+    }
+
+
+@router.websocket("/projects/{project_id}/login/stream")
+async def stream_login(
+    websocket: WebSocket, project_id: str, ticket: str = Query(default="")
+) -> None:
+    """Stream the login browser and forward pointer / keyboard events.
+
+    The ticket was bound to this project and this user when it was issued; it
+    is consumed here exactly once, so a replayed URL cannot open a second view.
+    """
+    if login_stream.redeem_ticket(ticket, project_id) is None:
+        await websocket.close(code=4401)
+        return
+
+    view = login_browser.remote_view(project_id)
+    if view is None:
+        await websocket.accept()
+        await websocket.send_json(
+            {
+                "type": "error",
+                "code": "no_stream",
+                "message": "The login window is not streaming. Open it again.",
+            }
+        )
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    info = login_browser.describe_window(project_id)
+    await websocket.send_json(
+        {
+            "type": "ready",
+            "view": "remote",
+            "width": view.width,
+            "height": view.height,
+            "headless": bool(info.get("headless")),
+            "warning": info.get("warning"),
+        }
+    )
+
+    frame_task = asyncio.create_task(_pump_frames(websocket, view))
+    input_task = asyncio.create_task(_pump_input(websocket, view))
+    tasks = (frame_task, input_task)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except WebSocketDisconnect:  # pragma: no cover - client closed the tab
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        with suppress(Exception):
+            await websocket.close(code=1000)
+
+
+async def _pump_frames(websocket: WebSocket, view: login_stream.RemoteView) -> None:
+    """Send the newest frame whenever it changed, plus a keep alive."""
+    last_seq = -1
+    last_message = time.monotonic()
+    while True:
+        if view.closed:
+            with suppress(Exception):
+                await websocket.send_json({"type": "closed"})
+            return
+        seq, frame = view.latest()
+        if frame is not None and seq != last_seq:
+            await websocket.send_json({"type": "frame", "seq": seq})
+            await websocket.send_bytes(frame)
+            last_seq = seq
+            last_message = time.monotonic()
+        elif time.monotonic() - last_message > 15:
+            await websocket.send_json({"type": "ping"})
+            last_message = time.monotonic()
+        await asyncio.sleep(0.03)
+
+
+async def _pump_input(websocket: WebSocket, view: login_stream.RemoteView) -> None:
+    """Forward validated input events to the browser thread."""
+    allowed = {"mouse", "key", "text", "navigate"}
+    while True:
+        try:
+            raw = await websocket.receive_text()
+        except WebSocketDisconnect:
+            return
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        kind = payload.get("type")
+        if kind == "ping":
+            with suppress(Exception):
+                await websocket.send_json({"type": "pong"})
+            continue
+        if kind in allowed:
+            view.push_input(payload)
+

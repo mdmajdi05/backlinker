@@ -355,6 +355,9 @@ export type ProjectLoginStatus =
   | "EXPIRED"
   | "ERROR";
 
+/** The surface a login window should use. */
+export type ProjectLoginView = "native" | "remote" | "auto";
+
 export type WebsiteLoginStatus =
   | "UNKNOWN"
   | "CONNECTED"
@@ -385,6 +388,16 @@ export interface ProjectLogin {
   last_error: string | null;
   /** A visible login window is currently open for this project. */
   login_open: boolean;
+  /** How the open window is shown: a native window or a live stream. */
+  view?: "native" | "remote" | null;
+  /** True when the streamed browser runs headless (Google may refuse). */
+  headless?: boolean;
+  /** An honest limitation of the current surface (for example headless). */
+  warning?: string | null;
+  /** What the open window is doing (for example preparing the runtime). */
+  message?: string | null;
+  /** The live view can be opened from this client. */
+  stream_available?: boolean;
   /** Tasks that stopped at a login wall and resume after a fresh login. */
   paused_tasks: number;
   /** The detail route adds the per website states. */
@@ -401,6 +414,28 @@ export interface ProjectLoginActionResult {
   login?: ProjectLogin;
   site?: ProjectLoginSite;
   url?: string;
+  /** The surface that was actually opened (a native request may stream). */
+  view?: "native" | "remote" | null;
+  headless?: boolean;
+  warning?: string | null;
+  stream_available?: boolean;
+}
+
+/**
+ * A short lived, single use ticket for the live login view.  The WebSocket URL
+ * only carries this ticket - never the long lived session JWT.
+ */
+export interface ProjectLoginStreamTicket {
+  ticket: string;
+  expires_in: number;
+  expires_at: number;
+  view: "remote";
+  ws_path: string;
+}
+
+export interface ProjectLoginStreamConnection extends ProjectLoginStreamTicket {
+  /** Absolute ws:// or wss:// URL with the ticket already attached. */
+  url: string;
 }
 
 export interface ProjectCounts {

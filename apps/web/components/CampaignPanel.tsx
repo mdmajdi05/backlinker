@@ -18,6 +18,7 @@ import {
   Dialog,
   Field,
   Input,
+  LoginViewer,
   MetricTile,
   ProgressBar,
   Select,
@@ -113,6 +114,9 @@ export function CampaignPanel({
   const [removeRow, setRemoveRow] = React.useState<CampaignRow | null>(null);
   /** The row whose login window is open and waits for "save". */
   const [loginRow, setLoginRow] = React.useState<CampaignRow | null>(null);
+  const [loginStreaming, setLoginStreaming] = React.useState(false);
+  const [loginViewOpen, setLoginViewOpen] = React.useState(false);
+  const [loginWarning, setLoginWarning] = React.useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
   const fileRef = React.useRef<HTMLInputElement | null>(null);
@@ -324,15 +328,21 @@ export function CampaignPanel({
     }
   };
 
-  /** Reopen the visible Google window of the project for this row. */
+  /** Reopen the login browser of the project for this row. */
   const relogin = async (row: CampaignRow) => {
     const outcome = await rowAction.run(() =>
-      api.projectLogin.openSite(apiClient, projectId, row.website_id),
+      api.projectLogin.openSite(apiClient, projectId, row.website_id, "remote"),
     );
     if (outcome.ok && outcome.data?.running) {
+      const streamed = outcome.data.view === "remote";
       setLoginRow(row);
+      setLoginStreaming(streamed);
+      setLoginViewOpen(streamed);
+      setLoginWarning(outcome.data.warning ?? null);
       toast.push(
-        "Login window opened for this website. Sign in, then press Save login.",
+        streamed
+          ? "Login browser opened. Sign in in the live view."
+          : "Login window opened for this website. Sign in, then press Save login.",
         "success",
       );
       refresh();
@@ -361,6 +371,8 @@ export function CampaignPanel({
         saved ? "success" : "info",
       );
       setLoginRow(null);
+      setLoginStreaming(false);
+      setLoginViewOpen(false);
       refresh();
     } else {
       toast.push(errorMessage(outcome.error), "error");
@@ -837,13 +849,24 @@ export function CampaignPanel({
                           {row.status === "LOGIN_NEEDED" ? (
                             <div className="flex flex-wrap items-center justify-end gap-1">
                               {loginRow?.opportunity_id === row.opportunity_id ? (
-                                <Button
-                                  size="sm"
-                                  loading={rowAction.pending}
-                                  onClick={() => void saveLogin()}
-                                >
-                                  Save login
-                                </Button>
+                                <>
+                                  {loginStreaming ? (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setLoginViewOpen(true)}
+                                    >
+                                      Open login view
+                                    </Button>
+                                  ) : null}
+                                  <Button
+                                    size="sm"
+                                    loading={rowAction.pending}
+                                    onClick={() => void saveLogin()}
+                                  >
+                                    Save login
+                                  </Button>
+                                </>
                               ) : (
                                 <Button
                                   size="sm"
@@ -1205,6 +1228,22 @@ export function CampaignPanel({
           </label>
         </div>
       </Dialog>
+
+      <LoginViewer
+        open={loginViewOpen && loginStreaming && loginRow !== null}
+        title={`Sign in to ${loginRow?.domain ?? "the website"}`}
+        description="The browser runs on the backend machine. Type and click directly in the live view, then save the login."
+        warning={loginWarning}
+        issueTicket={() => api.projectLogin.streamTicket(apiClient, projectId)}
+        onClose={() => setLoginViewOpen(false)}
+        onClosed={() => {
+          setLoginViewOpen(false);
+          refresh();
+        }}
+        onSave={saveLogin}
+        saveLabel="I'm done - save login"
+        saving={rowAction.pending}
+      />
     </Card>
   );
 }

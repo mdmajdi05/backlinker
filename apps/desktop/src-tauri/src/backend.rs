@@ -710,7 +710,14 @@ pub fn browser_runtime(app: &AppHandle) -> Option<String> {
         command.arg(script);
     }
     if let Some(python_path) = python_path {
-        command.env("PYTHONPATH", python_path);
+        // The backend installs the Playwright package on demand into the
+        // application data directory; look there as well, otherwise the
+        // settings page would keep saying "not installed".
+        let packages = app_data_dir().join("py");
+        command.env(
+            "PYTHONPATH",
+            format!("{}:{python_path}", packages.display()),
+        );
     }
     let output = command
         .args(["-c", "import playwright, pathlib; print(pathlib.Path(playwright.__file__).parent)"])
@@ -744,7 +751,11 @@ pub fn install_browser_runtime(app: &AppHandle) -> Result<String, String> {
         command.arg(script);
     }
     if let Some(python_path) = python_path {
-        command.env("PYTHONPATH", python_path);
+        let packages = app_data_dir().join("py");
+        command.env(
+            "PYTHONPATH",
+            format!("{}:{python_path}", packages.display()),
+        );
     }
     // The browser build belongs to this installation - it is never taken from
     // the personal browser of the user.

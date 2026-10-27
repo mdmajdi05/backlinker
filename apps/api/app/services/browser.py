@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,10 @@ from app.core.config import settings
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
+
+#: Two login windows may ask for the runtime at the same time; installing it
+#: twice would fight over the same target directory.
+_INSTALL_LOCK = threading.Lock()
 
 #: Arguments that keep the automation browser away from the user's browser.
 ISOLATION_ARGS: tuple[str, ...] = (
@@ -200,6 +205,11 @@ def install_runtime(timeout: int = 1800) -> tuple[bool, str]:
     the Python installation of the operating system and the browser of the
     user is never touched.
     """
+    with _INSTALL_LOCK:
+        return _install_runtime(timeout)
+
+
+def _install_runtime(timeout: int = 1800) -> tuple[bool, str]:
     packages = settings.data_dir / "py"
     packages.mkdir(parents=True, exist_ok=True)
     browsers = browsers_dir()
@@ -280,12 +290,38 @@ def _ensure_pip() -> bool:
 
 
 def ensure_playwright_path() -> None:
-    """Make an on demand installed Playwright importable."""
+    """Make an on demand installed Playwright importable.
+
+    The Playwright *package* and its browser build live in the application
+    data directory, not in the installation of the application, so importing
+    it needs two things: the package directory on ``sys.path`` and the browser
+    directory in the environment of the Playwright driver process.
+    """
     packages = settings.data_dir / "py"
     if packages.is_dir():
         path = str(packages)
         if path not in sys.path:
             sys.path.insert(0, path)
+    browsers = browsers_dir()
+    try:
+        installed = any(browsers.iterdir())
+    except OSError:  # pragma: no cover - unreadable directory
+        installed = False
+    if installed:
+        # Only point Playwright at this directory when a browser build is
+        # really there; otherwise an empty directory would hide a browser the
+        # user installed in the default cache.
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+
+
+def playwright_available() -> bool:
+    """Whether the Playwright package can be imported right now."""
+    ensure_playwright_path()
+    try:
+        import playwright  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def launch_options(headless: bool | None = None) -> dict[str, Any]:
