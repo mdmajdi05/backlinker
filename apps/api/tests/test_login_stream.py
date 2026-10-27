@@ -188,7 +188,7 @@ def test_the_login_browser_installs_the_runtime_on_first_use(
     calls: list[str] = []
 
     monkeypatch.setattr(
-        login_browser.browser_service, "playwright_available", lambda: False
+        login_browser.browser_service, "runtime_ready", lambda: False
     )
 
     def fake_install(*_args: Any, **_kwargs: Any) -> tuple[bool, str]:
@@ -206,7 +206,7 @@ def test_the_login_browser_installs_the_runtime_on_first_use(
     assert callable(sync_playwright)
     # The path is refreshed once before the check and once after the install.
     assert calls == ["path", "install", "path"]
-    assert window.final_message == "The login window is open."
+    assert window.final_message == "The browser is ready. Opening the login window…"
 
 
 def test_a_failed_runtime_install_is_reported_honestly(
@@ -214,7 +214,7 @@ def test_a_failed_runtime_install_is_reported_honestly(
 ) -> None:
     window = _window("remote")
     monkeypatch.setattr(
-        login_browser.browser_service, "playwright_available", lambda: False
+        login_browser.browser_service, "runtime_ready", lambda: False
     )
     monkeypatch.setattr(
         login_browser.browser_service,
@@ -239,6 +239,59 @@ def test_an_open_native_window_can_be_switched_to_streaming() -> None:
 
     assert window.view == "remote"
     assert window.describe()["stream_available"] is True
+
+
+# ---------------------------------------------------------------------------
+# First-run preparation progress
+# ---------------------------------------------------------------------------
+
+
+def test_describe_exposes_the_download_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import browser as browser_service
+
+    window = _window("remote")
+    window.running = True
+    browser_service.reset_runtime_progress()
+    browser_service._set_progress(
+        "browser",
+        "Downloading Chromium…",
+        percent=55.0,
+        detail="55% of 104.1 MiB",
+    )
+
+    try:
+        preparing = window.describe()["preparing"]
+
+        assert preparing is not None
+        assert preparing["phase"] == "browser"
+        assert preparing["percent"] == 55.0
+        assert preparing["message"] == "Downloading Chromium…"
+        assert preparing["detail"] == "55% of 104.1 MiB"
+        assert preparing["elapsed"] >= 0
+    finally:
+        browser_service.reset_runtime_progress()
+
+
+def test_a_window_that_already_has_the_runtime_says_it_is_starting() -> None:
+    from app.services import browser as browser_service
+
+    window = _window("remote")
+    window.running = True
+    browser_service.reset_runtime_progress()
+
+    preparing = window.describe()["preparing"]
+
+    assert preparing is not None
+    assert preparing["phase"] == "starting"
+    assert preparing["percent"] is None
+
+
+def test_a_ready_window_no_longer_reports_preparation() -> None:
+    window = _window("remote")
+    window.running = True
+    window.preparing = False
+
+    assert window.describe()["preparing"] is None
 
 
 # ---------------------------------------------------------------------------

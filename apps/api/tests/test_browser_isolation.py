@@ -293,3 +293,42 @@ def test_the_worker_does_not_claim_jobs_while_paused(authenticated_client, db_se
     worker = Worker(worker_id="test-worker")
     assert worker.tick() >= 1
     db_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# First-run progress
+# ---------------------------------------------------------------------------
+
+
+def test_the_installer_percentage_is_read_from_the_playwright_output() -> None:
+    from app.services import browser
+
+    assert browser._percent_from_line("|■■■■■■■■| 42% of 104.1 MiB") == 42.0
+    assert browser._percent_from_line("100% of 104.1 MiB") == 100.0
+    assert browser._percent_from_line("Downloading Chromium 156.0") is None
+    assert browser._percent_from_line("") is None
+
+
+def test_the_runtime_progress_is_reported_and_reset() -> None:
+    from app.services import browser
+
+    browser.reset_runtime_progress()
+    assert browser.runtime_progress()["phase"] == "idle"
+
+    browser._set_progress(
+        "browser",
+        "Downloading Chromium…",
+        percent=40.0,
+        detail="40% of 104.1 MiB",
+    )
+    try:
+        snapshot = browser.runtime_progress()
+        assert snapshot["phase"] == "browser"
+        assert snapshot["percent"] == 40.0
+        assert snapshot["message"] == "Downloading Chromium…"
+        assert snapshot["elapsed"] >= 0
+        assert "started_at" not in snapshot
+    finally:
+        browser.reset_runtime_progress()
+
+    assert browser.runtime_progress()["phase"] == "idle"

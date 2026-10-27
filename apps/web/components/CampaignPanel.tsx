@@ -7,6 +7,7 @@ import type {
   CampaignRow,
   CampaignRowStatus,
   CampaignStartResult,
+  ProjectLoginPreparing,
 } from "@autobacklinker/shared-types";
 import {
   Alert,
@@ -117,8 +118,9 @@ export function CampaignPanel({
   const [loginStreaming, setLoginStreaming] = React.useState(false);
   const [loginViewOpen, setLoginViewOpen] = React.useState(false);
   const [loginWarning, setLoginWarning] = React.useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState("");
+  const [loginPreparing, setLoginPreparing] =
+    React.useState<ProjectLoginPreparing | null>(null);
+  const [categoryFilter, setCategoryFilter] = React.useState("");  const [statusFilter, setStatusFilter] = React.useState("");
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   const addAction = useAction();
@@ -129,6 +131,26 @@ export function CampaignPanel({
   const controlAction = useAction();
   const downloadAction = useAction();
   const settingsAction = useAction();
+
+  // Follow the first-run download of a website login window until it is ready.
+  React.useEffect(() => {
+    if (!loginViewOpen || !loginPreparing) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void api.projectLogin
+        .get(apiClient, projectId)
+        .then((next) => {
+          if (cancelled) return;
+          setLoginPreparing(next.preparing ?? null);
+          if (next.warning) setLoginWarning(next.warning);
+        })
+        .catch(() => undefined);
+    }, 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loginViewOpen, loginPreparing, projectId]);
 
   const data = campaign.data;
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
@@ -339,6 +361,7 @@ export function CampaignPanel({
       setLoginStreaming(streamed);
       setLoginViewOpen(streamed);
       setLoginWarning(outcome.data.warning ?? null);
+      setLoginPreparing(outcome.data.preparing ?? null);
       toast.push(
         streamed
           ? "Login browser opened. Sign in in the live view."
@@ -373,6 +396,7 @@ export function CampaignPanel({
       setLoginRow(null);
       setLoginStreaming(false);
       setLoginViewOpen(false);
+      setLoginPreparing(null);
       refresh();
     } else {
       toast.push(errorMessage(outcome.error), "error");
@@ -1234,10 +1258,12 @@ export function CampaignPanel({
         title={`Sign in to ${loginRow?.domain ?? "the website"}`}
         description="The browser runs on the backend machine. Type and click directly in the live view, then save the login."
         warning={loginWarning}
+        preparing={loginPreparing}
         issueTicket={() => api.projectLogin.streamTicket(apiClient, projectId)}
         onClose={() => setLoginViewOpen(false)}
         onClosed={() => {
           setLoginViewOpen(false);
+          setLoginPreparing(null);
           refresh();
         }}
         onSave={saveLogin}

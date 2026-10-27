@@ -110,7 +110,13 @@ def main() -> None:
                 page.get_by_role("button", name="Connect Google").click()
 
                 dialog = page.get_by_role("dialog")
-                dialog.wait_for(timeout=30_000)
+                try:
+                    dialog.wait_for(timeout=30_000)
+                except Exception:
+                    print("console:", console_errors[:10])
+                    print("page text:", page.inner_text("body")[:2000])
+                    page.screenshot(path="/tmp/abk-web-stream-fail.png", full_page=True)
+                    raise
                 print("viewer:", dialog.get_attribute("aria-label"))
 
                 # Wait for the live canvas and a real frame.

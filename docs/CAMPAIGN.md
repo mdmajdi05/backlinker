@@ -98,13 +98,16 @@ never leak into another project.
    same window is streamed live into the page: click and type directly in the
    live view (Back / Forward / Reload are in its toolbar).
    The first time, the app downloads the Playwright runtime and the Chromium
-   build into its data directory (a few minutes, shown as **Preparing the
-   login browser**); later logins start immediately.
+   build into its data directory (a few minutes). While it does, the card (and
+   the live view) show the exact stage, the download percentage, the elapsed
+   time and what to do once the window opens. Later logins start immediately.
 3. Sign in with the Google account you want this project to use. The app does
    **not** type your password, solve a 2FA prompt or choose an account - those
-   are your decisions. When Google Chrome is installed the browser uses it
-   (with the isolated project profile) because Chrome signs in to Google more
-   reliably; otherwise the bundled Chromium opens.
+   are your decisions. The window is your normal Google Chrome started with the
+   isolated project profile, **without** the automation flags that make Google
+   answer *"This browser or app may not be secure"*; Playwright only attaches
+   to it to export the session. If Chrome is not installed, the downloaded
+   Chromium build is used.
 4. The app detects the **new** Google sign-in (the old cookies of an expired
    session are never counted as a login) and stores the session **encrypted on
    the machine that runs the backend** (in the desktop app that is this Mac).

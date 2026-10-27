@@ -103,6 +103,7 @@ def read_login(project_id: str, db: DbSession, user: CurrentUser) -> dict:
         "headless": bool(window.get("headless")),
         "warning": window.get("warning"),
         "message": window.get("message") if window.get("running") else None,
+        "preparing": window.get("preparing") if window.get("running") else None,
         "stream_available": bool(window.get("stream_available")),
         "sites": [
             {

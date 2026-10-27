@@ -374,6 +374,24 @@ export interface ProjectLoginSite {
 }
 
 /**
+ * The progress of the first-run login browser.
+ *
+ * `phase` is `starting` while the browser is launched, `package` while the
+ * Playwright runtime is downloaded, `browser` while Chromium is downloaded
+ * (with a real percentage) and `done` for the moment before the window opens.
+ */
+export interface ProjectLoginPreparing {
+  phase: "starting" | "package" | "browser" | "done" | string;
+  /** 0-100 while downloading, `null` when the step has no percentage. */
+  percent: number | null;
+  message: string;
+  /** Raw installer line (for example "70% of 104.1 MiB"). */
+  detail?: string | null;
+  /** Seconds since the window started preparing. */
+  elapsed?: number;
+}
+
+/**
  * The Google account of one project.  The browser profile and the session
  * belong to this project only; the session is stored encrypted on the local
  * machine.
@@ -396,6 +414,8 @@ export interface ProjectLogin {
   warning?: string | null;
   /** What the open window is doing (for example preparing the runtime). */
   message?: string | null;
+  /** Download progress while the first-run browser is being prepared. */
+  preparing?: ProjectLoginPreparing | null;
   /** The live view can be opened from this client. */
   stream_available?: boolean;
   /** Tasks that stopped at a login wall and resume after a fresh login. */
@@ -418,6 +438,8 @@ export interface ProjectLoginActionResult {
   view?: "native" | "remote" | null;
   headless?: boolean;
   warning?: string | null;
+  /** First-run download progress of the window that was opened. */
+  preparing?: ProjectLoginPreparing | null;
   stream_available?: boolean;
 }
 

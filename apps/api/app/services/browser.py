@@ -23,11 +23,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -203,10 +205,153 @@ def install_runtime(timeout: int = 1800) -> tuple[bool, str]:
 
     Both end up in the application data directory, so nothing is written to
     the Python installation of the operating system and the browser of the
-    user is never touched.
+    user is never touched.  The progress is published through
+    :func:`runtime_progress`, so the user interface can show what is happening
+    instead of a silent wait.
     """
     with _INSTALL_LOCK:
         return _install_runtime(timeout)
+
+
+def runtime_ready() -> bool:
+    """The package *and* a browser build are available."""
+    return playwright_available() and _find_browser_executable() is not None
+
+
+#: The progress of the (single) runtime installation, read by the UI.
+_PROGRESS_LOCK = threading.Lock()
+_PROGRESS: dict[str, Any] = {
+    "phase": "idle",
+    "percent": None,
+    "message": "",
+    "detail": None,
+    "started_at": None,
+    "updated_at": None,
+}
+
+
+def _set_progress(
+    phase: str,
+    message: str,
+    *,
+    percent: float | None = None,
+    detail: str | None = None,
+) -> None:
+    now = time.time()
+    with _PROGRESS_LOCK:
+        if phase in ("package", "browser") and not _PROGRESS.get("started_at"):
+            _PROGRESS["started_at"] = now
+        _PROGRESS.update(
+            {
+                "phase": phase,
+                "message": message,
+                "percent": percent,
+                "detail": detail,
+                "updated_at": now,
+            }
+        )
+
+
+def runtime_progress() -> dict[str, Any]:
+    """A snapshot of the install progress (safe to send to a client)."""
+    with _PROGRESS_LOCK:
+        snapshot = dict(_PROGRESS)
+    started = snapshot.get("started_at")
+    snapshot["elapsed"] = (
+        round(time.time() - started, 1) if started else 0.0
+    )
+    snapshot.pop("started_at", None)
+    snapshot.pop("updated_at", None)
+    return snapshot
+
+
+def reset_runtime_progress() -> None:
+    """Forget the last install (used by tests)."""
+    with _PROGRESS_LOCK:
+        _PROGRESS.update(
+            {
+                "phase": "idle",
+                "percent": None,
+                "message": "",
+                "detail": None,
+                "started_at": None,
+                "updated_at": None,
+            }
+        )
+
+
+_PERCENT = re.compile(r"(\d{1,3}(?:\.\d+)?)%\s+of\s+")
+
+
+def _percent_from_line(line: str) -> float | None:
+    """Read the percentage out of a Playwright download line."""
+    match = _PERCENT.search(line)
+    if match is None:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:  # pragma: no cover - regex guarantees a number
+        return None
+    return max(0.0, min(100.0, value))
+
+
+def _run_streaming(
+    command: list[str],
+    *,
+    env: dict[str, str] | None,
+    timeout: int,
+    phase: str,
+    message: str,
+) -> tuple[int, str]:
+    """Run a command and publish its progress while it prints.
+
+    The Playwright installer draws a progress bar with carriage returns, so
+    the output is read in raw chunks and split on both ``\\r`` and ``\\n``.
+    """
+    try:
+        process = subprocess.Popen(  # noqa: S603 - the caller builds the command
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        return 127, str(exc)
+    assert process.stdout is not None
+
+    # A download without output would block the read forever; the watchdog
+    # kills it when the timeout is reached.
+    watchdog = threading.Timer(timeout, process.kill)
+    watchdog.daemon = True
+    watchdog.start()
+    output: list[str] = []
+    pending = ""
+    try:
+        while True:
+            chunk = os.read(process.stdout.fileno(), 4096)
+            if not chunk:
+                break
+            pending += chunk.decode("utf-8", "replace")
+            parts = re.split(r"[\r\n]+", pending)
+            pending = parts.pop()
+            for part in parts:
+                line = part.strip()
+                if not line:
+                    continue
+                output.append(line)
+                if len(output) > 500:
+                    del output[:250]
+                percent = _percent_from_line(line)
+                if percent is not None:
+                    detail = re.sub(r"^\s*[|■]+\s*", "", line)
+                    _set_progress(phase, message, percent=percent, detail=detail)
+        code = process.wait()
+    finally:
+        watchdog.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return code, "\n".join(output[-80:])
 
 
 def _install_runtime(timeout: int = 1800) -> tuple[bool, str]:
@@ -216,9 +361,11 @@ def _install_runtime(timeout: int = 1800) -> tuple[bool, str]:
 
     # 1. The Playwright package (it brings its own driver).
     if not (packages / "playwright").is_dir():
+        _set_progress("package", "Downloading the browser engine (Playwright)…")
         if not _ensure_pip():
+            _set_progress("error", "pip is not available in this installation.")
             return False, "pip is not available in this installation."
-        result = subprocess.run(  # noqa: S603 - the command is a constant
+        code, output = _run_streaming(
             [
                 sys.executable,
                 "-m",
@@ -231,15 +378,16 @@ def _install_runtime(timeout: int = 1800) -> tuple[bool, str]:
                 str(packages),
                 "playwright>=1.48",
             ],
-            capture_output=True,
-            text=True,
+            env=None,
             timeout=timeout,
-            check=False,
+            phase="package",
+            message="Downloading the browser engine (Playwright)…",
         )
-        if result.returncode != 0:
+        if code != 0:
+            _set_progress("error", "The Playwright package could not be installed.")
             return False, (
                 "The Playwright package could not be installed.\n"
-                f"{result.stdout[-800:]}\n{result.stderr[-800:]}"
+                f"{output[-800:]}"
             )
 
     # 2. The browser build itself.
@@ -247,24 +395,23 @@ def _install_runtime(timeout: int = 1800) -> tuple[bool, str]:
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers)
     env["PYTHONPATH"] = f"{packages}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
     command = [sys.executable, "-m", "playwright", "install", "chromium"]
+    _set_progress("browser", "Downloading Chromium…", percent=0)
     log.info("downloading the browser runtime", extra={"extra_fields": {"dir": str(browsers)}})
-    try:
-        result = subprocess.run(  # noqa: S603 - the command is a constant
-            command,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        return False, f"The download could not be started: {exc}"
-    if result.returncode != 0:
+    code, output = _run_streaming(
+        command,
+        env=env,
+        timeout=timeout,
+        phase="browser",
+        message="Downloading Chromium…",
+    )
+    if code != 0:
+        _set_progress("error", "The browser runtime could not be downloaded.")
         return False, (
             "The browser runtime could not be downloaded.\n"
-            f"{result.stdout[-1500:]}\n{result.stderr[-1500:]}"
+            f"{output[-1500:]}"
         )
-    return True, (result.stdout or "The browser runtime was installed.")[-2000:]
+    _set_progress("done", "The browser is ready. Opening the login window…", percent=100)
+    return True, (output or "The browser runtime was installed.")[-2000:]
 
 
 def _ensure_pip() -> bool:
@@ -322,6 +469,49 @@ def playwright_available() -> bool:
     except Exception:
         return False
     return True
+
+
+#: The Chrome installation of the machine, per platform.  The login window
+#: prefers it over the bundled Chromium because it is not started with the
+#: automation flags that make Google refuse a sign-in.
+_CHROME_CANDIDATES = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+)
+
+
+def chrome_executable() -> str | None:
+    """The desktop Chrome of this machine (not a Playwright build)."""
+    for candidate in _CHROME_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def launchable_chrome() -> str | None:
+    """A full browser build that can be started as a normal application.
+
+    Prefers the Chrome the operator already uses.  Falls back to the full
+    Chromium build that :func:`install_runtime` downloaded (never the headless
+    shell, which cannot show a window).
+    """
+    desktop = chrome_executable()
+    if desktop is not None:
+        return desktop
+    downloaded = _find_browser_executable()
+    if downloaded is None or downloaded.name in ("chrome-headless-shell", "headless_shell"):
+        return None
+    return str(downloaded)
 
 
 def launch_options(headless: bool | None = None) -> dict[str, Any]:

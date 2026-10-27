@@ -6,6 +6,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  LoginProgress,
   LoginViewer,
   useToast,
 } from "@autobacklinker/ui";
@@ -92,7 +93,7 @@ export function GoogleLoginCard({
           }
         })
         .catch(() => undefined);
-    }, 2500);
+    }, 1200);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -232,9 +233,15 @@ export function GoogleLoginCard({
             </Alert>
           ) : null}
 
-          {loginOpen && state?.message ? (
+          {state?.preparing ? (
             <Alert tone="info" title="Preparing the login browser">
-              {state.message}
+              <LoginProgress progress={state.preparing} />
+            </Alert>
+          ) : loginOpen ? (
+            <Alert tone="info" title="The login window is open">
+              Sign in with this project&apos;s Google account, then press{" "}
+              <span className="font-medium text-content">I&apos;m done - save session</span>.
+              Passwords and 2FA codes are typed by you only.
             </Alert>
           ) : null}
 
@@ -249,7 +256,7 @@ export function GoogleLoginCard({
                 ) : expired ? (
                   "Google login expired - re-login to continue."
                 ) : status === "LOGIN_OPEN" ? (
-                  state?.message ? (
+                  state?.preparing ? (
                     "Preparing the login browser…"
                   ) : (
                     "Sign in in the login view."
@@ -338,6 +345,7 @@ export function GoogleLoginCard({
         title="Google sign-in"
         description="The browser runs on the machine that owns this project's profile. Type and click directly in the live view."
         warning={state?.warning}
+        preparing={state?.preparing ?? null}
         issueTicket={() => api.projectLogin.streamTicket(apiClient, projectId)}
         onClose={closeViewer}
         onClosed={() => {

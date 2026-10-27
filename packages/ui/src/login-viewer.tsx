@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { Alert, Badge, Button, IconButton, Spinner, cn } from "./components";
+import { LoginProgress, type LoginPreparationProgress } from "./login-progress";
 
 /**
  * A live, interactive view of the login browser.
@@ -27,6 +28,8 @@ export interface LoginViewerProps {
   description?: React.ReactNode;
   /** A warning from the backend (for example that it runs headless). */
   warning?: string | null;
+  /** First-run download progress; covers the view until the window is ready. */
+  preparing?: LoginPreparationProgress | null;
   /** Ask the backend for a fresh ticket and the ready WebSocket URL. */
   issueTicket: () => Promise<LoginViewerTicket>;
   onClose: () => void;
@@ -101,6 +104,7 @@ export function LoginViewer({
   title = "Google sign-in",
   description,
   warning,
+  preparing,
   issueTicket,
   onClose,
   onClosed,
@@ -506,7 +510,7 @@ export function LoginViewer({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Badge tone={live ? "success" : status === "error" ? "danger" : "neutral"}>
-              {STATUS_LABELS[status]}
+              {preparing ? "Preparing" : STATUS_LABELS[status]}
             </Badge>
             <IconButton label="Close the login view" onClick={onClose}>
               ✕
@@ -576,7 +580,16 @@ export function LoginViewer({
             onContextMenu={(event) => event.preventDefault()}
           />
 
-          {status === "connecting" || status === "idle" ? (
+          {preparing ? (
+            <div className="absolute inset-0 flex items-start justify-center overflow-auto bg-slate-950/90 p-3 sm:p-6">
+              <div className="w-full max-w-lg rounded-lg border border-line bg-surface p-4 shadow-pop">
+                <p className="mb-2 text-sm font-semibold text-content">
+                  Preparing the login browser…
+                </p>
+                <LoginProgress progress={preparing} />
+              </div>
+            </div>
+          ) : status === "connecting" || status === "idle" ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/70 text-xs text-slate-200">
               <Spinner />
               <span>{headless ? "Starting the headless browser…" : "Connecting to the login browser…"}</span>
@@ -613,7 +626,7 @@ export function LoginViewer({
           </p>
           <div className="flex flex-wrap items-center gap-2">
             {onSave ? (
-              <Button size="sm" loading={saving} disabled={!live} onClick={() => void onSave()}>
+              <Button size="sm" loading={saving} disabled={!live || Boolean(preparing)} onClick={() => void onSave()}>
                 {saveLabel}
               </Button>
             ) : null}

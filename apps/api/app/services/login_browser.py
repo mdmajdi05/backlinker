@@ -18,9 +18,12 @@ differs.
 from __future__ import annotations
 
 import base64
+import http.client
 import os
 import re
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -296,15 +299,23 @@ class LoginWindow:
         self.stop_event = threading.Event()
         self.done = threading.Event()
         self.running = False
+        # A fresh window is not usable until the runtime is installed and the
+        # browser has navigated.  The flag lets the UI show *what* is happening
+        # (and how far the download is) instead of a silent wait.
+        self.preparing = True
+        self.preparing_started = time.monotonic()
         self.saved = False
         self.resumed = 0
         self.save_on_exit = True
         self.final_status = project_login.STATUS_LOGIN_OPEN
-        self.final_message = "The login window is open."
+        self.final_message = "Preparing the login browser…"
         self._thread: threading.Thread | None = None
         self._context: Any = None
         self._cdp: Any = None
         self._stream_page: Any = None
+        # Chrome is started by us (not by Playwright) for a visible login, so
+        # its process has to be stopped again when the window closes.
+        self._chrome_process: subprocess.Popen[bytes] | None = None
         self._held_modifiers: set[str] = set()
         self._last_check = 0.0
         self._connected_once = False
@@ -336,6 +347,45 @@ class LoginWindow:
             "website_id": self.website_id,
             "status": self.final_status,
             "message": self.final_message,
+            "preparing": self._preparing_state(),
+        }
+
+    def _preparing_state(self) -> dict[str, Any] | None:
+        """The progress of the first run, in a shape the UI can render.
+
+        The runtime installer publishes ``phase`` / ``percent`` / ``message``.
+        While the browser itself is starting (or when the runtime was already
+        installed by an earlier session) there is no download to report, so the
+        window tells the UI which step is running now.
+        """
+        if not self.running or not self.preparing:
+            return None
+        snapshot = browser_service.runtime_progress()
+        phase = str(snapshot.get("phase") or "idle")
+        percent = snapshot.get("percent")
+        detail = snapshot.get("detail")
+        if phase in ("package", "browser"):
+            message = str(snapshot.get("message") or "Preparing the login browser…")
+        elif phase == "done":
+            message = str(
+                snapshot.get("message")
+                or "The browser is ready. Opening the login window…"
+            )
+            percent = 100
+            detail = None
+        else:
+            # ``idle`` means this installation already has the runtime.  An
+            # old ``error`` belongs to a previous attempt, not to this window.
+            phase = "starting"
+            message = "Starting the login browser…"
+            percent = None
+            detail = None
+        return {
+            "phase": phase,
+            "percent": percent,
+            "message": message,
+            "detail": detail,
+            "elapsed": round(time.monotonic() - self.preparing_started, 1),
         }
 
     def request_stream(self) -> None:
@@ -420,6 +470,11 @@ class LoginWindow:
                     # different set means the operator really signed in.
                     self._prime_google_baseline(context)
 
+                # The window now exists and has navigated: from here on the
+                # operator works in the browser, not in a preparation screen.
+                self.preparing = False
+                self.final_message = "The login window is open."
+
                 while not self.stop_event.is_set():
                     if self._all_pages_closed(context):
                         break
@@ -432,6 +487,7 @@ class LoginWindow:
                 self._save(context)
         except Exception as exc:  # pragma: no cover - depends on the desktop
             log.exception("login window failed")
+            self.preparing = False
             self.final_status = project_login.STATUS_ERROR
             self.final_message = f"The login window could not be opened: {exc}"
             with session_scope() as db:
@@ -442,6 +498,7 @@ class LoginWindow:
                     error=self.final_message,
                 )
         finally:
+            self.preparing = False
             self._detach_stream()
             with suppress(Exception):
                 self.remote.close()
@@ -449,10 +506,25 @@ class LoginWindow:
             with suppress(Exception):
                 if context is not None:
                     context.close()
+            self._stop_chrome()
             self.running = False
             self.done.set()
 
     def _launch(self, playwright: Any, directory: Path) -> Any:
+        if not self.headless:
+            try:
+                return self._launch_unflagged_chrome(playwright, directory)
+            except Exception:
+                # No desktop Chrome, an old version, or Chrome refused to
+                # start: fall back to the Playwright managed browser (which
+                # Google may refuse for a sign-in - the warning is honest).
+                log.warning(
+                    "could not start Chrome without automation flags; "
+                    "falling back to the Playwright browser",
+                    exc_info=True,
+                )
+                self._stop_chrome()
+
         launch_kwargs: dict[str, Any] = {
             "user_data_dir": str(directory),
             "headless": self.headless,
@@ -486,6 +558,91 @@ class LoginWindow:
                 self.warning = HEADLESS_WARNING
                 launch_kwargs["headless"] = True
                 return launch()
+
+    def _launch_unflagged_chrome(self, playwright: Any, directory: Path) -> Any:
+        """Open the real Chrome without the flags that mark it as automated.
+
+        ``launch_persistent_context`` always passes ``--enable-automation``
+        and Playwright exposes ``navigator.webdriver``.  Google refuses a
+        sign-in in such a browser ("This browser or app may not be secure").
+        Instead, Chrome is started as a normal application with its own
+        profile and a local debugging port, and Playwright only *connects* to
+        it over CDP.  The operator signs in manually; the session is still
+        exported from the same profile.
+        """
+        executable = browser_service.launchable_chrome()
+        if executable is None:
+            raise RuntimeError("Google Chrome is not installed on this machine.")
+        port = _free_port()
+        self._clear_stale_profile_lock(directory)
+        arguments = [
+            executable,
+            f"--user-data-dir={directory}",
+            f"--remote-debugging-port={port}",
+            "--remote-allow-origins=*",
+            f"--window-size={settings.login_stream_width},{settings.login_stream_height}",
+            "--window-position=80,60",
+            # Newer Chrome builds otherwise expose `navigator.webdriver` and
+            # tell Google that a tool controls the browser.
+            "--disable-blink-features=AutomationControlled",
+            *ISOLATION_ARGS,
+        ]
+        log.info(
+            "starting Chrome for the login window",
+            extra={"extra_fields": {"project_id": self.project_id, "port": port}},
+        )
+        process = subprocess.Popen(  # noqa: S603 - the executable is resolved above
+            arguments,
+            env=browser_service.isolated_environment(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self._chrome_process = process
+        endpoint = f"http://127.0.0.1:{port}"
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Chrome closed while it was starting.")
+            if _debugging_port_ready(port):
+                break
+            time.sleep(0.25)
+        else:
+            raise RuntimeError("Chrome did not open its debugging port.")
+        browser = playwright.chromium.connect_over_cdp(endpoint)
+        for _ in range(60):
+            if browser.contexts:
+                return browser.contexts[0]
+            time.sleep(0.1)
+        return browser.new_context()
+
+    @staticmethod
+    def _clear_stale_profile_lock(directory: Path) -> None:
+        """Remove the lock of a Chrome that crashed (only our own profile)."""
+        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            with suppress(OSError):
+                (directory / name).unlink()
+
+    def _stop_chrome(self) -> None:
+        process = self._chrome_process
+        self._chrome_process = None
+        if process is None:
+            return
+        if os.name == "posix":
+            # Chrome starts helpers in the same process group; killing only the
+            # parent could leave a locked profile behind.
+            with suppress(Exception):
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        with suppress(Exception):
+            process.terminate()
+            process.wait(10)
+        if process.poll() is None:
+            if os.name == "posix":
+                with suppress(Exception):
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            with suppress(Exception):
+                process.kill()
+
 
     # -- streaming ----------------------------------------------------
     def _stream_tick(self, context: Any, fallback: Any) -> None:
@@ -960,7 +1117,7 @@ def _load_sync_playwright(window: Any = None) -> Any:
     ``No module named 'playwright'`` instead of opening the window.
     """
     ensure_playwright_path()
-    if browser_service.playwright_available():
+    if browser_service.runtime_ready():
         from playwright.sync_api import sync_playwright
 
         return sync_playwright
@@ -979,10 +1136,30 @@ def _load_sync_playwright(window: Any = None) -> Any:
         )
     ensure_playwright_path()
     if window is not None:
-        window.final_message = "The login window is open."
+        window.final_message = "The browser is ready. Opening the login window…"
     from playwright.sync_api import sync_playwright
 
     return sync_playwright
+
+
+def _free_port() -> int:
+    """A free loopback port for the debugging endpoint of Chrome."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _debugging_port_ready(port: int) -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+    try:
+        connection.request("GET", "/json/version")
+        response = connection.getresponse()
+        response.read(1024)
+        return response.status == 200
+    except OSError:
+        return False
+    finally:
+        connection.close()
 
 
 def _clamp(value: Any, low: float, high: float) -> float:
