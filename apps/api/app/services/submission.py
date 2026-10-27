@@ -9,7 +9,6 @@ unverified until the verification engine confirms the link).
 from __future__ import annotations
 
 import time
-from contextlib import suppress
 from typing import Any
 
 from sqlalchemy import select
@@ -224,13 +223,16 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
         )
 
     refreshed_state: dict[str, Any] = {}
+    login_state_version = (
+        project_login.profile_version(db, project.id) if project else None
+    )
 
     def remember_login_state(state: dict[str, Any]) -> None:
         """Keep a refreshed session until the adapter is done.
 
-        The adapter runs inside the worker session; writing from a second
-        SQLite connection while that transaction is open could lose the
-        refresh, so the state is saved with the same session afterwards.
+        The state is written back with the version that was read, so a fresh
+        login that happened while the browser was open is never overwritten by
+        the stale cookies of this run.
         """
         refreshed_state.clear()
         refreshed_state.update(state)
@@ -268,19 +270,25 @@ def execute_submission(db: Session, task: Task) -> TaskOutcome:
     try:
         result = adapter.submit(ctx)
     except Exception as exc:
-        _save_refreshed_login(db, project, refreshed_state)
+        _save_refreshed_login(db, project, refreshed_state, login_state_version)
         return TaskOutcome(
             status=RESULT_FAILED,
             error=f"{type(exc).__name__}: {exc}",
             message=f"Submission failed for {website.domain}",
             retryable=True,
         )
-    _save_refreshed_login(db, project, refreshed_state)
+    _save_refreshed_login(db, project, refreshed_state, login_state_version)
 
     outcome = _outcome_from_result(result)
     if project is not None:
         if outcome.error and outcome.error.startswith(project_login.LOGIN_REQUIRED_PREFIX):
-            project_login.pause_for_login(db, project.id, website.id, outcome.error)
+            project_login.pause_for_login(
+                db,
+                project.id,
+                website.id,
+                outcome.error,
+                google=bool((result.evidence or {}).get("google_login")),
+            )
         elif outcome.status in (RESULT_SUBMITTED, RESULT_PUBLISHED):
             # A successful submission behind an earlier login wall proves the
             # session works again.  A site that never asked for a login keeps
@@ -331,17 +339,39 @@ def result_utcnow():
 
 
 def _save_refreshed_login(
-    db: Session, project: Project | None, state: dict[str, Any]
+    db: Session,
+    project: Project | None,
+    state: dict[str, Any],
+    expected_version: int | None,
 ) -> None:
-    """Store a refreshed browser session with the worker's own session.
+    """Store a refreshed browser session without touching the task outcome.
 
-    A lost cookie refresh must never fail a task that just succeeded, so the
-    write is best effort.
+    The write uses its own session (a failed "best effort" save must never
+    poison the worker transaction and turn a submitted form into FAILED) and
+    the version that was read, so newer cookies are never overwritten.
     """
+    del db  # the worker session is deliberately left untouched
     if project is None or not state:
         return
-    with suppress(Exception):
-        project_login.save_storage_state(db, project.id, state)
+    from app.core.logging import get_logger
+    from app.db.session import session_scope
+
+    log = get_logger(__name__)
+    try:
+        with session_scope() as fresh:
+            project_login.save_storage_state(
+                fresh, project.id, state, expected_version=expected_version
+            )
+    except project_login.LoginStateConflict:
+        log.info(
+            "refresh of a stale login session ignored",
+            extra={"extra_fields": {"project_id": project.id}},
+        )
+    except Exception:
+        log.warning(
+            "could not refresh the login session",
+            extra={"extra_fields": {"project_id": project.id}},
+        )
 
 
 def _outcome_from_result(result: SubmissionResult) -> TaskOutcome:

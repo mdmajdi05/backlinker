@@ -120,7 +120,12 @@ export function ProjectsPage() {
   const [details, setDetails] = React.useState<
     Record<
       string,
-      { counts?: ProjectCounts; environment?: string; login?: ProjectLogin | null }
+      {
+        counts?: ProjectCounts;
+        environment?: string;
+        login?: ProjectLogin | null;
+        failed?: boolean;
+      }
     >
   >({});
   const [detailsNonce, setDetailsNonce] = React.useState(0);
@@ -145,7 +150,7 @@ export function ProjectsPage() {
             },
           ] as const;
         } catch {
-          return [id, {}] as const;
+          return [id, { failed: true }] as const;
         }
       }),
     ).then((entries) => {
@@ -304,9 +309,11 @@ export function ProjectsPage() {
           {items.map((project) => {
             const detail = details[project.id];
             const counts = detail?.counts;
-            const google = detail
-              ? googleState(detail.login)
-              : { label: "Google: checking…", tone: "neutral" as const };
+            const google = !detail
+              ? { label: "Google: checking…", tone: "neutral" as const }
+              : detail.failed || detail.login === undefined
+                ? { label: "Google: unknown", tone: "neutral" as const }
+                : googleState(detail.login);
             return (
               <Card key={project.id} className="h-full">
                 <CardBody className="flex h-full flex-col gap-3">

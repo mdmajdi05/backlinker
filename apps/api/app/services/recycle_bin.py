@@ -307,6 +307,14 @@ def purge_item(db: Session, user: User | None, kind: str, item_id: str) -> dict[
         return removed
 
     if isinstance(row, Project):
+        # Close a visible login window *before* any write transaction is
+        # opened: its save path writes to the same SQLite database, and waiting
+        # for it inside a write lock would deadlock both sides.
+        with suppress(Exception):
+            from app.services import login_browser
+
+            login_browser.close(row.id)
+        profile_path = project_login.profile_path_for(db, row.id)
         opportunity_ids = list(
             db.execute(select(Opportunity.id).where(Opportunity.project_id == row.id))
             .scalars()
@@ -319,15 +327,18 @@ def purge_item(db: Session, user: User | None, kind: str, item_id: str) -> dict[
         removed["tasks"] = int(task_count)
         db.execute(update(Task).where(Task.project_id == row.id).values(opportunity_id=None))
         # The browser profile and its encrypted session belong to the project
-        # and must not outlive it on the disk.  Close a visible login window
-        # first so the profile directory is not in use.
-        with suppress(Exception):
-            from app.services import login_browser
-
-            login_browser.cancel(row.id)
-        project_login.clear_profile(db, row.id, delete_files=True)
+        # and must not outlive it on the disk.  The files are removed after the
+        # commit, when no browser can recreate them any more.
+        project_login.clear_profile(db, row.id, delete_files=False)
         db.delete(row)
         db.commit()
+        with suppress(Exception):
+            import shutil
+
+            shutil.rmtree(profile_path, ignore_errors=True)
+            default_path = project_login.profile_dir(item_id)
+            if default_path != profile_path:
+                shutil.rmtree(default_path, ignore_errors=True)
         return removed
 
     if isinstance(row, Opportunity):

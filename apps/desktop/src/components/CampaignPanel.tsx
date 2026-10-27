@@ -366,13 +366,14 @@ export function CampaignPanel({
         projectId,
         loginRow.website_id,
       );
+      const saved = result.saved && result.site?.status === "CONNECTED";
       toast.push(
-        result.saved
+        saved
           ? result.resumed
             ? `Login saved. ${result.resumed} paused task(s) queued again.`
             : "Login saved."
           : result.message ?? "No new session was saved.",
-        result.saved ? "success" : "info",
+        saved ? "success" : "info",
       );
       setLoginRow(null);
       refresh();
@@ -855,6 +856,13 @@ export function CampaignPanel({
                                     Re-login
                                   </Button>
                                 )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => openSubmit(row)}
+                                >
+                                  Mark submitted
+                                </Button>
                               </>
                             ) : null}
                             {row.status === "WAITING_MANUAL" ? (

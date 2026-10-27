@@ -65,7 +65,12 @@ export default function ProjectsPage() {
   const router = useRouter();
   const deleteAction = useAction();
   const [page, setPage] = React.useState(1);
-  const [view, setView] = React.useState<ProjectView>(readView);
+  // Always start with the default so the server and the first client render
+  // agree; the stored preference is applied after hydration.
+  const [view, setView] = React.useState<ProjectView>("cards");
+  React.useEffect(() => {
+    setView(readView());
+  }, []);
   const chooseView = (next: ProjectView) => {
     setView(next);
     try {
@@ -197,7 +202,9 @@ export default function ProjectsPage() {
                   const google =
                     countersLoading && loginById[project.id] === undefined
                       ? { label: "Google: checking…", tone: "neutral" as const }
-                      : googleState(loginById[project.id]);
+                      : failedIds.includes(project.id)
+                        ? { label: "Google: unknown", tone: "neutral" as const }
+                        : googleState(loginById[project.id]);
                   return (
                     <Card key={project.id} className="h-full shadow-none">
                       <CardBody className="flex h-full flex-col gap-3">

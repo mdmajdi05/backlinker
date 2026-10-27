@@ -14,6 +14,7 @@ submission page answers with a login wall.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -23,7 +24,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -121,9 +123,40 @@ def get_profile(
             profile_dir=str(profile_dir(project_id)),
         )
         db.add(row)
-        db.commit()
-        db.refresh(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another process created the row between the SELECT and the
+            # INSERT (the API and the worker can both inspect a login).  The
+            # existing row is the truth - never fail the login because of it.
+            db.rollback()
+            row = db.execute(
+                select(ProjectLoginProfile).where(
+                    ProjectLoginProfile.project_id == project_id
+                )
+            ).scalar_one_or_none()
+        else:
+            db.refresh(row)
     return row
+
+
+def profile_version(db: Session, project_id: str) -> int | None:
+    """The version a caller read, so a stale save can be rejected."""
+    row = get_profile(db, project_id)
+    return row.version if row is not None else None
+
+
+class LoginStateConflict(RuntimeError):
+    """A newer login session was stored after this caller read its state."""
+
+
+def profile_path_for(db: Session, project_id: str) -> Path:
+    """The profile directory recorded for the project, or the default path."""
+    row = get_profile(db, project_id)
+    stored = str(row.profile_dir or "").strip() if row is not None else ""
+    if stored:
+        return Path(stored)
+    return profile_dir(project_id)
 
 
 def _associated_data(project_id: str) -> str:
@@ -135,34 +168,72 @@ def _session_secret() -> str:
 
     A per installation key file keeps the encrypted ``storage_state`` values
     useless on another machine, even when the database is copied.  If the file
-    is missing (a fresh install or an upgrade) it is created with owner-only
-    permissions.  An operator can override it with
+    is missing (a fresh install or an upgrade) it is created atomically with
+    owner-only permissions.  An operator can override it with
     ``AUTOBL_LOGIN_SECRET`` for a managed deployment.
     """
     override = os.environ.get("AUTOBL_LOGIN_SECRET", "").strip()
     if override:
         return override
     try:
-        existing = SESSION_KEY_FILE.read_text(encoding="utf-8").strip()
-        if existing:
-            return existing
-    except OSError:
+        # Deliberately not guarded by ``except OSError``: a file that exists
+        # but cannot be read must fail loudly instead of being replaced
+        # (replacing it would destroy every stored session).
+        return _read_key_file()
+    except FileNotFoundError:
         pass
-    SESSION_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    SESSION_KEY_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     key = secrets.token_hex(32)
-    SESSION_KEY_FILE.write_text(key, encoding="utf-8")
-    with suppress(OSError):
-        os.chmod(SESSION_KEY_FILE, 0o600)
+    try:
+        # O_EXCL makes the create atomic: two processes that start at the same
+        # time cannot both write a different key.
+        descriptor = os.open(
+            SESSION_KEY_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+        )
+    except FileExistsError:
+        return _read_key_file()
+    try:
+        os.write(descriptor, key.encode("utf-8"))
+    finally:
+        os.close(descriptor)
     return key
 
 
-def save_storage_state(db: Session, project_id: str, state: dict[str, Any]) -> None:
-    """Encrypt and store the Playwright storage state of a project."""
+def _read_key_file() -> str:
+    key = SESSION_KEY_FILE.read_text(encoding="utf-8").strip()
+    if not key:
+        raise RuntimeError(
+            f"The login key file {SESSION_KEY_FILE} is empty. Restore it or remove "
+            "it (the stored browser sessions would have to be connected again)."
+        )
+    return key
+
+
+def save_storage_state(
+    db: Session,
+    project_id: str,
+    state: dict[str, Any],
+    *,
+    expected_version: int | None = None,
+) -> None:
+    """Encrypt and store the Playwright storage state of a project.
+
+    ``expected_version`` is the profile version the caller read together with
+    its state.  When a newer session was stored in the meantime (a fresh login
+    while a long submission was still running) the stale write is rejected
+    instead of destroying the newer cookies.
+    """
     if not isinstance(state, dict):
         return
     row = get_profile(db, project_id, create=True)
     if row is None:  # pragma: no cover - create=True always returns a row
         return
+    if expected_version is not None and row.version != expected_version:
+        raise LoginStateConflict(
+            f"The project login changed while the browser was open "
+            f"(expected version {expected_version}, stored {row.version})."
+        )
     row.storage_state_encrypted = encrypt(
         json.dumps(state, separators=(",", ":")),
         _session_secret(),
@@ -219,11 +290,24 @@ def set_status(
     return row
 
 
+def remove_profile_files(db: Session, project_id: str) -> None:
+    """Delete every profile directory recorded for the project."""
+    paths = {profile_path_for(db, project_id), profile_dir(project_id)}
+    for path in paths:
+        with suppress(OSError):
+            shutil.rmtree(path, ignore_errors=True)
+
+
 def clear_profile(db: Session, project_id: str, *, delete_files: bool = True) -> None:
     """Forget the stored session and remove the profile directory."""
     row = get_profile(db, project_id)
+    paths = {profile_dir(project_id)}
+    if row is not None and str(row.profile_dir or "").strip():
+        paths.add(Path(str(row.profile_dir).strip()))
     if delete_files:
-        shutil.rmtree(profile_dir(project_id), ignore_errors=True)
+        for path in paths:
+            with suppress(OSError):
+                shutil.rmtree(path, ignore_errors=True)
     if row is not None:
         row.storage_state_encrypted = None
         row.status = STATUS_NOT_CONNECTED
@@ -349,33 +433,59 @@ def page_requires_login(page: Any) -> bool:
     return False
 
 
+def _is_google_domain(domain: str) -> bool:
+    host = str(domain or "").strip().lstrip(".").lower()
+    return host == "google.com" or host.endswith(".google.com")
+
+
 def google_session_present(cookies: list[dict[str, Any]]) -> bool:
     """Whether the cookies contain a real Google login session."""
     for cookie in cookies or []:
-        domain = str(cookie.get("domain") or "")
-        name = str(cookie.get("name") or "")
-        if "google.com" in domain and name in _GOOGLE_COOKIES:
+        if _is_google_domain(str(cookie.get("domain") or "")) and str(
+            cookie.get("name") or ""
+        ) in _GOOGLE_COOKIES:
             return True
     return False
+
+
+def google_cookie_fingerprint(cookies: list[dict[str, Any]]) -> str:
+    """A stable fingerprint of the Google session cookies.
+
+    Re-opening the login window of an expired project shows the *old* Google
+    cookies of the profile.  Comparing the fingerprint with the one at window
+    start tells a real new sign-in (Google rotated the cookies) apart from the
+    stale session that is still on disk.
+    """
+    parts = sorted(
+        f"{cookie.get('name')}={cookie.get('value')}"
+        for cookie in cookies or []
+        if _is_google_domain(str(cookie.get("domain") or ""))
+        and str(cookie.get("name") or "") in _GOOGLE_COOKIES
+    )
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # --------------------------------------------------------------------------
 # Resuming work after a login
 # --------------------------------------------------------------------------
 def pause_for_login(
-    db: Session, project_id: str, website_id: str | None, message: str
+    db: Session,
+    project_id: str,
+    website_id: str | None,
+    message: str,
+    *,
+    google: bool = True,
 ) -> None:
-    """Record a login wall on the project (and on the website, when known)."""
+    """Record a login wall on the project (and on the website, when known).
+
+    A wall on a website that simply wants its own account is a *site* login and
+    must not claim that the project's Google session expired - that would send
+    the operator to the wrong login window.
+    """
     row = get_profile(db, project_id)
     # Only a project that had a session can be "expired".  Without a stored
     # session the honest state is "not connected - log in".
     has_session = bool(row and row.storage_state_encrypted)
-    set_status(
-        db,
-        project_id,
-        STATUS_EXPIRED if has_session else STATUS_NOT_CONNECTED,
-        error=message,
-    )
     if website_id:
         mark_site(
             db,
@@ -384,35 +494,71 @@ def pause_for_login(
             SITE_EXPIRED if has_session else SITE_LOGIN_REQUIRED,
             error=message,
         )
+    if google:
+        # A decryption failure is actionable ("connect Google again") and must
+        # not be replaced by a generic wall state.
+        if row is not None and row.status == STATUS_ERROR:
+            return
+        set_status(
+            db,
+            project_id,
+            STATUS_EXPIRED if has_session else STATUS_NOT_CONNECTED,
+            error=message,
+        )
 
 
 def count_login_paused(db: Session, project_id: str) -> int:
     return len(_login_paused_tasks(db, project_id))
 
 
-def _login_paused_tasks(db: Session, project_id: str) -> list[Task]:
-    return (
-        db.execute(
-            select(Task).where(
-                Task.project_id == project_id,
-                Task.status == "WAITING_FOR_USER",
-                Task.last_error.like(f"{LOGIN_REQUIRED_PREFIX}%"),
-            )
-        )
-        .scalars()
-        .all()
+def _login_paused_tasks(
+    db: Session, project_id: str, website_id: str | None = None
+) -> list[Task]:
+    query = select(Task).where(
+        Task.project_id == project_id,
+        Task.status == "WAITING_FOR_USER",
+        Task.last_error.like(f"{LOGIN_REQUIRED_PREFIX}%"),
     )
+    if website_id:
+        query = query.where(Task.website_id == website_id)
+    return db.execute(query).scalars().all()
 
 
-def resume_login_paused_tasks(db: Session, project_id: str) -> int:
-    """Queue the tasks that stopped at a login wall again."""
-    from app.services.queue import retry_task
+def resume_login_paused_tasks(
+    db: Session, project_id: str, *, website_id: str | None = None
+) -> int:
+    """Queue the tasks that stopped at a login wall again.
 
-    tasks = _login_paused_tasks(db, project_id)
-    for task in tasks:
-        retry_task(db, task)
-        task.requires_human = False
-    return len(tasks)
+    A login for one website only requeues that website (a Google login requeues
+    everything).  The update is conditional: a task that the operator finished
+    meanwhile is never resurrected.
+    """
+    tasks = _login_paused_tasks(db, project_id, website_id)
+    ids = [task.id for task in tasks]
+    if not ids:
+        return 0
+    now = utcnow()
+    result = db.execute(
+        update(Task)
+        .where(
+            Task.id.in_(ids),
+            Task.status == "WAITING_FOR_USER",
+            Task.last_error.like(f"{LOGIN_REQUIRED_PREFIX}%"),
+        )
+        .values(
+            status="QUEUED",
+            scheduled_for=now,
+            next_retry_at=now,
+            last_error=None,
+            requires_human=False,
+            lease_owner=None,
+            lease_expires_at=None,
+            finished_at=None,
+            updated_at=now,
+        )
+    )
+    db.commit()
+    return int(result.rowcount or 0)
 
 
 # --------------------------------------------------------------------------
@@ -442,10 +588,17 @@ def describe(db: Session, project_id: str) -> dict[str, Any]:
             "browser_available": browser_available,
             "paused_tasks": count_login_paused(db, project_id),
         }
+    status = row.status
+    if running:
+        status = STATUS_LOGIN_OPEN
+    elif status == STATUS_LOGIN_OPEN:
+        # A row written by an older version may still carry the transient
+        # status.  The window is gone, so report the real session state.
+        status = STATUS_CONNECTED if row.storage_state_encrypted else STATUS_NOT_CONNECTED
     return {
         "project_id": project_id,
         "provider": row.provider,
-        "status": row.status,
+        "status": status,
         "email": row.email,
         "last_login_at": row.last_login_at,
         "last_checked_at": row.last_checked_at,

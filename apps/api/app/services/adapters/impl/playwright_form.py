@@ -71,6 +71,9 @@ class PlaywrightFormAdapter(BaseAdapter):
         "Success URL fragment present after submission",
     )
     domains: tuple[str, ...] = ()
+    #: Set while a Google OAuth page was really seen in this run, so a login
+    #: wall can be attributed to Google or to the website itself.
+    _saw_google: bool = False
 
     def submit(self, ctx: SubmissionContext) -> SubmissionResult:
         """Fill the form in a real browser and look for the success signal."""
@@ -163,6 +166,7 @@ class PlaywrightFormAdapter(BaseAdapter):
         playwright_timeout: type[Exception],
     ) -> SubmissionResult:
         """Open the form, fill it, submit it and look for the success signal."""
+        self._saw_google = False
         if ctx.cancelled():
             return self._cancelled()
         page.goto(form_url, wait_until="domcontentloaded", timeout=timeout_ms)
@@ -177,20 +181,25 @@ class PlaywrightFormAdapter(BaseAdapter):
             ):
                 if project_login.page_requires_login(page):
                     return self._login_required(
-                        form_url, "The site still asks for a login after Google sign-in."
+                        form_url,
+                        "The site still asks for a login after Google sign-in.",
+                        page=page,
                     )
             else:
                 return self._login_required(
                     form_url,
                     "This website asks for a login. Connect Google for this project "
                     "or log in to the website, then start the work again.",
+                    page=page,
                 )
 
         content = page.content()
         challenge = challenge_kind(content)
         if challenge == "login":
             return self._login_required(
-                form_url, "The site answered with a login challenge."
+                form_url,
+                "The site answered with a login challenge.",
+                page=page,
             )
         if challenge is not None:
             screenshot = self._screenshot(ctx, page)
@@ -361,6 +370,8 @@ class PlaywrightFormAdapter(BaseAdapter):
             .first
         )
         try:
+            if "accounts.google.com" in str(page.url or ""):
+                self._saw_google = True
             if locator.count() == 0 or not locator.is_visible():
                 return False
             popup = None
@@ -374,6 +385,8 @@ class PlaywrightFormAdapter(BaseAdapter):
             if popup is not None:
                 with suppress(Exception):
                     popup.wait_for_load_state("domcontentloaded", timeout=15_000)
+                if "accounts.google.com" in str(popup.url or ""):
+                    self._saw_google = True
                 # Google may show an account chooser.  Wait briefly for an
                 # automatic continuation, then give the task back to the human.
                 deadline = 10
@@ -392,10 +405,12 @@ class PlaywrightFormAdapter(BaseAdapter):
                 # the account chooser instead of filling it.
                 deadline = 10.0
                 while deadline > 0 and "accounts.google.com" in str(page.url or ""):
+                    self._saw_google = True
                     with suppress(Exception):
                         page.wait_for_timeout(500)
                     deadline -= 0.5
                 if "accounts.google.com" in str(page.url or ""):
+                    self._saw_google = True
                     return False
                 with suppress(Exception):
                     page.wait_for_timeout(1_000)
@@ -420,13 +435,25 @@ class PlaywrightFormAdapter(BaseAdapter):
             # fail the submission that just succeeded.
             ctx.save_login_state(context.storage_state())
 
-    def _login_required(self, form_url: str, message: str) -> SubmissionResult:
+    def _login_required(
+        self, form_url: str, message: str, *, page: Any = None
+    ) -> SubmissionResult:
+        google_wall = bool(self._saw_google)
+        if page is not None:
+            with suppress(Exception):
+                google_wall = google_wall or "accounts.google.com" in str(
+                    page.url or ""
+                )
         return SubmissionResult(
             status=RESULT_WAITING_USER,
             message=message,
             error=f"{project_login.LOGIN_REQUIRED_PREFIX} {message}",
             requires_human=True,
-            evidence={"login_required": True, "url": form_url},
+            evidence={
+                "login_required": True,
+                "url": form_url,
+                "google_login": google_wall,
+            },
         )
 
     def _cancelled(self) -> SubmissionResult:

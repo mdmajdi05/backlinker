@@ -123,21 +123,22 @@ def open_google_login(
 
 @router.post("/projects/{project_id}/login/finish")
 def finish_login(project_id: str, db: DbSession, user: CurrentUser) -> dict:
-    """Save the session of the open window and resume paused websites."""
+    """Save the session of the open Google window and resume paused websites."""
     project = _project(db, project_id, user)
-    result = login_browser.finish(project.id)
+    result = login_browser.finish(project.id, expect_mode="google")
     resumed = int(result.get("resumed") or 0)
     if result.get("saved") and not resumed:
         # The window may already have saved the session earlier (the detection
         # loop does it) - resume anything that is still paused.
         resumed = project_login.resume_login_paused_tasks(db, project.id)
-    record_event(
-        db,
-        "login.saved",
-        f"Login saved for {project.name}",
-        project_id=project.id,
-        metadata={"saved": result.get("saved"), "resumed": resumed},
-    )
+    if result.get("saved"):
+        record_event(
+            db,
+            "login.saved",
+            f"Login saved for {project.name}",
+            project_id=project.id,
+            metadata={"resumed": resumed},
+        )
     return {**result, "resumed": resumed, "login": project_login.describe(db, project.id)}
 
 
@@ -200,15 +201,16 @@ def finish_site_login(
     """Save a directory login and resume the work of that website."""
     project = _project(db, project_id, user)
     website = _website(db, project, website_id)
-    result = login_browser.finish(project.id)
+    result = login_browser.finish(
+        project.id, expect_mode="site", expect_website=website.id
+    )
     resumed = int(result.get("resumed") or 0)
-    if result.get("saved") and not resumed:
-        resumed = project_login.resume_login_paused_tasks(db, project.id)
-    return {
-        **result,
-        "resumed": resumed,
-        "site": project_login.describe_site(db, project.id, website.id),
-    }
+    site = project_login.describe_site(db, project.id, website.id)
+    if site.get("status") == project_login.SITE_CONNECTED and not resumed:
+        resumed = project_login.resume_login_paused_tasks(
+            db, project.id, website_id=website.id
+        )
+    return {**result, "resumed": resumed, "site": site}
 
 
 @router.post("/projects/{project_id}/login/sites/{website_id}/expired")

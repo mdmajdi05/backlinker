@@ -99,8 +99,9 @@ never leak into another project.
    are your decisions. When Google Chrome is installed the window uses it (with
    the isolated project profile) because Chrome signs in to Google more
    reliably; otherwise the bundled Chromium opens.
-4. The app detects the Google session and stores it **encrypted on the
-   machine that runs the backend** (in the desktop app that is this Mac).
+4. The app detects the **new** Google sign-in (the old cookies of an expired
+   session are never counted as a login) and stores the session **encrypted on
+   the machine that runs the backend** (in the desktop app that is this Mac).
    The card then shows **Google: connected (your@email)**, and work that had
    stopped at a login wall is queued again automatically. If the window is
    still open you can press **I'm done - save session** to close it.
@@ -116,11 +117,13 @@ Google login.
   failed.
 * The project page's **Google login** card shows **Login expired** (the
   projects list shows a **Google: login expired** badge).
-* Press **Re-login** on the project card or on the row. The same profile
-  opens again; sign in once.
-* The paused websites are queued again as soon as the session is detected.
-  On a row, **Save login** saves the window explicitly; on the project card
-  the button is **I'm done - save session**.
+* Press **Re-login** on the project's Google login card, or on the row. The
+  same profile opens again; sign in once.
+* The paused websites are queued again as soon as a **new** sign-in is
+  detected. On a row, **Save login** saves the website window explicitly; on
+  the project page the Google card button is **I'm done - save session**. A row that stays
+  **Login needed** still offers **Mark submitted**, so a site that cannot be
+  automated can always be finished by hand.
 
 **Forget** removes the stored session and the profile directory of the project.
 The exported session in the database is encrypted; the isolated profile
@@ -233,8 +236,9 @@ sites ko dobara queue karta hai.
 Har project ka apna alag browser profile hai. Project page par **Connect
 Google** dabao, khuli window me ek baar sign-in karo. Session encrypted form
 me us machine par save hoti hai jo backend chala rahi hai (desktop app me yeh
-Mac hai). Jaise hi session detect hoti hai, login wall par ruki hui websites
-apne aap dobara queue ho jati hain. Baad me jo site "Continue with Google"
+Mac hai). Jaise hi **naya sign-in** detect hota hai, login wall par ruki hui
+websites apne aap dobara queue ho jati hain - purane expired cookies ko login
+nahi mana jata. Baad me jo site "Continue with Google"
 deti hai, app usi session se andar chali jati hai - password ya 2FA app kabhi
 nahi bharta.
 
@@ -243,5 +247,5 @@ Row **Login needed** ho jati hai (fail nahi hoti), project page ke Google
 login card par **Login expired** dikhta hai (projects list me **Google: login
 expired** badge). **Re-login** dabao, usi profile me dobara sign-in karo -
 paused kaam session detect hote hi apne aap dobara queue ho jata hai. Row par
-**Save login**, project card par **I'm done - save session** se window
-explicitly save hoti hai.
+**Save login**, project page ke Google card par **I'm done - save session** se
+window explicitly save hoti hai.

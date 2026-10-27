@@ -103,7 +103,7 @@ def find_submission_page(
 
     # The URL may already be the form page - try it first.
     direct = inspect_form_url(base)
-    if direct.get("fields"):
+    if direct.get("fields") and not _is_login_form(direct):
         return {
             **direct,
             "found": True,
@@ -136,7 +136,7 @@ def find_submission_page(
                 "message": result.get("message"),
             }
         )
-        if result.get("fields"):
+        if result.get("fields") and not _is_login_form(result):
             return {
                 **result,
                 "found": True,
@@ -220,3 +220,17 @@ def looks_like_login(url: str) -> bool:
     """A cheap guard so a login link is never proposed as the form."""
     path = urllib.parse.urlparse(url).path.lower()
     return bool(re.search(r"/(log-?in|sign-?in|register|auth)(/|$)", path))
+
+
+def _is_login_form(result: dict[str, Any]) -> bool:
+    """Whether an inspected page is a login form instead of a submission form.
+
+    A page that redirected to a login URL, or that only has a password and one
+    more control, must never be offered as the submission form - the operator
+    would configure a form that can only fail.
+    """
+    url = str(result.get("final_url") or result.get("form_url") or "")
+    if looks_like_login(url):
+        return True
+    fields = result.get("fields") or []
+    return bool(result.get("has_password")) and len(fields) <= 2

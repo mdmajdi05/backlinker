@@ -351,13 +351,14 @@ export function CampaignPanel({
     );
     if (outcome.ok) {
       const result = outcome.data;
+      const saved = Boolean(result?.saved) && result?.site?.status === "CONNECTED";
       toast.push(
-        result?.saved
-          ? result.resumed
+        saved
+          ? result?.resumed
             ? `Login saved. ${result.resumed} paused task(s) queued again.`
             : "Login saved."
           : result?.message ?? "No new session was saved.",
-        result?.saved ? "success" : "info",
+        saved ? "success" : "info",
       );
       setLoginRow(null);
       refresh();
@@ -834,23 +835,32 @@ export function CampaignPanel({
                             </Button>
                           ) : null}
                           {row.status === "LOGIN_NEEDED" ? (
-                            loginRow?.opportunity_id === row.opportunity_id ? (
+                            <div className="flex flex-wrap items-center justify-end gap-1">
+                              {loginRow?.opportunity_id === row.opportunity_id ? (
+                                <Button
+                                  size="sm"
+                                  loading={rowAction.pending}
+                                  onClick={() => void saveLogin()}
+                                >
+                                  Save login
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  loading={rowAction.pending}
+                                  onClick={() => void relogin(row)}
+                                >
+                                  Re-login
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
-                                loading={rowAction.pending}
-                                onClick={() => void saveLogin()}
+                                variant="ghost"
+                                onClick={() => openSubmit(row)}
                               >
-                                Save login
+                                Mark submitted
                               </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                loading={rowAction.pending}
-                                onClick={() => void relogin(row)}
-                              >
-                                Re-login
-                              </Button>
-                            )
+                            </div>
                           ) : null}
                           {row.status === "WAITING_MANUAL" ? (
                             <>

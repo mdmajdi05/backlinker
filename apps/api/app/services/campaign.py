@@ -596,6 +596,7 @@ def _row_status(
     if record is not None and record.verification_status in (
         "SUBMITTED",
         "PUBLISHED_UNVERIFIED",
+        "PENDING",
     ):
         return "SUBMITTED"
     if task is not None:
