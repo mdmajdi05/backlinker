@@ -1,6 +1,8 @@
 import * as React from "react";
 import {
+  AccountBatchBanner,
   Alert,
+  BacklinkTargetCell,
   Badge,
   Button,
   Card,
@@ -13,6 +15,7 @@ import {
   MetricTile,
   ProgressBar,
   Select,
+  SiteAccountCell,
   Table,
   Td,
   Textarea,
@@ -25,7 +28,9 @@ import type {
   CampaignRow,
   CampaignRowStatus,
   CampaignStartResult,
+  ProjectAccounts,
   ProjectLoginPreparing,
+  SiteAccount,
 } from "@autobacklinker/shared-types";
 import { api, apiClient } from "../lib/api";
 import { useAsync } from "../lib/useAsync";
@@ -107,6 +112,11 @@ export function CampaignPanel({
     () => api.projects.settings(apiClient, projectId),
     [projectId],
   );
+  /* The accounts of the rows, refreshed quickly while a batch runs. */
+  const accounts = useAsync<ProjectAccounts>(
+    () => api.accounts.get(apiClient, projectId),
+    [projectId],
+  );
 
   const [text, setText] = React.useState("");
   const [addResult, setAddResult] = React.useState<CampaignAddResult | null>(null);
@@ -139,6 +149,12 @@ export function CampaignPanel({
   const [savingSpeed, setSavingSpeed] = React.useState(false);
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("");
+  const [accountOpen, setAccountOpen] = React.useState(false);
+  const [accountBusy, setAccountBusy] = React.useState(false);
+  const [gmailBusy, setGmailBusy] = React.useState(false);
+  const [gmailAddress, setGmailAddress] = React.useState("");
+  const [gmailPassword, setGmailPassword] = React.useState("");
+  const [gmailMessage, setGmailMessage] = React.useState<string | null>(null);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   // Follow the first-run download of a website login window until it is ready.
@@ -160,6 +176,107 @@ export function CampaignPanel({
       window.clearInterval(timer);
     };
   }, [loginViewOpen, loginPreparing, projectId]);
+
+  const accountBatch = accounts.data?.batch ?? null;
+  const accountRunning = Boolean(accountBatch?.running);
+  const accountMap = accounts.data?.accounts ?? {};
+  const wasRunning = React.useRef(false);
+
+  // Follow the batch; when it finishes, refresh the campaign table once.
+  React.useEffect(() => {
+    if (!accountRunning) {
+      if (wasRunning.current) campaign.reload();
+      wasRunning.current = false;
+      return;
+    }
+    wasRunning.current = true;
+    const timer = window.setInterval(() => accounts.reload(), 2000);
+    return () => window.clearInterval(timer);
+  }, [accountRunning, accounts.reload, campaign.reload]);
+
+  const startAccounts = async () => {
+    setAccountBusy(true);
+    try {
+      const gmail = accounts.data?.gmail;
+      if (gmail && !gmail.configured && gmailPassword.trim()) {
+        setGmailBusy(true);
+        try {
+          const saved = await api.accounts.saveGmail(apiClient, {
+            address: gmailAddress.trim(),
+            app_password: gmailPassword.trim(),
+          });
+          setGmailPassword("");
+          setGmailMessage(saved.message);
+        } finally {
+          setGmailBusy(false);
+        }
+      }
+      await api.accounts.provision(apiClient, projectId, { retry: false });
+      setAccountOpen(false);
+      accounts.reload();
+      campaign.reload();
+      toast.push(
+        "Account batch started - one browser and one Gmail session for all rows.",
+        "success",
+      );
+    } catch (error) {
+      toast.push(errorText(error, "The account batch could not start."), "error");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const stopAccounts = async () => {
+    setAccountBusy(true);
+    try {
+      await api.accounts.stop(apiClient, projectId);
+      accounts.reload();
+      toast.push("The account batch stops after the current website.", "info");
+    } catch (error) {
+      toast.push(errorText(error, "The batch could not be stopped."), "error");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const retryAccount = async (row: CampaignRow) => {
+    setAccountBusy(true);
+    try {
+      await api.accounts.provisionOne(apiClient, projectId, row.website_id);
+      accounts.reload();
+      toast.push(`Retrying ${row.name}.`, "success");
+    } catch (error) {
+      toast.push(errorText(error, "The account could not be retried."), "error");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const findBacklinkPage = async (row: CampaignRow) => {
+    setAccountBusy(true);
+    try {
+      const outcome = await api.accounts.discover(
+        apiClient,
+        projectId,
+        row.website_id,
+      );
+      accounts.reload();
+      const result = outcome.result as { found?: boolean; url?: string };
+      toast.push(
+        result?.found
+          ? `Backlink page found: ${result.url}`
+          : "No page with a link field was found while logged in.",
+        result?.found ? "success" : "info",
+      );
+    } catch (error) {
+      toast.push(errorText(error, "The page search failed."), "error");
+    } finally {
+      setAccountBusy(false);
+    }
+  };
+
+  const accountOf = (row: CampaignRow): SiteAccount | null =>
+    accountMap[row.website_id] ?? row.account ?? null;
 
   const data = campaign.data;
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
@@ -614,6 +731,28 @@ export function CampaignPanel({
                         <option value="fast">Fast</option>
                       </Select>
                     </label>
+                    {accountRunning ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => void stopAccounts()}
+                        loading={accountBusy}
+                      >
+                        Stop accounts
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setGmailAddress(accounts.data?.gmail.address ?? "");
+                          setGmailMessage(null);
+                          setAccountOpen(true);
+                        }}
+                        loading={accountBusy}
+                        disabled={!summary || summary.total === 0}
+                      >
+                        Create accounts
+                      </Button>
+                    )}
                     <Button
                       onClick={() => setStartOpen(true)}
                       disabled={!summary || summary.total === 0}
@@ -630,6 +769,16 @@ export function CampaignPanel({
                     </Button>
                   </div>
                 </div>
+                <AccountBatchBanner
+                  batch={accountBatch}
+                  busy={accountBusy}
+                  onStop={() => void stopAccounts()}
+                  onStart={() => {
+                    setGmailAddress(accounts.data?.gmail.address ?? "");
+                    setAccountOpen(true);
+                  }}
+                  startLabel="Create missing accounts"
+                />
                 {summary.failed > 0 ? (
                   <div className="flex flex-wrap items-center justify-between gap-2 border-t border-accent/20 pt-2">
                     <p className="text-[11px] text-danger">
@@ -795,6 +944,8 @@ export function CampaignPanel({
                   <thead>
                     <tr>
                       <Th>Website</Th>
+                      <Th>Account</Th>
+                      <Th>Backlink page</Th>
                       <Th>Data ready</Th>
                       <Th>Status</Th>
                       <Th>Last update</Th>
@@ -829,6 +980,20 @@ export function CampaignPanel({
                               ) : null}
                             </p>
                           </div>
+                        </Td>
+                        <Td>
+                          <SiteAccountCell
+                            account={accountOf(row)}
+                            busy={accountBusy}
+                            onRetry={() => void retryAccount(row)}
+                          />
+                        </Td>
+                        <Td>
+                          <BacklinkTargetCell
+                            account={accountOf(row)}
+                            busy={accountBusy}
+                            onFind={() => void findBacklinkPage(row)}
+                          />
                         </Td>
                         <Td>
                           <div className="w-36 space-y-1">
@@ -913,6 +1078,19 @@ export function CampaignPanel({
                                   Mark submitted
                                 </Button>
                               </>
+                            ) : null}
+                            {accountOf(row) &&
+                            ["NEEDS_HUMAN", "FAILED"].includes(accountOf(row)!.status) &&
+                            loginRow?.opportunity_id !== row.opportunity_id ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                loading={busyRow === row.opportunity_id}
+                                title="Open this site in the live browser - solve a CAPTCHA or finish the last step once, then press Retry"
+                                onClick={() => void relogin(row)}
+                              >
+                                Open site
+                              </Button>
                             ) : null}
                             {row.status === "WAITING_MANUAL" ? (
                               <>
@@ -1043,6 +1221,91 @@ export function CampaignPanel({
           ) : null}
         </CardBody>
       </Card>
+
+      {/* ------------------------------------------------ account dialog */}
+      <Dialog
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        title="Create the accounts of this project"
+        description="One browser and one Gmail inbox for the whole list - not one per website."
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setAccountOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void startAccounts()}
+              loading={accountBusy || gmailBusy}
+            >
+              Create accounts
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <Alert tone="info" title="What happens in one batch">
+            Every row opens in the isolated profile of this project. If the site offers{" "}
+            <strong>Continue with Google</strong> the project Google session is used;
+            otherwise a username and a strong password are generated, registered and
+            stored on that row of the report. The verification code is read once from
+            the inbox below and bound to the address of that website only - a code can
+            never land in another row.
+          </Alert>
+          {accounts.data?.gmail.configured ? (
+            <p className="text-[11px] text-content-muted">
+              Codes are read from{" "}
+              <span className="font-medium text-content">
+                {accounts.data.gmail.address}
+              </span>
+              . The app keeps the IMAP session open for the whole batch, so Gmail is
+              opened once.
+            </p>
+          ) : (
+            <div className="space-y-2 rounded-md border border-line bg-surface-raised/50 p-3">
+              <p className="text-[11px] font-semibold text-content">
+                Gmail inbox for one-time codes
+              </p>
+              <Field
+                label="Gmail address"
+                hint="Use a Google App Password - never your normal Google password."
+              >
+                <Input
+                  value={gmailAddress}
+                  onChange={(event) => setGmailAddress(event.target.value)}
+                  placeholder="you@gmail.com"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="App Password (16 characters)">
+                <Input
+                  type="password"
+                  value={gmailPassword}
+                  onChange={(event) => setGmailPassword(event.target.value)}
+                  placeholder="abcd efgh ijkl mnop"
+                  autoComplete="new-password"
+                />
+              </Field>
+              <p className="text-[10px] text-content-subtle">
+                Google Account {"->"} Security {"->"} 2-Step Verification {"->"} App
+                passwords. Sites that need no code still work without it.
+              </p>
+            </div>
+          )}
+          {gmailMessage ? (
+            <p className="text-[11px] text-success">{gmailMessage}</p>
+          ) : null}
+          <Alert tone="warning" title="CAPTCHA is not bypassed">
+            When a site shows a CAPTCHA the row stops as <strong>Needs you</strong>.
+            Open the live browser for that row once, solve it, and press Retry - the
+            batch continues with the other websites instead of guessing. No tool can
+            honestly promise every CAPTCHA on every site; this keeps every account real.
+          </Alert>
+          <p className="text-[10px] text-content-subtle">
+            Accounts are only created where the site offers a real sign-up form. A row
+            that cannot be completed is reported with its exact reason.
+          </p>
+        </div>
+      </Dialog>
 
       <Dialog
         open={startOpen}

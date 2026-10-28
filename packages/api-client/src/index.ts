@@ -28,6 +28,9 @@ import type {
   CampaignRestartResult,
   CampaignSubmitResult,
   CampaignView,
+  GmailStatus,
+  ProjectAccounts,
+  SiteAccount,
   DashboardMetrics,
   Device,
   DeviceHeartbeatRequest,
@@ -722,6 +725,57 @@ export const api = {
       c.post<{ task_id: string; backlink_id: string; created: boolean }>(
         `/api/v1/projects/${projectId}/campaign/${opportunityId}/verify`,
       ),
+  },
+
+  /**
+   * The accounts of a project on its backlink websites: one background batch
+   * creates every missing account with one browser and one Gmail session.
+   */
+  accounts: {
+    get: (c: ApiClient, projectId: string) =>
+      c.get<ProjectAccounts>(`/api/v1/projects/${projectId}/accounts`),
+    /** Create every missing account in one batch (or the given websites). */
+    provision: (
+      c: ApiClient,
+      projectId: string,
+      body: { website_ids?: string[]; retry?: boolean } = {},
+    ) =>
+      c.post<{ batch: ProjectAccounts["batch"]; accounts: Record<string, SiteAccount> }>(
+        `/api/v1/projects/${projectId}/accounts/provision`,
+        body,
+      ),
+    /** Retry one website (after a CAPTCHA was solved by hand, for example). */
+    provisionOne: (c: ApiClient, projectId: string, websiteId: string) =>
+      c.post<{ batch: ProjectAccounts["batch"]; account: SiteAccount | null }>(
+        `/api/v1/projects/${projectId}/accounts/${websiteId}/provision`,
+        { retry: true },
+      ),
+    stop: (c: ApiClient, projectId: string) =>
+      c.post<{
+        stopped: boolean;
+        batch: ProjectAccounts["batch"];
+        accounts: Record<string, SiteAccount>;
+      }>(`/api/v1/projects/${projectId}/accounts/stop`),
+    /** Search the backlink page again with the authenticated session. */
+    discover: (c: ApiClient, projectId: string, websiteId: string) =>
+      c.post<{ result: Record<string, unknown>; account: SiteAccount | null }>(
+        `/api/v1/projects/${projectId}/accounts/${websiteId}/discover`,
+      ),
+    gmail: (c: ApiClient) => c.get<GmailStatus>("/api/v1/accounts/gmail"),
+    saveGmail: (
+      c: ApiClient,
+      body: { address: string; app_password: string; save?: boolean },
+    ) =>
+      c.put<GmailStatus & { ok: boolean; message: string }>(
+        "/api/v1/accounts/gmail",
+        body,
+      ),
+    testGmail: (
+      c: ApiClient,
+      body: { address?: string; app_password?: string } = {},
+    ) =>
+      c.post<{ ok: boolean; message: string }>("/api/v1/accounts/gmail/test", body),
+    forgetGmail: (c: ApiClient) => c.delete<GmailStatus>("/api/v1/accounts/gmail"),
   },
 
   schedules: {

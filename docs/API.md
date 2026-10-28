@@ -139,6 +139,40 @@ Row statuses: `NEEDS_DETAILS`, `READY`, `QUEUED`, `SUBMITTING`, `PAUSED`,
 `WAITING_MANUAL`, `SUBMITTED`, `VERIFIED`, `FAILED`, `VERIFICATION_FAILED`,
 `EXCLUDED`.
 
+Each row also carries an `account` object (`null` when no account exists yet):
+`strategy` (`GOOGLE`, `SIGNUP`, `EXISTING`, `MANUAL`, `UNKNOWN`), `status`
+(`NOT_STARTED`, `QUEUED`, `DETECTING`, `CREATING`, `OTP_PENDING`, `ACTIVE`,
+`NEEDS_HUMAN`, `FAILED`), `email`, `username`, `password` (only for the owner
+of the project), `otp_state`, `backlink_url`, `backlink_confidence` and
+`backlink_form`. The summary adds `account_active`, `account_needs_human` and
+`account_missing`.
+
+---
+
+## Site accounts — `/api/v1/projects/{project_id}/accounts`
+
+The accounts this project uses on its websites. **One** background batch opens
+the isolated browser profile of the project once and holds **one** Gmail IMAP
+session for the whole list.
+
+| Method | Path | Purpose | Auth |
+| ------ | ---- | ------- | ---- |
+| GET | `/api/v1/projects/{project_id}/accounts` | Every account of the project (`accounts` keyed by `website_id`), the live `batch` (`running`, `total`, `done`, `active_name`, `message`, `counts`, `items`), `counts`, the `gmail` status and `browser_ready`. | yes |
+| POST | `/api/v1/projects/{project_id}/accounts/provision` | Body `{"website_ids"?: [...], "retry"?: bool}`. Starts the batch. `409 cannot_start` when browser automation is off, a batch is already running or the login window of the project is open. | yes |
+| POST | `/api/v1/projects/{project_id}/accounts/stop` | Asks the running batch to stop after the current website. | yes |
+| POST | `/api/v1/projects/{project_id}/accounts/{website_id}/provision` | Retry one website (e.g. after a CAPTCHA was solved by hand). | yes |
+| POST | `/api/v1/projects/{project_id}/accounts/{website_id}/discover` | Search the backlink page again with the authenticated session. `409 account_not_active` when the account is not active. | yes |
+| GET | `/api/v1/accounts/gmail` | The stored inbox (`configured`, `address`, `imap_host`). Never returns the password. | yes |
+| PUT | `/api/v1/accounts/gmail` | Body `{"address", "app_password"}`. Checks the IMAP login, then stores the App Password encrypted. A normal Google password is rejected. | yes |
+| POST | `/api/v1/accounts/gmail/test` | Test the stored (or the given) inbox without saving it. | yes |
+| DELETE | `/api/v1/accounts/gmail` | Forget the inbox settings. | yes |
+
+The password of an account is encrypted with the installation key and the
+associated data `site-account:{project_id}:{website_id}` - it cannot be
+decrypted under another row. A one-time code is stored the same way. A CAPTCHA
+is **not** bypassed: the row becomes `NEEDS_HUMAN` and the operator solves it
+in the live browser.
+
 ---
 
 ## Campaigns and schedules

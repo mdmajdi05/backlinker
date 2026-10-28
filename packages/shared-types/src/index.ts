@@ -1160,6 +1160,124 @@ export interface Campaign {
  * ``FAILED``         - the submission failed and can be retried
  * ``VERIFICATION_FAILED`` - the page was checked but the link was not found
  */
+/**
+ * How the account of one website was created.
+ *
+ * ``GOOGLE``  - the site offered *Continue with Google* and the project session
+ *               was used,
+ * ``SIGNUP``  - a generated username + password was registered,
+ * ``EXISTING``- the profile was already signed in,
+ * ``MANUAL``  - the operator has to finish this site by hand.
+ */
+export type SiteAccountStrategy =
+  | "GOOGLE"
+  | "SIGNUP"
+  | "EXISTING"
+  | "MANUAL"
+  | "UNKNOWN";
+
+/** Where the account creation of one website currently stands. */
+export type SiteAccountStatus =
+  | "NOT_STARTED"
+  | "QUEUED"
+  | "DETECTING"
+  | "CREATING"
+  | "OTP_PENDING"
+  | "ACTIVE"
+  | "NEEDS_HUMAN"
+  | "FAILED";
+
+/** The generated form field of a backlink page. */
+export interface SiteAccountField {
+  selector: string;
+  name?: string;
+  id?: string;
+  type?: string;
+  placeholder?: string;
+  autocomplete?: string;
+  label?: string;
+}
+
+/**
+ * The account this project uses on one website.
+ *
+ * The password is stored encrypted at rest and only returned to the signed in
+ * owner of the project, so the report can show it on the row of the website.
+ */
+export interface SiteAccount {
+  website_id: string;
+  strategy: SiteAccountStrategy;
+  status: SiteAccountStatus;
+  email: string | null;
+  username: string | null;
+  /** The generated password (plain only for the owner of the project). */
+  password: string | null;
+  has_password: boolean;
+  otp_state: "NONE" | "WAITING" | "RECEIVED" | "USED" | "EXPIRED";
+  otp_alias: string | null;
+  otp_received_at: string | null;
+  login_url: string | null;
+  account_url: string | null;
+  /** The page where the backlink can be placed (found while logged in). */
+  backlink_url: string | null;
+  /** 0-100: how sure the discovery is that this page accepts a link. */
+  backlink_confidence: number;
+  backlink_form: {
+    fields?: SiteAccountField[];
+    buttons?: string[];
+    reasons?: string[];
+  };
+  attempts: number;
+  last_error: string | null;
+  evidence: Record<string, unknown>;
+  updated_at: string | null;
+}
+
+/** One row of the live account batch. */
+export interface AccountBatchItem {
+  website_id: string;
+  name: string;
+  domain: string;
+  status: SiteAccountStatus;
+  message: string;
+  strategy: SiteAccountStrategy | null;
+}
+
+/** The one running account batch of a project (one browser, one inbox). */
+export interface AccountBatch {
+  project_id: string;
+  running: boolean;
+  stop_requested: boolean;
+  started_at: string | null;
+  finished_at: string | null;
+  total: number;
+  done: number;
+  active_website_id: string | null;
+  active_name: string | null;
+  message: string | null;
+  error: string | null;
+  items: AccountBatchItem[];
+  counts: Record<string, number>;
+  gmail?: boolean;
+}
+
+/** The Gmail inbox used to read one-time codes (no mail content is stored). */
+export interface GmailStatus {
+  configured: boolean;
+  address: string | null;
+  imap_host: string;
+}
+
+/** Everything the account panel of a project needs. */
+export interface ProjectAccounts {
+  project_id: string;
+  accounts: Record<string, SiteAccount>;
+  batch: AccountBatch;
+  counts: Record<string, number>;
+  gmail: GmailStatus;
+  browser_ready: boolean;
+}
+
 export type CampaignRowStatus =
   | "NOT_STARTED"
   | "NEEDS_DETAILS"
@@ -1201,6 +1319,8 @@ export interface CampaignRow {
   /** The login state of this website inside the project. */
   login_status: WebsiteLoginStatus | null;
   login_error: string | null;
+  /** The account of this project on this website (username / password). */
+  account: SiteAccount | null;
   last_update: string | null;
 }
 
@@ -1218,6 +1338,10 @@ export interface CampaignSummary {
   not_started: number;
   /** Websites paused with the Stop button. */
   paused: number;
+  /** Rows whose account is active / needs a human / is still missing. */
+  account_active: number;
+  account_needs_human: number;
+  account_missing: number;
   failed: number;
   excluded: number;
   remaining: number;

@@ -213,6 +213,61 @@ class WebsiteLoginSession(IdMixin, TimestampMixin, Base):
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
 
+class SiteAccount(IdMixin, TimestampMixin, Base):
+    """The account this project uses on one backlink website.
+
+    The strategy is decided per site: a website that offers *Continue with
+    Google* is entered with the project's Google session, every other site
+    gets a generated username / password.  The password is encrypted with the
+    per-installation key and the associated data of *this* row, so a value can
+    never be swapped into the row of another project or website.
+    """
+
+    __tablename__ = "site_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "website_id", name="uq_site_accounts_project_website"
+        ),
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    website_id: Mapped[str] = mapped_column(
+        ForeignKey("websites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    #: GOOGLE | SIGNUP | EXISTING | MANUAL | UNKNOWN
+    strategy: Mapped[str] = mapped_column(String(24), default="UNKNOWN", nullable=False)
+    #: NOT_STARTED | QUEUED | DETECTING | CREATING | OTP_PENDING | ACTIVE |
+    #: NEEDS_HUMAN | FAILED
+    status: Mapped[str] = mapped_column(
+        String(24), default="NOT_STARTED", nullable=False, index=True
+    )
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    login_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    account_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: The plus/dot alias this site signs up with.  It is the binding key of
+    #: the OTP pipeline: a code is only accepted for the alias of its row.
+    otp_alias: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+    #: NONE | WAITING | RECEIVED | USED | EXPIRED
+    otp_state: Mapped[str] = mapped_column(String(24), default="NONE", nullable=False)
+    otp_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    otp_message_id: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    otp_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    otp_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: The page that really carries the backlink form / profile editor.
+    backlink_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    backlink_form: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    backlink_confidence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    backlink_found_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
 class TargetWebsite(IdMixin, TimestampMixin, Base):
     __tablename__ = "target_websites"
 

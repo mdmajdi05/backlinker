@@ -23,10 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.base import utcnow
-from app.db.models import BacklinkRecord, Opportunity, Project, Task, Website
+from app.db.models import BacklinkRecord, Opportunity, Project, SiteAccount, Task, Website
 from app.services import opportunities as opportunity_service
 from app.services import project_login
 from app.services import queue as queue_service
+from app.services import site_accounts as account_service
 from app.services import site_details as details_service
 from app.services.automation_setup import automation_payload
 
@@ -658,6 +659,14 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         .all()
     )
     logins = {row.website_id: row for row in login_rows}
+    account_rows = (
+        db.execute(
+            select(SiteAccount).where(SiteAccount.project_id == project.id)
+        )
+        .scalars()
+        .all()
+    )
+    accounts = {row.website_id: row for row in account_rows}
 
     rows: list[dict[str, Any]] = []
     counters = {
@@ -674,6 +683,9 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         "failed": 0,
         "excluded": 0,
         "remaining": 0,
+        "account_active": 0,
+        "account_needs_human": 0,
+        "account_missing": 0,
     }
 
     for opportunity in opportunities:
@@ -695,6 +707,14 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
         )
         login_row = logins.get(website.id)
         login_status = login_row.status if login_row is not None else None
+        account_row = accounts.get(website.id)
+        account = account_service.account_payload(db, account_row)
+        if account is None or account_row.status == account_service.STATUS_NOT_STARTED:
+            counters["account_missing"] += 1
+        elif account_row.status in account_service.ACTIVE_STATUSES:
+            counters["account_active"] += 1
+        elif account_row.status == account_service.STATUS_NEEDS_HUMAN:
+            counters["account_needs_human"] += 1
         status = _row_status(
             opportunity, not blocked, task, record, login_status
         )
@@ -761,6 +781,7 @@ def campaign_payload(db: Session, project: Project) -> dict[str, Any]:
                 "adapter_config": automation_payload(website),
                 "login_status": login_status,
                 "login_error": login_row.last_error if login_row is not None else None,
+                "account": account,
                 "last_update": last_update,
             }
         )

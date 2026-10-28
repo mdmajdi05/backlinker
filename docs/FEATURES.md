@@ -56,7 +56,10 @@ The project page answers three questions on one screen - *which websites*,
 | Stop / Resume | Stop pauses the queued work (nothing is deleted), Start resumes exactly where it stopped; running tasks stop at the next safe step |
 | Speed | Slow / Normal / Fast - one plain choice instead of a wall of execution numbers |
 | Live table | website, data ready (%), missing fields, status (`Queued`, `Submitting`, `Stopped`, `Login needed`, `Submit by hand`, `Submitted`, `Verified`, `Verification failed`, `Failed`), last update; refreshes every 3 s while a task runs |
-| Download report | the live table as CSV |
+| Create accounts | one batch for the whole list: **one** isolated browser profile of the project and **one** Gmail IMAP session. Per live page it uses **Continue with Google** when the site offers it, otherwise it registers a generated username + strong password. Both are stored encrypted and shown on that website's row (and in the CSV). Sign-up codes are read from a per-row Gmail alias (`inbox+token@gmail.com`), claimed once and bound to `(project, website)` so a code can never land in another row. A CAPTCHA pauses only that row as **Needs you** - it is never bypassed. |
+| Backlink page | while still logged in, the same browser scores candidate pages (submission forms, profile editors with a website field, forum *new thread*, comment forms) and stores the exact URL, the field mapping and a confidence; **Find page** re-runs it for one row |
+| Download report | the live table as CSV - including account strategy, account status, username, password, account e-mail, backlink page and confidence |
+
 | Restart failed | queues only the failed submissions and failed verifications again |
 | Mark submitted | for directories without an automation: record the published page, complete the waiting task and queue the verification |
 | More tools (collapsed) | every website field, auto pilot and the project statistics - ready when needed, out of the way when not |

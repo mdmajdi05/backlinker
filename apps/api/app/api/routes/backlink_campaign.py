@@ -47,6 +47,26 @@ REPORT_STATUS = {
     "EXCLUDED": "Excluded",
 }
 
+#: The account columns of the CSV use readable words.
+ACCOUNT_STRATEGY = {
+    "GOOGLE": "Continue with Google",
+    "SIGNUP": "Username + password",
+    "EXISTING": "Already had an account",
+    "MANUAL": "Manual",
+    "UNKNOWN": "Not detected",
+}
+
+ACCOUNT_STATUS = {
+    "NOT_STARTED": "Not created",
+    "QUEUED": "Queued",
+    "DETECTING": "Detecting",
+    "CREATING": "Creating",
+    "OTP_PENDING": "Waiting for e-mail code",
+    "ACTIVE": "Active",
+    "NEEDS_HUMAN": "Needs you",
+    "FAILED": "Failed",
+}
+
 
 class AddWebsitesIn(BaseModel):
     """The input box of the campaign.
@@ -116,6 +136,13 @@ def export_campaign_report(
             "URL",
             "Category",
             "Status",
+            "Account strategy",
+            "Account status",
+            "Username",
+            "Password",
+            "Account e-mail",
+            "Backlink page",
+            "Backlink confidence",
             "Data ready %",
             "Missing fields",
             "Published page",
@@ -123,12 +150,20 @@ def export_campaign_report(
         ]
     )
     for row in payload["rows"]:
+        account = row.get("account") or {}
         writer.writerow(
             [
                 row["name"],
                 row["url"],
                 row["category"].replace("_", " ").title(),
                 REPORT_STATUS.get(row["status"], row["status"]),
+                ACCOUNT_STRATEGY.get(account.get("strategy"), account.get("strategy") or ""),
+                ACCOUNT_STATUS.get(account.get("status"), account.get("status") or ""),
+                account.get("username") or "",
+                account.get("password") or "",
+                account.get("email") or "",
+                account.get("backlink_url") or "",
+                account.get("backlink_confidence") or 0,
                 row["details_percent"],
                 ", ".join(row["missing"]),
                 row["published_page_url"] or "",

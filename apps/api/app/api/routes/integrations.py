@@ -81,6 +81,11 @@ KNOWN_PROVIDERS: dict[str, dict[str, str]] = {
         "purpose": "AI assistance through any OpenAI compatible endpoint",
         "docs": "https://platform.openai.com/docs/api-reference",
     },
+    "gmail": {
+        "name": "Gmail inbox (one-time codes)",
+        "purpose": "Account creation - reads the verification code of each sign-up",
+        "docs": "https://support.google.com/accounts/answer/185833",
+    },
 }
 
 # Keep the advertised providers aligned with the providers the AI engine supports.

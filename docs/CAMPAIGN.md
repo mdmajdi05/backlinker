@@ -161,6 +161,71 @@ machine that runs the backend (owner-only permissions) and is deleted by
 
 ---
 
+## Accounts on the websites (one click, one browser, one inbox)
+
+Most directories need an account before they accept a link. The
+**Create accounts** button does that for the whole list at once.
+
+1. Press **Create accounts**. The dialog explains what happens; if no Gmail
+   inbox is stored it also asks for one (see below).
+2. **One batch, one browser, one inbox.** The app opens the isolated profile of
+   the project once and keeps it open for every row of the list. Gmail is
+   opened once (a single IMAP session) and stays open for the whole batch -
+   not one Gmail tab per website.
+3. Per website the strategy is decided from the **live page**:
+   * a *Continue with Google* button -> the project Google session is used (no
+     password is typed, no account chooser is automated; if Google asks for the
+     password the row stops as **Needs you**),
+   * otherwise the sign-up form is filled with a generated username and a
+     strong password. **Both are stored with the account and shown on that
+     website's row** in the campaign table and in the CSV report.
+4. If the sign-up asks for a code, the row signs up with its **own address
+   alias** (`inbox+<token>@gmail.com`). Only a mail addressed to that token is
+   accepted, one code is claimed once, and the code is stored encrypted
+   against `(project, website)`. A code can never be filled into another
+   project or another website; an ambiguous mail pauses the row instead of
+   guessing.
+5. When the account is active the same logged-in browser looks for the exact
+   page that carries the link field (`/submit`, `/add-listing`, a profile editor
+   with a website field, a forum's *new thread*, ...). The found URL, the field
+   mapping and a confidence are stored on the row and shown in the
+   **Backlink page** column.
+
+### Gmail for the codes
+
+Use a **Google App Password**, never your normal Google password:
+
+Google Account -> Security -> 2-Step Verification -> App passwords -> create one
+for "Mail" on "Other (Auto Backlinker)". Paste the 16 characters into the
+dialog (spaces are fine). **Test** checks the IMAP login before it is stored.
+
+The app reads only what it needs: the sender, the subject and the text of
+recent mails, in memory, to find the code. Mail bodies are never stored; only
+the extracted code is stored (encrypted). **Forget** deletes the inbox
+settings.
+
+### When a row stops
+
+| Row says | Why | What to do |
+| -------- | --- | ---------- |
+| **Needs you** + CAPTCHA | the site asked for a human | press **Open site** (streamed on the web, native window on the desktop), solve it once, then **Retry** |
+| **Needs you** + "no sign-up form" | the site has no real sign-up form (or a different flow) | check the site once, or create the account by hand |
+| **Needs you** + "e-mail code" | Gmail is not configured or no code arrived | save the App Password, press **Retry** |
+| **Failed** | the page did not open / a network error | press **Retry** |
+
+The batch never stops on one row: it continues with the other websites and
+reports the exact reason per row. **Stop accounts** ends the batch after the
+current website.
+
+> **CAPTCHA is not bypassed.** The app detects reCAPTCHA, hCaptcha, Cloudflare
+> Turnstile and the common interstitial texts, pauses that row as **Needs you**
+> and leaves the decision to you in a real browser. No tool can honestly
+> guarantee every CAPTCHA on every site - what this design guarantees is that a
+> row never claims success it did not observe, and that your other rows keep
+> working while you solve one.
+
+---
+
 ## Status glossary
 
 | Status | What it means | What to do |
@@ -273,3 +338,35 @@ expired** badge). **Re-login** dabao, usi profile me dobara sign-in karo -
 paused kaam session detect hote hi apne aap dobara queue ho jata hai. Row par
 **Save login**, project page ke Google card par **I'm done - save session** se
 window explicitly save hoti hai.
+
+**Account kaun banata hai?**
+**Create accounts** ek hi click me poori list ke accounts banata hai - ek hi
+project browser profile aur ek hi Gmail session (IMAP) poore batch ke liye.
+Jis site par **Continue with Google** milta hai wahan project ka Google session
+use hota hai; jahan nahi milta wahan generated username + strong password se
+signup hota hai. Dono cheezein usi website ki row me report me dikhti hain
+(username, password, account e-mail) aur CSV me bhi aati hain.
+
+**OTP kisi doosri site me nahi jayega?**
+Har row apne hi alias (`inbox+token@gmail.com`) se signup karti hai. Sirf usi
+alias par aaya code accept hota hai, wo ek hi baar claim hota hai, aur
+`(project, website)` ke against encrypted save hota hai. Do different codes
+ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar ruk
+jati hai.
+
+**Gmail baar baar khulta hai?**
+Nahi. Poore batch ke liye Gmail ek hi baar khulta hai (ek IMAP session), aur
+sab rows usi session se apna code lete hain. App password chahiye - normal
+Google password nahi (Google Account -> Security -> App passwords).
+
+**Captcha aaya to?**
+CAPTCHA bypass nahi hota. Row **Needs you** ho jati hai, **Open site** se wahi
+site live browser me khulti hai (web par stream, desktop par native window),
+captcha solve karo aur **Retry** dabao. Batch rukta nahi - baaki websites
+apna kaam karti rehti hain.
+
+**Backlink post karne ki exact page?**
+Account active hote hi wahi logged-in browser submit/add-listing/profile/forum
+pages check karta hai, field mapping ke saath exact URL aur confidence save
+karta hai. Row ke **Backlink page** column me dikhta hai; **Find page** se
+dobara dhoondh sakte ho.

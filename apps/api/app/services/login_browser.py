@@ -570,58 +570,18 @@ class LoginWindow:
         it over CDP.  The operator signs in manually; the session is still
         exported from the same profile.
         """
-        executable = browser_service.launchable_chrome()
-        if executable is None:
-            raise RuntimeError("Google Chrome is not installed on this machine.")
-        port = _free_port()
-        self._clear_stale_profile_lock(directory)
-        arguments = [
-            executable,
-            f"--user-data-dir={directory}",
-            f"--remote-debugging-port={port}",
-            "--remote-allow-origins=*",
-            f"--window-size={settings.login_stream_width},{settings.login_stream_height}",
-            "--window-position=80,60",
-            # Newer Chrome builds otherwise expose `navigator.webdriver` and
-            # tell Google that a tool controls the browser.
-            "--disable-blink-features=AutomationControlled",
-            *ISOLATION_ARGS,
-        ]
-        log.info(
-            "starting Chrome for the login window",
-            extra={"extra_fields": {"project_id": self.project_id, "port": port}},
-        )
-        process = subprocess.Popen(  # noqa: S603 - the executable is resolved above
-            arguments,
-            env=browser_service.isolated_environment(),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+        context, process = launch_unflagged_chrome(
+            playwright,
+            directory,
+            project_id=self.project_id,
         )
         self._chrome_process = process
-        endpoint = f"http://127.0.0.1:{port}"
-        deadline = time.time() + 45
-        while time.time() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError("Chrome closed while it was starting.")
-            if _debugging_port_ready(port):
-                break
-            time.sleep(0.25)
-        else:
-            raise RuntimeError("Chrome did not open its debugging port.")
-        browser = playwright.chromium.connect_over_cdp(endpoint)
-        for _ in range(60):
-            if browser.contexts:
-                return browser.contexts[0]
-            time.sleep(0.1)
-        return browser.new_context()
+        return context
 
     @staticmethod
     def _clear_stale_profile_lock(directory: Path) -> None:
         """Remove the lock of a Chrome that crashed (only our own profile)."""
-        for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
-            with suppress(OSError):
-                (directory / name).unlink()
+        clear_stale_profile_lock(directory)
 
     def _stop_chrome(self) -> None:
         process = self._chrome_process
@@ -1140,6 +1100,98 @@ def _load_sync_playwright(window: Any = None) -> Any:
     from playwright.sync_api import sync_playwright
 
     return sync_playwright
+
+
+def clear_stale_profile_lock(directory: Path) -> None:
+    """Remove the lock files a crashed Chrome left in our own profile."""
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        with suppress(OSError):
+            (directory / name).unlink()
+
+
+def launch_unflagged_chrome(
+    playwright: Any,
+    directory: Path,
+    *,
+    project_id: str | None = None,
+) -> tuple[Any, subprocess.Popen[bytes]]:
+    """Start the installed Chrome as a normal app and attach over CDP.
+
+    Returns ``(context, process)``.  The caller stops ``process`` (and its
+    process group) when it is done.  A missing desktop Chrome raises
+    :class:`RuntimeError`; the caller may then fall back to the Playwright
+    managed build, which some sites (Google) refuse.
+    """
+    executable = browser_service.launchable_chrome()
+    if executable is None:
+        raise RuntimeError("Google Chrome is not installed on this machine.")
+    port = _free_port()
+    clear_stale_profile_lock(directory)
+    arguments = [
+        executable,
+        f"--user-data-dir={directory}",
+        f"--remote-debugging-port={port}",
+        "--remote-allow-origins=*",
+        f"--window-size={settings.login_stream_width},{settings.login_stream_height}",
+        "--window-position=80,60",
+        # Newer Chrome builds otherwise expose `navigator.webdriver` and tell
+        # Google that a tool controls the browser.
+        "--disable-blink-features=AutomationControlled",
+        *ISOLATION_ARGS,
+    ]
+    log.info(
+        "starting Chrome for the login window",
+        extra={"extra_fields": {"project_id": project_id, "port": port}},
+    )
+    process = subprocess.Popen(  # noqa: S603 - the executable is resolved above
+        arguments,
+        env=browser_service.isolated_environment(),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    endpoint = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 45
+    while time.time() < deadline:
+        if process.poll() is not None:
+            stop_browser_process(process)
+            raise RuntimeError("Chrome closed while it was starting.")
+        if _debugging_port_ready(port):
+            break
+        time.sleep(0.25)
+    else:
+        stop_browser_process(process)
+        raise RuntimeError("Chrome did not open its debugging port.")
+    try:
+        browser = playwright.chromium.connect_over_cdp(endpoint)
+    except Exception:
+        stop_browser_process(process)
+        raise
+    for _ in range(60):
+        if browser.contexts:
+            return browser.contexts[0], process
+        time.sleep(0.1)
+    return browser.new_context(), process
+
+
+def stop_browser_process(process: subprocess.Popen[bytes] | None) -> None:
+    """Terminate a Chrome started by :func:`launch_unflagged_chrome`."""
+    if process is None:
+        return
+    if os.name == "posix":
+        # Chrome starts helpers in the same process group; killing only the
+        # parent could leave a locked profile behind.
+        with suppress(Exception):
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    with suppress(Exception):
+        process.terminate()
+        process.wait(10)
+    if process.poll() is None:
+        if os.name == "posix":
+            with suppress(Exception):
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        with suppress(Exception):
+            process.kill()
 
 
 def _free_port() -> int:

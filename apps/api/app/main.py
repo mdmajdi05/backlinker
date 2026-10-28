@@ -28,6 +28,7 @@ from app.api.routes import (
     queue,
     recycle_bin,
     registry,
+    site_accounts,
     site_details,
     storage,
     sync,
@@ -200,6 +201,7 @@ def create_app() -> FastAPI:
     app.include_router(profiles.router, prefix=prefix)
     app.include_router(projects.router, prefix=prefix)
     app.include_router(project_login.router, prefix=prefix)
+    app.include_router(site_accounts.router, prefix=prefix)
     app.include_router(autopilot.router, prefix=prefix)
     app.include_router(registry.router, prefix=prefix)
     app.include_router(websites.router, prefix=prefix)
