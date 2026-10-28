@@ -364,6 +364,92 @@ def _window(website_id: str = "website-1", mode: str = "site") -> login_browser.
     )
 
 
+class _ProbeLocator:
+    def __init__(self, body: str) -> None:
+        self._body = body
+
+    def inner_text(self) -> str:
+        return self._body
+
+
+class _ProbeResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+
+class _ProbePage:
+    """A page that only answers the navigation of the Google liveness probe."""
+
+    def __init__(
+        self,
+        urls: dict[str, str] | None = None,
+        body: str = "",
+        statuses: dict[str, int] | None = None,
+    ) -> None:
+        self.urls = urls or {}
+        self.statuses = statuses or {}
+        self.body = body
+        self.url = "about:blank"
+        self.closed = False
+        self.fail = False
+
+    def goto(self, url: str, **_kwargs) -> _ProbeResponse:
+        if self.fail:
+            raise RuntimeError("net::ERR_CONNECTION_RESET")
+        self.url = self.urls.get(url, url)
+        return _ProbeResponse(self.statuses.get(url, 200))
+
+    def locator(self, _selector: str) -> _ProbeLocator:
+        return _ProbeLocator(self.body)
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ProbeContext:
+    def __init__(self, page: _ProbePage) -> None:
+        self.page = page
+        self.pages = [page]
+        self.created = 0
+
+    def new_page(self) -> _ProbePage:
+        self.created += 1
+        return self.page
+
+
+def _patch_google_store(
+    monkeypatch, *, has_session: bool = True
+) -> tuple[list[str], list[int]]:
+    """Record what a save of the Google session writes and resumes."""
+    events: list[str] = []
+    resumed: list[int] = []
+    monkeypatch.setattr(login_browser, "session_scope", _NullScope)
+    monkeypatch.setattr(
+        project_login, "save_storage_state", lambda *_a, **_k: events.append("save")
+    )
+    monkeypatch.setattr(
+        project_login,
+        "get_profile",
+        lambda *_a, **_k: type(
+            "Row",
+            (),
+            {"storage_state_encrypted": "x" if has_session else None},
+        )(),
+    )
+    monkeypatch.setattr(
+        project_login, "set_status", lambda _db, _pid, value, **_k: events.append(value)
+    )
+    monkeypatch.setattr(
+        project_login,
+        "resume_login_paused_tasks",
+        lambda *_a, **_k: resumed.append(1) or 1,
+    )
+    return events, resumed
+
+
 def test_a_google_cookie_from_another_domain_is_not_a_login() -> None:
     assert project_login.google_session_present(
         [{"name": "SID", "domain": ".google.com"}]
@@ -376,33 +462,16 @@ def test_a_google_cookie_from_another_domain_is_not_a_login() -> None:
     )
 
 
-def test_a_stale_google_cookie_is_not_a_fresh_login(monkeypatch) -> None:
+def test_a_stale_google_cookie_is_not_a_login(monkeypatch) -> None:
     """Re-opening the window of an expired project must not claim a login."""
 
     cookies = [{"name": "SID", "domain": ".google.com", "value": "old"}]
     window = _window(mode="google")
-    window._prime_google_baseline(_FakeContext(state={"cookies": cookies}))
-
-    statuses: list[str] = []
-    resumed: list[int] = []
-    monkeypatch.setattr(login_browser, "session_scope", _NullScope)
+    statuses, resumed = _patch_google_store(monkeypatch)
+    # Google answers the liveness check with its sign-in page: the cookies on
+    # disk are stale, so pressing Finish must not claim a login.
     monkeypatch.setattr(
-        project_login, "save_storage_state", lambda *_a, **_k: statuses.append("save")
-    )
-    monkeypatch.setattr(
-        project_login,
-        "get_profile",
-        lambda *_a, **_k: type("Row", (), {"storage_state_encrypted": "x"})(),
-    )
-    monkeypatch.setattr(
-        project_login,
-        "set_status",
-        lambda _db, _pid, value, **_k: statuses.append(value),
-    )
-    monkeypatch.setattr(
-        project_login,
-        "resume_login_paused_tasks",
-        lambda *_a, **_k: resumed.append(1) or 1,
+        login_browser.LoginWindow, "_google_probe", lambda *_a, **_k: (False, None)
     )
 
     window.explicit_finish = True
@@ -414,41 +483,147 @@ def test_a_stale_google_cookie_is_not_a_fresh_login(monkeypatch) -> None:
     assert window.resumed == 0
 
 
-def test_a_changed_google_cookie_is_a_real_login(monkeypatch) -> None:
+def test_a_signed_in_google_profile_is_saved(monkeypatch) -> None:
     window = _window(mode="google")
-    window._prime_google_baseline(
-        _FakeContext(
-            state={"cookies": [{"name": "SID", "domain": ".google.com", "value": "old"}]}
-        )
-    )
-
-    saved: list[str] = []
-    resumed: list[int] = []
-    monkeypatch.setattr(login_browser, "session_scope", _NullScope)
-    monkeypatch.setattr(
-        project_login, "save_storage_state", lambda *_a, **_k: saved.append("save")
-    )
-    monkeypatch.setattr(
-        project_login, "set_status", lambda *_a, **_k: saved.append("connected")
-    )
+    saved, resumed = _patch_google_store(monkeypatch)
+    # The stored cookies are old, but Google confirms a live session: that is
+    # a working login, no matter which cookie value is on disk.
     monkeypatch.setattr(
         login_browser.LoginWindow,
-        "_detect_google_email",
-        lambda *_a, **_k: "new@example.com",
-    )
-    monkeypatch.setattr(
-        project_login,
-        "resume_login_paused_tasks",
-        lambda *_a, **_k: resumed.append(1) or 2,
+        "_google_probe",
+        lambda *_a, **_k: (True, "new@example.com"),
     )
 
     cookies = [{"name": "SID", "domain": ".google.com", "value": "new"}]
     window._save_google(_FakeContext(state={"cookies": cookies}), {"cookies": cookies})
 
     assert window.saved is True
-    assert saved == ["save", "connected"]
+    assert saved == ["save", project_login.STATUS_CONNECTED]
     assert resumed == [1]
     assert window.final_status == project_login.STATUS_CONNECTED
+
+
+def test_a_live_google_session_is_detected_while_the_window_is_open(monkeypatch) -> None:
+    """The card must turn to "connected" without the operator pressing Finish."""
+
+    window = _window(mode="google")
+    saved, resumed = _patch_google_store(monkeypatch)
+    monkeypatch.setattr(
+        login_browser.LoginWindow,
+        "_google_probe",
+        lambda *_a, **_k: (True, "me@example.com"),
+    )
+    cookies = [{"name": "SID", "domain": ".google.com", "value": "x"}]
+    page = _FakePage("https://myaccount.google.com/")
+    context = _FakeContext(page, state={"cookies": cookies})
+
+    window._inspect(context, page)
+
+    assert window.saved is True
+    assert saved == ["save", project_login.STATUS_CONNECTED]
+    assert resumed == [1]
+    assert window.final_status == project_login.STATUS_CONNECTED
+
+
+def test_an_unverified_google_session_needs_an_explicit_finish(monkeypatch) -> None:
+    """A blocked probe keeps the session only when the operator pressed Finish."""
+
+    cookies = [{"name": "SID", "domain": ".google.com", "value": "x"}]
+    window = _window(mode="google")
+    saved, _resumed = _patch_google_store(monkeypatch)
+    monkeypatch.setattr(
+        login_browser.LoginWindow, "_google_probe", lambda *_a, **_k: (None, None)
+    )
+
+    # Closing the window without Finish: no proof, nothing saved.
+    window._save_google(_FakeContext(state={"cookies": cookies}), {"cookies": cookies})
+    assert window.saved is False
+    assert "save" not in saved
+    assert saved == [project_login.STATUS_EXPIRED]
+
+    # The operator finished the sign-in: keep the session, state the caveat.
+    window = _window(mode="google")
+    saved, _resumed = _patch_google_store(monkeypatch)
+    window.explicit_finish = True
+    window._save_google(_FakeContext(state={"cookies": cookies}), {"cookies": cookies})
+    assert window.saved is True
+    assert window.final_status == project_login.STATUS_CONNECTED
+    assert "could not be reached" in window.final_message
+    assert saved == ["save", project_login.STATUS_CONNECTED]
+
+
+def test_google_probe_reads_the_signed_in_address() -> None:
+    window = _window(mode="google")
+    page = _ProbePage(body="gaiaName,email\nAda,ada@example.com")
+    context = _ProbeContext(page)
+    assert window._google_probe(context) == (True, "ada@example.com")
+    # The tab is kept for the next check instead of being opened again.
+    assert window._google_probe(context) == (True, "ada@example.com")
+    assert context.created == 1
+
+
+def test_google_probe_accepts_the_account_page_without_an_address() -> None:
+    window = _window(mode="google")
+    page = _ProbePage(
+        urls={
+            login_browser._GOOGLE_ACCOUNT_PAGE: "https://myaccount.google.com/?hl=en",
+        }
+    )
+    assert window._google_probe(_ProbeContext(page)) == (True, None)
+
+
+def test_google_probe_reports_the_signed_out_page() -> None:
+    window = _window(mode="google")
+    page = _ProbePage(
+        urls={
+            login_browser._GOOGLE_ACCOUNT_PAGE: "https://myaccount.google.com/intro",
+        },
+        body="Error 400 (Bad Request)!!1",
+    )
+    assert window._google_probe(_ProbeContext(page)) == (False, None)
+
+
+def test_google_probe_reports_the_public_landing_page() -> None:
+    """A signed-out browser is sent to google.com/account/about, not /intro."""
+
+    window = _window(mode="google")
+    page = _ProbePage(
+        urls={
+            login_browser._GOOGLE_ACCOUNT_PAGE:
+                "https://www.google.com/account/about/?hl=en-US",
+        },
+        body="Error 400 (Bad Request)!!1",
+    )
+    assert window._google_probe(_ProbeContext(page)) == (False, None)
+
+
+def test_google_probe_is_inconclusive_when_google_cannot_be_reached() -> None:
+    window = _window(mode="google")
+    page = _ProbePage()
+    page.fail = True
+    assert window._google_probe(_ProbeContext(page)) == (None, None)
+
+
+def test_the_google_probe_is_cached_between_checks(monkeypatch) -> None:
+    window = _window(mode="google")
+    calls: list[int] = []
+
+    def probe(_self, _context):
+        calls.append(1)
+        return True, "me@example.com"
+
+    monkeypatch.setattr(login_browser.LoginWindow, "_google_probe", probe)
+    context = _ProbeContext(_ProbePage())
+
+    assert window._google_probe_cached(context) == (True, "me@example.com")
+    assert window._google_probe_cached(context) == (True, "me@example.com")
+    assert calls == [1]
+
+    # Finishing asks again when the answer is old.
+    window._google_probe_at -= 60
+    assert window._google_probe_cached(context, max_age=8.0) == (True, "me@example.com")
+    assert calls == [1, 1]
+
 
 
 def test_a_public_page_is_not_a_website_login(monkeypatch) -> None:

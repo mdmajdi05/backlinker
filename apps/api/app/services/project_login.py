@@ -14,7 +14,6 @@ submission page answers with a login wall.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -446,23 +445,6 @@ def google_session_present(cookies: list[dict[str, Any]]) -> bool:
         ) in _GOOGLE_COOKIES:
             return True
     return False
-
-
-def google_cookie_fingerprint(cookies: list[dict[str, Any]]) -> str:
-    """A stable fingerprint of the Google session cookies.
-
-    Re-opening the login window of an expired project shows the *old* Google
-    cookies of the profile.  Comparing the fingerprint with the one at window
-    start tells a real new sign-in (Google rotated the cookies) apart from the
-    stale session that is still on disk.
-    """
-    parts = sorted(
-        f"{cookie.get('name')}={cookie.get('value')}"
-        for cookie in cookies or []
-        if _is_google_domain(str(cookie.get("domain") or ""))
-        and str(cookie.get("name") or "") in _GOOGLE_COOKIES
-    )
-    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 # --------------------------------------------------------------------------

@@ -192,6 +192,12 @@ export function GoogleLoginCard({
           <Alert tone="danger" title="The Google session needs attention">
             {state.last_error}
           </Alert>
+        ) : !connected && !loginOpen && state?.last_error ? (
+          // The last attempt did not connect: show the reason instead of only
+          // "Not connected".
+          <Alert tone={expired ? "warning" : "danger"} title="Google login">
+            {state.last_error}
+          </Alert>
         ) : null}
         {error ? (
           <Alert tone="danger" title="Google login">

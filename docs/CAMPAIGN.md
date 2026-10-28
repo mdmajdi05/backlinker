@@ -108,12 +108,20 @@ never leak into another project.
    answer *"This browser or app may not be secure"*; Playwright only attaches
    to it to export the session. If Chrome is not installed, the downloaded
    Chromium build is used.
-4. The app detects the **new** Google sign-in (the old cookies of an expired
-   session are never counted as a login) and stores the session **encrypted on
-   the machine that runs the backend** (in the desktop app that is this Mac).
+4. The app verifies the sign-in **with Google itself**: it opens the account list
+   and the account page of the project profile in a short lived tab. Only a real
+   signed-in session is stored - the old cookies of an expired profile are never
+   counted as a login, and a genuine login is never rejected because the cookies
+   happened to look unchanged. The session is stored **encrypted on the machine
+   that runs the backend** (in the desktop app that is this Mac).
    The card then shows **Google: connected (your@email)**, and work that had
-   stopped at a login wall is queued again automatically. If the window is
-   still open you can press **I'm done - save session** to close it.
+   stopped at a login wall is queued again automatically - usually without
+   pressing anything at all. If the window is still open you can press
+   **I'm done - save session** to close it. When Google still shows its sign-in
+   page, the card says so in red instead of silently reporting **Not connected**.
+   If Google cannot be reached at all (blocked network, consent wall) the
+   session is kept on an explicit **I'm done - save session** with a note that it
+   could not be verified yet.
 5. Every later submission that finds a login wall tries the site's own
    **Continue with Google** button with that session first.
 
@@ -128,8 +136,9 @@ Google login.
   projects list shows a **Google: login expired** badge).
 * Press **Re-login** on the project's Google login card, or on the row. The
   same profile opens again; sign in once.
-* The paused websites are queued again as soon as a **new** sign-in is
-  detected. On a row, **Save login** saves the website window explicitly; on
+* The paused websites are queued again as soon as Google confirms the new
+  session - usually right after the sign-in, without pressing anything. On a
+  row, **Save login** saves the website window explicitly; on
   the project page the Google card button is **I'm done - save session**. A row that stays
   **Login needed** still offers **Mark submitted**, so a site that cannot be
   automated can always be finished by hand.
@@ -325,11 +334,14 @@ sites ko dobara queue karta hai.
 Har project ka apna alag browser profile hai. Project page par **Connect
 Google** dabao, khuli window me ek baar sign-in karo. Session encrypted form
 me us machine par save hoti hai jo backend chala rahi hai (desktop app me yeh
-Mac hai). Jaise hi **naya sign-in** detect hota hai, login wall par ruki hui
-websites apne aap dobara queue ho jati hain - purane expired cookies ko login
-nahi mana jata. Baad me jo site "Continue with Google"
-deti hai, app usi session se andar chali jati hai - password ya 2FA app kabhi
-nahi bharta.
+Mac hai). App Google se seedha confirm karta hai ki session asli me chal rahi
+hai (purane expired cookies ko login nahi mana jata, aur asli login cookies
+same hone par bhi reject nahi hota). Jaise hi login confirm hota hai, login
+wall par ruki hui websites apne aap dobara queue ho jati hain. Baad me jo site
+"Continue with Google" deti hai, app usi session se andar chali jati hai -
+password ya 2FA app kabhi nahi bharta. Agar Google abhi bhi apna sign-in page
+dikhata hai to card par saaf reason likha aata hai, sirf **Not connected**
+nahi.
 
 **Login expire ho gaya to?**
 Row **Login needed** ho jati hai (fail nahi hoti), project page ke Google

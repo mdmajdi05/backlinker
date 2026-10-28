@@ -31,6 +31,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -42,6 +43,22 @@ from app.services.browser import ISOLATION_ARGS, ensure_playwright_path
 log = get_logger(__name__)
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Google answers this endpoint with the accounts of the browser session (and
+# with an error page when there is none).  It is the only reliable way to tell
+# a live session from the stale cookies an expired profile keeps.
+_GOOGLE_ACCOUNTS_URL = (
+    "https://accounts.google.com/ListAccounts"
+    "?gpsia=1&source=ChromiumBrowser&json=standard"
+)
+_GOOGLE_ACCOUNT_PAGE = "https://myaccount.google.com/"
+# A signed-out visitor is redirected to this landing page instead of the
+# account page.
+_GOOGLE_SIGNED_OUT_PATHS = {"/intro"}
+# The public "what is a Google Account" landing page a signed-out browser is
+# sent to instead of the account page.
+_GOOGLE_SIGNED_OUT_LANDING = "/account/about"
+_GOOGLE_PROBE_INTERVAL = 12.0
+_GOOGLE_PROBE_TIMEOUT_MS = 6_000
 _WINDOWS: dict[str, LoginWindow] = {}
 _LOCK = threading.Lock()
 
@@ -163,8 +180,8 @@ def finish(
     if not save:
         window.save_on_exit = False
     window.stop_event.set()
-    window.done.wait(20)
-    return {
+    finished = window.done.wait(20)
+    result = {
         "running": window.running,
         "saved": window.saved and save,
         "resumed": window.resumed,
@@ -174,6 +191,14 @@ def finish(
         "website_id": window.website_id,
         "message": window.final_message,
     }
+    if not finished:
+        # Never leave the caller with the stale "window is open" text: the save
+        # is still running, and the card polls until it lands.
+        result["message"] = (
+            "The login window is taking longer than expected to save. The status "
+            "updates automatically as soon as the session is stored."
+        )
+    return result
 
 
 def cancel(project_id: str) -> dict[str, Any]:
@@ -320,9 +345,14 @@ class LoginWindow:
         self._last_check = 0.0
         self._connected_once = False
         self.explicit_finish = False
-        # The Google cookies the profile already had when the window opened.
-        # Only a *different* set proves that the operator signed in.
-        self._google_fingerprint: str | None = None
+        # The last answer of Google about the session of this profile, and
+        # when it was asked.  Cookies alone cannot prove a working login: an
+        # expired profile keeps the old ones.
+        self._google_probe_result: tuple[bool | None, str | None] | None = None
+        self._google_probe_at = 0.0
+        # One spare tab is reused for the Google liveness check, so the check
+        # never steals the focus of the tab the operator is working in.
+        self._probe_page: Any = None
         # A website is only "connected" when its login wall was really seen
         # and then disappeared - a public page is not a login.
         self._saw_wall = False
@@ -465,15 +495,18 @@ class LoginWindow:
                         extra={"extra_fields": {"url": self.start_url, "error": str(exc)}},
                     )
 
-                if self.mode == "google":
-                    # Remember the cookies the profile already had.  Only a
-                    # different set means the operator really signed in.
-                    self._prime_google_baseline(context)
-
                 # The window now exists and has navigated: from here on the
                 # operator works in the browser, not in a preparation screen.
                 self.preparing = False
                 self.final_message = "The login window is open."
+
+                if self.mode == "google":
+                    # A background tab is kept for the liveness checks, and the
+                    # tab of the operator is put back in front, so no check ever
+                    # steals the focus while a password is being typed.
+                    with suppress(Exception):
+                        self._probe_page = context.new_page()
+                        page.bring_to_front()
 
                 while not self.stop_event.is_set():
                     if self._all_pages_closed(context):
@@ -762,13 +795,6 @@ class LoginWindow:
                     self._held_modifiers.discard(name)
 
     # -- login detection ----------------------------------------------
-    def _prime_google_baseline(self, context: Any) -> None:
-        try:
-            cookies = context.cookies()
-        except Exception:  # pragma: no cover - navigation in progress
-            return
-        self._google_fingerprint = project_login.google_cookie_fingerprint(cookies)
-
     def _inspect(self, context: Any, page: Any) -> None:
         """Detect a completed login and refresh the stored state."""
         if self._connected_once:
@@ -787,48 +813,12 @@ class LoginWindow:
         if self.mode == "google":
             if not project_login.google_session_present(cookies):
                 return
-            fingerprint = project_login.google_cookie_fingerprint(cookies)
-            if self._google_fingerprint is None:
-                # First look: this is the state the profile already had.  It
-                # may be an expired session, so it is never a login by itself.
-                self._google_fingerprint = fingerprint
+            # Only a live session of the *profile* counts; Google is asked
+            # directly instead of guessing from the cookie list.
+            alive, email = self._google_probe_cached(context)
+            if not alive:
                 return
-            if fingerprint == self._google_fingerprint:
-                # Nothing changed since the window opened: the old cookies are
-                # still there.  Do not claim a login and do not wake the queue.
-                return
-            email = self._detect_google_email(context) or self.email_hint
-            try:
-                state = context.storage_state()
-            except Exception:  # pragma: no cover - browser closing
-                return
-            with session_scope() as db:
-                try:
-                    project_login.save_storage_state(db, self.project_id, state)
-                except project_login.LoginStateConflict:
-                    # A newer session was stored meanwhile; that one wins.
-                    db.rollback()
-                project_login.set_status(
-                    db,
-                    self.project_id,
-                    project_login.STATUS_CONNECTED,
-                    email=email,
-                )
-                # The login is real: queue the work that stopped at a wall
-                # immediately, without waiting for the operator to close the
-                # window.
-                self.resumed = project_login.resume_login_paused_tasks(
-                    db, self.project_id
-                )
-            self.saved = True
-            self._connected_once = True
-            self._google_fingerprint = fingerprint
-            self.final_status = project_login.STATUS_CONNECTED
-            self.final_message = (
-                f"Google is connected. {self.resumed} paused website(s) queued again."
-                if self.resumed
-                else "Google is connected."
-            )
+            self._store_google(context, email)
             return
 
         if self.website_id:
@@ -847,38 +837,187 @@ class LoginWindow:
 
     def _current_page(self, context: Any, fallback: Any) -> Any:
         try:
-            pages = [item for item in context.pages if not item.is_closed()]
+            pages = [
+                item
+                for item in context.pages
+                if not item.is_closed() and item is not self._probe_page
+            ]
         except Exception:  # pragma: no cover - closed page
             pages = [fallback]
         return pages[-1] if pages else fallback
 
-    def _detect_google_email(self, context: Any) -> str | None:
-        """Best effort: read the signed-in address from Google's account list."""
-        page = None
-        try:
-            page = context.new_page()
-            page.goto(
-                "https://accounts.google.com/ListAccounts"
-                "?gpsia=1&source=ChromiumBrowser&json=standard",
-                wait_until="domcontentloaded",
-                timeout=15_000,
-            )
-            text = str(page.locator("body").inner_text() or "")
-            match = _EMAIL.search(text)
-            return match.group(0) if match else None
-        except Exception:  # pragma: no cover - Google markup changes
-            return None
-        finally:
+    def _probe_tab(self, context: Any) -> Any:
+        """The reusable background tab of the Google liveness check."""
+        page = self._probe_page
+        if page is not None:
             with suppress(Exception):
-                if page is not None:
-                    page.close()
+                if not page.is_closed():
+                    return page
+        page = context.new_page()
+        self._probe_page = page
+        return page
+
+    def _google_probe(self, context: Any) -> tuple[bool | None, str | None]:
+        """Ask Google whether this profile has a live signed-in session.
+
+        The cookie list cannot answer that: an expired profile keeps the old
+        cookies.  So the app opens a short lived tab in the same profile and
+        reads Google's own answer.
+
+        Returns ``(True, email)`` for a working session, ``(False, None)`` when
+        Google shows its sign-in page and ``(None, None)`` when the answer could
+        not be determined (network error, consent wall, captcha).
+        """
+        try:
+            page = self._probe_tab(context)
+            # The account page is the authoritative answer: Google serves it to
+            # a signed-in session and redirects everybody else to a public page.
+            page.goto(
+                _GOOGLE_ACCOUNT_PAGE,
+                wait_until="domcontentloaded",
+                timeout=_GOOGLE_PROBE_TIMEOUT_MS,
+            )
+            url = _safe_url(page)
+            host = _url_host(url)
+            path = urlsplit(url).path.rstrip("/")
+            if host == "myaccount.google.com":
+                if path in _GOOGLE_SIGNED_OUT_PATHS:
+                    # A signed-out visitor is sent to the public landing page.
+                    return False, None
+                # Google only serves the account page to a signed-in session.
+                return True, self._google_email(page)
+            if host == "accounts.google.com":
+                # Google sent the account page back to the sign-in flow.
+                return False, None
+            if host in ("google.com", "www.google.com") and path.startswith(
+                _GOOGLE_SIGNED_OUT_LANDING
+            ):
+                # The signed-out landing page of google.com (a browser with
+                # only the advertising cookies is redirected here instead of
+                # myaccount.google.com).
+                return False, None
+            log.info(
+                "the Google session check ended on an unexpected page",
+                extra={"extra_fields": {"project_id": self.project_id, "url": url}},
+            )
+            return None, None
+        except Exception as exc:
+            log.info(
+                "could not verify the Google session",
+                extra={
+                    "extra_fields": {
+                        "project_id": self.project_id,
+                        "error": str(exc),
+                    }
+                },
+            )
+            return None, None
+
+    def _google_email(self, page: Any) -> str | None:
+        """The address of the signed-in account, when the page shows it."""
+        email = _page_email(page)
+        if email:
+            return email
+        # The account page is a web app and may not have painted the address
+        # yet; the Chrome account list is a small, plain fallback.
+        with suppress(Exception):
+            page.goto(
+                _GOOGLE_ACCOUNTS_URL,
+                wait_until="domcontentloaded",
+                timeout=_GOOGLE_PROBE_TIMEOUT_MS,
+            )
+            return _page_email(page)
+        return None
+
+    def _google_probe_cached(
+        self, context: Any, *, max_age: float = _GOOGLE_PROBE_INTERVAL
+    ) -> tuple[bool | None, str | None]:
+        """The last probe answer, asked again when it is older than ``max_age``."""
+        now = time.monotonic()
+        if (
+            self._google_probe_result is not None
+            and now - self._google_probe_at <= max_age
+        ):
+            return self._google_probe_result
+        result = self._google_probe(context)
+        self._google_probe_result = result
+        self._google_probe_at = time.monotonic()
+        log.info(
+            "checked the Google session of the login window",
+            extra={
+                "extra_fields": {
+                    "project_id": self.project_id,
+                    "signed_in": result[0],
+                }
+            },
+        )
+        return result
+
+    def _store_google(
+        self, context: Any, email: str | None, *, verified: bool = True
+    ) -> None:
+        """Persist a session that Google confirmed (or that the operator saved)."""
+        try:
+            state = context.storage_state()
+        except Exception:  # pragma: no cover - browser closing
+            return
+        with session_scope() as db:
+            try:
+                project_login.save_storage_state(db, self.project_id, state)
+            except project_login.LoginStateConflict:
+                # A newer session was stored meanwhile; that one wins.
+                db.rollback()
+            project_login.set_status(
+                db,
+                self.project_id,
+                project_login.STATUS_CONNECTED,
+                email=email or self.email_hint,
+            )
+            # The login is real: queue the work that stopped at a wall
+            # immediately, without waiting for the operator to close the window.
+            self.resumed = project_login.resume_login_paused_tasks(
+                db, self.project_id
+            )
+        self.saved = True
+        self._connected_once = True
+        self.final_status = project_login.STATUS_CONNECTED
+        if not verified:
+            self.final_message = (
+                "The Google session was saved, but Google could not be reached to "
+                "verify it. The next task confirms it."
+            )
+        else:
+            self.final_message = (
+                f"Google is connected. {self.resumed} paused website(s) queued again."
+                if self.resumed
+                else "Google is connected."
+            )
+
+    def _mark_google_missing(self, message: str) -> None:
+        """Store that no usable Google session exists, and say why."""
+        with session_scope() as db:
+            row = project_login.get_profile(db, self.project_id)
+            has_session = bool(row and row.storage_state_encrypted)
+            self.final_status = (
+                project_login.STATUS_EXPIRED
+                if has_session
+                else project_login.STATUS_NOT_CONNECTED
+            )
+            project_login.set_status(
+                db, self.project_id, self.final_status, error=message
+            )
+        self.final_message = message
 
     def _all_pages_closed(self, context: Any) -> bool:
         try:
-            pages = context.pages
+            pages = [
+                item
+                for item in context.pages
+                if not item.is_closed() and item is not self._probe_page
+            ]
         except Exception:  # pragma: no cover - browser gone
             return True
-        return bool(pages) and all(page.is_closed() for page in pages)
+        return not pages
 
     def _save(self, context: Any) -> None:
         """Persist the session of the window (unless the operator cancelled)."""
@@ -905,83 +1044,37 @@ class LoginWindow:
 
     def _save_google(self, context: Any, state: dict[str, Any]) -> None:
         cookies = state.get("cookies") or []
-        if not project_login.google_session_present(cookies):
-            if not self._connected_once:
-                with session_scope() as db:
-                    row = project_login.get_profile(db, self.project_id)
-                    has_session = bool(row and row.storage_state_encrypted)
-                    self.final_status = (
-                        project_login.STATUS_EXPIRED
-                        if has_session
-                        else project_login.STATUS_NOT_CONNECTED
-                    )
-                    project_login.set_status(
-                        db,
-                        self.project_id,
-                        self.final_status,
-                        error="No Google session was found in the login window.",
-                    )
-            else:
-                self.final_status = project_login.STATUS_CONNECTED
-            self.final_message = (
-                "No Google session was found. The project still needs a login."
-            )
-            return
-
-        fingerprint = project_login.google_cookie_fingerprint(cookies)
         if self._connected_once:
-            new_login = True
-        elif self._google_fingerprint is None:
-            # The baseline could not be read; only an explicit Finish may claim
-            # a login in that unusual case.
-            new_login = self.explicit_finish
-        else:
-            # A real sign-in makes Google rotate its session cookies.  Pressing
-            # Finish on unchanged cookies is not a login.
-            new_login = fingerprint != self._google_fingerprint
-        if not new_login:
-            with session_scope() as db:
-                row = project_login.get_profile(db, self.project_id)
-                has_session = bool(row and row.storage_state_encrypted)
-                self.final_status = (
-                    project_login.STATUS_EXPIRED
-                    if has_session
-                    else project_login.STATUS_NOT_CONNECTED
-                )
-                project_login.set_status(
-                    db,
-                    self.project_id,
-                    self.final_status,
-                    error="No new Google sign-in was detected.",
-                )
-            self.final_message = (
-                "No new Google sign-in was detected. Sign in once, then press "
-                "Finish again."
+            # The session was already verified and stored while the window was
+            # open; keep the cookies the profile has now.
+            self._store_google(context, None)
+            return
+        if not project_login.google_session_present(cookies):
+            self._mark_google_missing(
+                "No Google session was found in the login window. Sign in once, "
+                "then press Finish again."
             )
             return
 
-        with session_scope() as db:
-            try:
-                project_login.save_storage_state(db, self.project_id, state)
-            except project_login.LoginStateConflict:
-                db.rollback()
-            email = self._detect_google_email(context) or self.email_hint
-            project_login.set_status(
-                db,
-                self.project_id,
-                project_login.STATUS_CONNECTED,
-                email=email,
+        # Finishing is the moment the operator says "I am done": ask Google
+        # again instead of reusing an answer from just before the sign-in.
+        alive, email = self._google_probe_cached(context, max_age=0.0)
+        if alive:
+            self._store_google(context, email)
+            return
+        if alive is None and self.explicit_finish:
+            # Google could not be asked (blocked endpoint, consent wall): the
+            # operator says the sign-in is done, so keep the session and say
+            # honestly that it could not be verified.
+            log.warning(
+                "saving an unverified Google session",
+                extra={"extra_fields": {"project_id": self.project_id}},
             )
-            self.resumed = project_login.resume_login_paused_tasks(
-                db, self.project_id
-            )
-        self.saved = True
-        self._google_fingerprint = fingerprint
-        self.final_status = project_login.STATUS_CONNECTED
-        self.final_message = (
-            f"Google is connected. {self.resumed} paused website(s) queued again."
-            if self.resumed
-            else "Google is connected."
+            self._store_google(context, email, verified=False)
+            return
+        self._mark_google_missing(
+            "Google still shows its sign-in page, so no login was saved. Sign in "
+            "once, wait for your Google account page, then press Finish again."
         )
 
     def _save_site(self, context: Any, state: dict[str, Any]) -> None:
@@ -1227,6 +1320,28 @@ def _safe_url(page: Any) -> str:
         return str(page.url or "")
     except Exception:  # pragma: no cover - closed page
         return ""
+
+
+def _url_host(url: str) -> str:
+    try:
+        return (urlsplit(url).hostname or "").lower()
+    except Exception:  # pragma: no cover - malformed URL
+        return ""
+
+
+def _is_google_host(url: str) -> bool:
+    host = _url_host(url)
+    return host == "google.com" or host.endswith(".google.com")
+
+
+def _page_email(page: Any) -> str | None:
+    """The signed-in address in the body of a Google page, if any."""
+    try:
+        text = str(page.locator("body").inner_text() or "")
+    except Exception:  # pragma: no cover - Google markup changes
+        return None
+    match = _EMAIL.search(text)
+    return match.group(0) if match else None
 
 
 def login_start_url(project_id: str) -> str:
