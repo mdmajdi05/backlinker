@@ -146,6 +146,7 @@ def export_campaign_report(
             "Data ready %",
             "Missing fields",
             "Published page",
+            "Verification",
             "Last update",
         ]
     )
@@ -167,6 +168,7 @@ def export_campaign_report(
                 row["details_percent"],
                 ", ".join(row["missing"]),
                 row["published_page_url"] or "",
+                row.get("verification_status") or "",
                 row["last_update"].isoformat() if row["last_update"] else "",
             ]
         )

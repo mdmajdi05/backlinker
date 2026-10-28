@@ -146,14 +146,21 @@ def _add_column_ddl(dialect: str, table: str, column) -> str | None:
     """The statement that adds a column (SQLite and PostgreSQL)."""
     type_name = column.type.compile(dialect=engine_dialect(dialect))
     default = ""
-    if column.default is not None and getattr(column.default, "is_scalar", False):
-        value = column.default.arg
-        if isinstance(value, bool):
-            default = " DEFAULT 1" if value else " DEFAULT 0"
-        elif isinstance(value, (int, float)):
-            default = f" DEFAULT {value}"
-        elif isinstance(value, str):
-            default = f" DEFAULT '{value}'"
+    if column.default is not None:
+        if getattr(column.default, "is_scalar", False):
+            value = column.default.arg
+            if isinstance(value, bool):
+                default = " DEFAULT 1" if value else " DEFAULT 0"
+            elif isinstance(value, (int, float)):
+                default = f" DEFAULT {value}"
+            elif isinstance(value, str):
+                default = f" DEFAULT '{value}'"
+        elif getattr(column.default.arg, "__name__", "") == "dict":
+            # A JSON column with ``default=dict`` exists on old databases as
+            # ``JSON NOT NULL`` too, so the added column needs an empty object.
+            default = " DEFAULT '{}'"
+        elif getattr(column.default.arg, "__name__", "") == "list":
+            default = " DEFAULT '[]'"
     if dialect.startswith("postgres"):
         return f'ALTER TABLE "{table}" ADD COLUMN "{column.name}" {type_name}{default}'
     return f'ALTER TABLE "{table}" ADD COLUMN "{column.name}" {type_name}{default}'

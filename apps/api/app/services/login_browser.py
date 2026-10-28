@@ -1356,6 +1356,48 @@ def _page_email(page: Any) -> str | None:
     return match.group(0) if match else None
 
 
+def detect_google_email(context: Any) -> str | None:
+    """The address of the Google account signed in to *context* (best effort).
+
+    Opens the account page in a short lived background tab of the project
+    profile.  The session is never changed and the tab is closed again, so it
+    is safe to call once at the start of a batch while the website tab stays
+    where it is.  Returns ``None`` when Google does not show a signed-in
+    account (or the answer cannot be read).
+    """
+    page: Any = None
+    created = False
+    try:
+        for candidate in context.pages:
+            with suppress(Exception):
+                if "myaccount.google.com" in (candidate.url or ""):
+                    page = candidate
+                    break
+        if page is None:
+            page = context.new_page()
+            created = True
+        page.goto(
+            _GOOGLE_ACCOUNT_PAGE,
+            wait_until="domcontentloaded",
+            timeout=_GOOGLE_PROBE_TIMEOUT_MS,
+        )
+        if _url_host(_safe_url(page)) != "myaccount.google.com":
+            return None
+        for _attempt in range(2):
+            email = _page_email(page)
+            if email:
+                return email
+            with suppress(Exception):
+                page.wait_for_timeout(700)
+        return None
+    except Exception:  # pragma: no cover - Google markup changes
+        return None
+    finally:
+        if created and page is not None:
+            with suppress(Exception):
+                page.close()
+
+
 def login_start_url(project_id: str) -> str:
     """The page the Google window opens on."""
     del project_id

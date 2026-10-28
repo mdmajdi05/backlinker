@@ -175,34 +175,60 @@ machine that runs the backend (owner-only permissions) and is deleted by
 Most directories need an account before they accept a link. The
 **Create accounts** button does that for the whole list at once.
 
-1. Press **Create accounts**. The dialog explains what happens; if no Gmail
-   inbox is stored it also asks for one (see below).
+1. Press **Create accounts**. The dialog asks for the **username** and
+   **password** you want the accounts to use (leave either blank to generate
+   it per website) and for the **sign-up e-mail** (blank = the Gmail of the
+   project's Google login). They are remembered for the project, so the next
+   batch is prefilled.
 2. **One batch, one browser, one inbox.** The app opens the isolated profile of
    the project once and keeps it open for every row of the list. Gmail is
-   opened once (a single IMAP session) and stays open for the whole batch -
-   not one Gmail tab per website.
+   opened once and stays available for the whole batch - not one Gmail
+   session per website.
 3. Per website the strategy is decided from the **live page**:
    * a *Continue with Google* button -> the project Google session is used (no
      password is typed, no account chooser is automated; if Google asks for the
      password the row stops as **Needs you**),
-   * otherwise the sign-up form is filled with a generated username and a
-     strong password. **Both are stored with the account and shown on that
-     website's row** in the campaign table and in the CSV report.
+   * otherwise the sign-up form is filled with **your** username and password
+     (generated when the field was left blank). **Both are stored with the
+     account and shown on that website's row** in the campaign table and in the
+     CSV report.
+   The form is read from the live DOM: e-mail, username, first/last/full name,
+   company, phone, website, address, city, ZIP, country (a `<select>` too),
+   password + confirmation and the terms checkbox. A second step of a
+   multi-step form is filled with the same values. If the site does not keep the
+   session after the sign-up, the app **logs in with the stored credentials**
+   and only then reports the account active.
 4. If the sign-up asks for a code, the row signs up with its **own address
-   alias** (`inbox+<token>@gmail.com`). Only a mail addressed to that token is
-   accepted, one code is claimed once, and the code is stored encrypted
-   against `(project, website)`. A code can never be filled into another
-   project or another website; an ambiguous mail pauses the row instead of
-   guessing.
+   alias** of that Gmail (`inbox+<token>@gmail.com`). The code is read in the
+   Gmail tab of the same logged-in browser (the App Password inbox is only the
+   fallback). Only a mail addressed to that token is accepted, one code is
+   claimed once, and the code is stored encrypted against
+   `(project, website)`. A code can never be filled into another project or
+   another website; an ambiguous mail pauses the row instead of guessing.
 5. When the account is active the same logged-in browser looks for the exact
    page that carries the link field (`/submit`, `/add-listing`, a profile editor
    with a website field, a forum's *new thread*, ...). The found URL, the field
    mapping and a confidence are stored on the row and shown in the
-   **Backlink page** column.
+   **Backlink page** column. The link stays clickable, and the downloaded
+   report carries the **Published page** and **Verification** columns - so you
+   can open the same live URL and check the post yourself.
+
+If a form asks for a required field the app has no value for (a custom field,
+an address, ...), it does not submit a half-filled form: the row stops as
+**Needs you**, names the field, and leaves the site open through **Open site**.
+Type the values shown on the row (username, password, e-mail) plus that field,
+finish the submit, then press **Retry**.
 
 ### Gmail for the codes
 
-Use a **Google App Password**, never your normal Google password:
+The **preferred** reader needs no setup: when the project's Google login is
+connected, the batch opens `mail.google.com` in that same browser profile and
+reads the code there. The search is scoped to the row's alias, so one website
+can never read another website's code.
+
+The **App Password** inbox is the fallback for a project whose Google session
+cannot open Gmail. Use a Google App Password, never your normal Google
+password:
 
 Google Account -> Security -> 2-Step Verification -> App passwords -> create one
 for "Mail" on "Other (Auto Backlinker)". Paste the 16 characters into the
@@ -219,6 +245,7 @@ settings.
 | -------- | --- | ---------- |
 | **Needs you** + CAPTCHA | the site asked for a human | press **Open site** (streamed on the web, native window on the desktop), solve it once, then **Retry** |
 | **Needs you** + "no sign-up form" | the site has no real sign-up form (or a different flow) | check the site once, or create the account by hand |
+| **Needs you** + "required fields could not be filled" | the form asks for a custom field the app has no value for | press **Open site**, type the username, password, e-mail and the named fields shown on the row, submit, then **Retry** |
 | **Needs you** + "e-mail code" | Gmail is not configured or no code arrived | save the App Password, press **Retry** |
 | **Failed** | the page did not open / a network error | press **Retry** |
 
@@ -353,23 +380,28 @@ window explicitly save hoti hai.
 
 **Account kaun banata hai?**
 **Create accounts** ek hi click me poori list ke accounts banata hai - ek hi
-project browser profile aur ek hi Gmail session (IMAP) poore batch ke liye.
-Jis site par **Continue with Google** milta hai wahan project ka Google session
-use hota hai; jahan nahi milta wahan generated username + strong password se
-signup hota hai. Dono cheezein usi website ki row me report me dikhti hain
+project browser profile aur ek hi Gmail session poore batch ke liye. Details
+form me jo **username / password** aap doge wahi har signup me fill hoga (khali
+chhodo to per-website generate ho jayega), aur signup usi **Gmail** se hoga
+jo project ke Google login me use hua tha (khali email field ka matlab wahi
+address). Jis site par **Continue with Google** milta hai wahan project ka
+Google session use hota hai; jahan nahi milta wahan aapke username + password
+se signup hota hai. Dono cheezein usi website ki row me report me dikhti hain
 (username, password, account e-mail) aur CSV me bhi aati hain.
 
 **OTP kisi doosri site me nahi jayega?**
-Har row apne hi alias (`inbox+token@gmail.com`) se signup karti hai. Sirf usi
-alias par aaya code accept hota hai, wo ek hi baar claim hota hai, aur
-`(project, website)` ke against encrypted save hota hai. Do different codes
-ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar ruk
-jati hai.
+Har row apne hi alias (`inbox+token@gmail.com`) se signup karti hai. Code usi
+browser ke Gmail tab me padha jata hai (App Password inbox sirf fallback hai).
+Sirf usi alias par aaya code accept hota hai, wo ek hi baar claim hota hai,
+aur `(project, website)` ke against encrypted save hota hai. Do different
+codes ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar
+ruk jati hai.
 
 **Gmail baar baar khulta hai?**
-Nahi. Poore batch ke liye Gmail ek hi baar khulta hai (ek IMAP session), aur
-sab rows usi session se apna code lete hain. App password chahiye - normal
-Google password nahi (Google Account -> Security -> App passwords).
+Nahi. Poore batch ke liye Gmail ek hi baar khulta hai (usi browser ka ek tab),
+aur sab rows usi se apna code leti hain. Google login connected ho to App
+Password ki zaroorat nahi; warna fallback ke liye App Password chahiye -
+normal Google password nahi (Google Account -> Security -> App passwords).
 
 **Captcha aaya to?**
 CAPTCHA bypass nahi hota. Row **Needs you** ho jati hai, **Open site** se wahi
@@ -382,3 +414,24 @@ Account active hote hi wahi logged-in browser submit/add-listing/profile/forum
 pages check karta hai, field mapping ke saath exact URL aur confidence save
 karta hai. Row ke **Backlink page** column me dikhta hai; **Find page** se
 dobara dhoondh sakte ho.
+
+**Post sach me hua ya nahi, kaise check karun?**
+Row ka **Backlink page** link clickable hai - wahi page browser me khulta hai
+jahan post hua. **Download report** (CSV) me **Published page** aur
+**Verification** column bhi aate hain, jisse aap khud dekh sakte ho ki live
+page par aapka link maujood hai ya nahi. App sirf tab **Verified** likhta hai
+jab wo page khol kar link khud dhoondh leta hai.
+
+**Form me koi ajeeb field aayi to?**
+App live form ke har field ko padhta hai (e-mail, username, first/last/full
+name, company, phone, website, address, city, ZIP, country select, password +
+confirm, terms checkbox) aur khud bharta hai. Agar koi required field app
+bhar nahi paata, row **Needs you** ho jati hai aur reason me us field ka naam
+likha aata hai - **Open site** dabao, row me dikhaye username/password/e-mail
+aur wo field haath se bharo, phir **Retry** dabao. App jhooth nahi bolta ki
+account ban gaya jab tak asli signed-in page na dikhe.
+
+**Account ban gaya par login nahi raha?**
+Signup ke baad app wahi stored username/password se khud login karta hai aur
+site reload karke asli signed-in control dhoondhta hai. Tab hi row **Active**
+hoti hai.

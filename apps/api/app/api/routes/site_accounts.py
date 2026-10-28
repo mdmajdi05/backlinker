@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.db.models import Opportunity, Project, SiteAccount, Website
-from app.services import access, gmail_otp, site_accounts
+from app.services import access, gmail_otp, project_login, site_accounts
 from app.services.browser import playwright_available
 from app.services.events import record_event
 
@@ -30,6 +30,12 @@ router = APIRouter(tags=["site-accounts"])
 class ProvisionIn(BaseModel):
     website_ids: list[str] = []
     retry: bool = False
+    #: The details form: the same username / password / e-mail for every
+    #: website of the project.  ``None`` keeps the saved value, ``""`` clears
+    #: it (that field is generated per website then).
+    username: str | None = None
+    password: str | None = None
+    email: str | None = None
 
 
 class RetryIn(BaseModel):
@@ -93,12 +99,22 @@ def read_accounts(project_id: str, db: DbSession, user: CurrentUser) -> dict:
     """Every account of the project plus the live batch progress."""
     project = _project(db, project_id, user)
     settings_row = gmail_otp.read_settings(db)
+    profile = project_login.get_profile(db, project_id)
     return {
         "project_id": project.id,
         "accounts": _accounts_payload(db, project),
         "batch": site_accounts.batch_state(project.id),
         "counts": site_accounts.counts_for_project(db, project.id),
         "gmail": gmail_otp.status_payload(settings_row),
+        #: The details form is prefilled from here on the next visit.
+        "details": site_accounts.signup_details(db, project.id),
+        #: The Gmail that owns the project's Google session (the sign-up
+        #: address when the operator did not type another one).
+        "google_email": (profile.email if profile is not None else None),
+        "google_connected": bool(
+            profile is not None
+            and profile.status == project_login.STATUS_CONNECTED
+        ),
         "browser_ready": playwright_available(),
     }
 
@@ -115,6 +131,9 @@ def provision_accounts(
             project,
             website_ids=payload.website_ids or None,
             retry=payload.retry,
+            username=payload.username,
+            password=payload.password,
+            email=payload.email,
         )
     except RuntimeError as exc:
         raise HTTPException(
@@ -153,10 +172,13 @@ def provision_one(
     project = _project(db, project_id, user)
     website = _website(db, project, website_id)
     row = site_accounts.ensure_account(db, project.id, website.id)
-    if not row.email and not row.username:
+    details = site_accounts.signup_details(db, project.id)
+    site_accounts.apply_signup_details(row, details)
+    if not row.username:
         row.username = site_accounts.generate_username(website, project)
+    if not row.password_encrypted:
         site_accounts.set_password(row, site_accounts.generate_password())
-        db.commit()
+    db.commit()
     try:
         batch = site_accounts.start_batch(
             db, project, website_ids=[website.id], retry=payload.retry

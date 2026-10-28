@@ -738,7 +738,13 @@ export const api = {
     provision: (
       c: ApiClient,
       projectId: string,
-      body: { website_ids?: string[]; retry?: boolean } = {},
+      body: {
+        website_ids?: string[];
+        retry?: boolean;
+        username?: string;
+        password?: string;
+        email?: string;
+      } = {},
     ) =>
       c.post<{ batch: ProjectAccounts["batch"]; accounts: Record<string, SiteAccount> }>(
         `/api/v1/projects/${projectId}/accounts/provision`,

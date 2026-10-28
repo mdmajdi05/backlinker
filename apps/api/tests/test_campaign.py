@@ -334,4 +334,5 @@ def test_the_campaign_report_downloads_as_csv(authenticated_client) -> None:
     assert response.headers["content-type"].startswith("text/csv")
     text = response.text
     assert "Website" in text.splitlines()[0]
+    assert "Verification" in text.splitlines()[0]
     assert "report.example" in text

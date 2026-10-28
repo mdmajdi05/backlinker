@@ -155,6 +155,9 @@ export function CampaignPanel({
   const [gmailAddress, setGmailAddress] = React.useState("");
   const [gmailPassword, setGmailPassword] = React.useState("");
   const [gmailMessage, setGmailMessage] = React.useState<string | null>(null);
+  const [signupUsername, setSignupUsername] = React.useState("");
+  const [signupPassword, setSignupPassword] = React.useState("");
+  const [signupEmail, setSignupEmail] = React.useState("");
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   // Follow the first-run download of a website login window until it is ready.
@@ -194,6 +197,15 @@ export function CampaignPanel({
     return () => window.clearInterval(timer);
   }, [accountRunning, accounts.reload, campaign.reload]);
 
+  const openAccountDialog = () => {
+    setGmailAddress(accounts.data?.gmail.address ?? "");
+    setGmailMessage(null);
+    setSignupUsername(accounts.data?.details?.username ?? "");
+    setSignupPassword(accounts.data?.details?.password ?? "");
+    setSignupEmail(accounts.data?.details?.email ?? "");
+    setAccountOpen(true);
+  };
+
   const startAccounts = async () => {
     setAccountBusy(true);
     try {
@@ -211,7 +223,12 @@ export function CampaignPanel({
           setGmailBusy(false);
         }
       }
-      await api.accounts.provision(apiClient, projectId, { retry: false });
+      await api.accounts.provision(apiClient, projectId, {
+        retry: false,
+        username: signupUsername,
+        password: signupPassword,
+        email: signupEmail,
+      });
       setAccountOpen(false);
       accounts.reload();
       campaign.reload();
@@ -743,9 +760,7 @@ export function CampaignPanel({
                       <Button
                         variant="outline"
                         onClick={() => {
-                          setGmailAddress(accounts.data?.gmail.address ?? "");
-                          setGmailMessage(null);
-                          setAccountOpen(true);
+                          openAccountDialog();
                         }}
                         loading={accountBusy}
                         disabled={!summary || summary.total === 0}
@@ -774,8 +789,7 @@ export function CampaignPanel({
                   busy={accountBusy}
                   onStop={() => void stopAccounts()}
                   onStart={() => {
-                    setGmailAddress(accounts.data?.gmail.address ?? "");
-                    setAccountOpen(true);
+                    openAccountDialog();
                   }}
                   startLabel="Create missing accounts"
                 />
@@ -1243,13 +1257,57 @@ export function CampaignPanel({
         }
       >
         <div className="space-y-3">
+          <div className="space-y-2 rounded-md border border-line bg-surface-raised/50 p-3">
+            <p className="text-[11px] font-semibold text-content">
+              Sign-up details (one answer for every website)
+            </p>
+            <p className="text-[10px] text-content-subtle">
+              {accounts.data?.google_connected
+                ? `Every account is created with the Gmail of your Google login${
+                    accounts.data.google_email
+                      ? ` (${accounts.data.google_email})`
+                      : ""
+                  }; the codes are read in the same browser tab.`
+                : "Connect Google in the project first: the sign-ups then use the same Gmail and the codes can be read in the browser."}
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Field label="Username (blank = generated per website)">
+                <Input
+                  value={signupUsername}
+                  onChange={(event) => setSignupUsername(event.target.value)}
+                  placeholder="acme_team"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Password (blank = generated per website)">
+                <Input
+                  type="text"
+                  value={signupPassword}
+                  onChange={(event) => setSignupPassword(event.target.value)}
+                  placeholder="At least 12 characters"
+                  autoComplete="new-password"
+                />
+              </Field>
+            </div>
+            <Field
+              label="Sign-up e-mail (blank = the Google login address)"
+              hint="A Gmail address gets its own +alias per website, so a code can never land in another row."
+            >
+              <Input
+                value={signupEmail}
+                onChange={(event) => setSignupEmail(event.target.value)}
+                placeholder={accounts.data?.google_email ?? "you@gmail.com"}
+                autoComplete="off"
+              />
+            </Field>
+          </div>
           <Alert tone="info" title="What happens in one batch">
             Every row opens in the isolated profile of this project. If the site offers{" "}
             <strong>Continue with Google</strong> the project Google session is used;
-            otherwise a username and a strong password are generated, registered and
-            stored on that row of the report. The verification code is read once from
-            the inbox below and bound to the address of that website only - a code can
-            never land in another row.
+            otherwise the username and password above are registered and stored on that
+            row of the report (blank fields are generated per website). The verification
+            code is read in the Gmail tab of the same browser and bound to the address of
+            that website only - a code can never land in another row.
           </Alert>
           {accounts.data?.gmail.configured ? (
             <p className="text-[11px] text-content-muted">
@@ -1301,8 +1359,12 @@ export function CampaignPanel({
             honestly promise every CAPTCHA on every site; this keeps every account real.
           </Alert>
           <p className="text-[10px] text-content-subtle">
-            Accounts are only created where the site offers a real sign-up form. A row
-            that cannot be completed is reported with its exact reason.
+            Every field a form asks for is detected and filled (e-mail, name,
+            company, phone, website, country, ...). If a custom field cannot be
+            filled, the row stops as <strong>Needs you</strong>: open the site, type
+            the values shown on the row, then press Retry. Accounts are only created
+            where the site offers a real sign-up form - a row that cannot be completed
+            is reported with its exact reason.
           </p>
         </div>
       </Dialog>

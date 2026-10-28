@@ -1268,6 +1268,14 @@ export interface GmailStatus {
   imap_host: string;
 }
 
+/** The username / e-mail / password the operator wants every sign-up to use. */
+export interface SignupDetails {
+  username: string;
+  email: string;
+  password: string | null;
+  has_password: boolean;
+}
+
 /** Everything the account panel of a project needs. */
 export interface ProjectAccounts {
   project_id: string;
@@ -1275,6 +1283,11 @@ export interface ProjectAccounts {
   batch: AccountBatch;
   counts: Record<string, number>;
   gmail: GmailStatus;
+  /** Prefill of the details form ("" = generated per website). */
+  details: SignupDetails;
+  /** The Gmail of the project's Google login, when it is known. */
+  google_email: string | null;
+  google_connected: boolean;
   browser_ready: boolean;
 }
 

@@ -149,6 +149,10 @@ class ProjectSettings(IdMixin, TimestampMixin, Base):
     auto_submit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     #: Categories the auto pilot is limited to (empty = every category).
     auto_submit_categories: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
+    #: Sign-up details the operator chose once per project: the username, the
+    #: e-mail that receives the codes and the password (encrypted) typed by
+    #: hand.  Empty fields are generated per website.
+    signup_details: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="UTC", nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="settings")

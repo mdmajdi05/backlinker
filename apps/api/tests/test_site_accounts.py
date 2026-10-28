@@ -66,6 +66,62 @@ def test_extract_code(text: str, expected: str | None) -> None:
     assert gmail_otp.extract_code(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "Confirm your account: https://example.org/confirm?token=abc123",
+            "https://example.org/confirm?token=abc123",
+        ),
+        (
+            "Click https://example.org/about or verify at https://example.org/verify/xy",
+            "https://example.org/verify/xy",
+        ),
+        ("Nothing here: https://example.org/about", None),
+        ("", None),
+    ],
+)
+def test_extract_link(text: str, expected: str | None) -> None:
+    assert gmail_otp.extract_link(text) == expected
+
+
+def test_field_role_recognises_the_common_signup_fields() -> None:
+    role = site_accounts._field_role
+    assert role({"type": "email"}) == "email"
+    assert role({"type": "text", "name": "user_name"}) == "username"
+    assert role({"type": "password", "name": "password"}) == "password"
+    assert role({"type": "password", "name": "confirm_password"}) == "confirm"
+    assert role({"type": "text", "placeholder": "First name"}) == "first"
+    assert role({"type": "text", "placeholder": "Last name"}) == "last"
+    assert role({"type": "text", "name": "company_name"}) == "company"
+    assert role({"type": "tel"}) == "phone"
+    assert role({"type": "url"}) == "website"
+    assert role({"type": "text", "name": "country"}) == "country"
+    assert role({"type": "text", "name": "postal_code"}) == "zip"
+    assert role({"type": "text", "name": "favourite_colour"}) == ""
+
+
+def test_browser_inbox_search_is_scoped_to_the_alias() -> None:
+    inbox = gmail_otp.BrowserInbox(None, "owner@gmail.com")
+    since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=2)
+    url = inbox._search_url("owner+abc123@gmail.com", since)
+    assert url.startswith("https://mail.google.com/mail/u/0/#search/")
+    assert "owner%2Babc123%40gmail.com" in url
+    assert "newer_than%3A1d" in url
+
+
+def test_browser_inbox_without_an_alias_pauses_at_once() -> None:
+    inbox = gmail_otp.BrowserInbox(None, "")
+    code, reason = inbox.wait_for_code(
+        alias="",
+        since=datetime.now(UTC).replace(tzinfo=None),
+        site_domain="example.com",
+        timeout=1,
+    )
+    assert code is None
+    assert reason
+
+
 def test_alias_is_unique_per_row() -> None:
     first = gmail_otp.alias_for("inbox@gmail.com", gmail_otp.alias_token("p1", "w1"))
     second = gmail_otp.alias_for("inbox@gmail.com", gmail_otp.alias_token("p1", "w2"))
@@ -259,6 +315,85 @@ def test_account_payload_hides_the_password_when_asked(db_session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Sign-up details (one username / password / e-mail for the project)
+# ---------------------------------------------------------------------------
+def test_signup_details_roundtrip_and_clear(db_session) -> None:
+    project = _project(db_session)
+
+    saved = site_accounts.save_signup_details(
+        db_session,
+        project,
+        username="acme_team",
+        password="Chosen-Pass-123",
+        email="owner@gmail.com",
+    )
+    assert saved["username"] == "acme_team"
+    assert saved["email"] == "owner@gmail.com"
+    assert saved["password"] == "Chosen-Pass-123"
+    assert saved["has_password"] is True
+
+    # The ciphertext is bound to the project and never stores the plain text.
+    row = db_session.get(Project, project.id)
+    assert row is not None
+
+    settings_row = site_accounts._settings_row(db_session, project.id)
+    assert settings_row is not None
+    assert "Chosen-Pass-123" not in str(settings_row.signup_details)
+
+    hidden = site_accounts.signup_details(db_session, project.id, reveal=False)
+    assert hidden["password"] is None
+    assert hidden["has_password"] is True
+
+    # An empty string clears a field: that value is generated per website.
+    cleared = site_accounts.save_signup_details(
+        db_session, row, username="", password="", email=""
+    )
+    assert cleared == {
+        "username": "",
+        "email": "",
+        "password": None,
+        "has_password": False,
+    }
+
+
+def test_signup_details_are_applied_to_a_row(db_session) -> None:
+    project = _project(db_session)
+    website = _website(db_session)
+    details = {
+        "username": "acme_team",
+        "email": "owner@gmail.com",
+        "password": "Chosen-Pass-123",
+    }
+    row = site_accounts.ensure_account(db_session, project.id, website.id)
+    site_accounts.apply_signup_details(row, details)
+    db_session.commit()
+
+    assert row.username == "acme_team"
+    assert site_accounts.password_of(row) == "Chosen-Pass-123"
+
+
+def test_read_accounts_carries_the_signup_details(
+    authenticated_client: TestClient, db_session, project_id: str
+) -> None:
+    project = db_session.get(Project, project_id)
+    assert project is not None
+    site_accounts.save_signup_details(
+        db_session,
+        project,
+        username="acme_team",
+        password="Chosen-Pass-123",
+        email="owner@gmail.com",
+    )
+
+    body = authenticated_client.get(f"{API}/projects/{project_id}/accounts").json()
+    assert body["details"]["username"] == "acme_team"
+    assert body["details"]["email"] == "owner@gmail.com"
+    assert body["details"]["password"] == "Chosen-Pass-123"
+    assert body["google_connected"] is False
+    assert body["google_email"] is None
+
+
+# ---------------------------------------------------------------------------
 # Batch guards
 # ---------------------------------------------------------------------------
 def test_batch_refuses_an_open_login_window(
@@ -416,7 +551,14 @@ def test_campaign_row_carries_the_account_of_its_website(
     assert report.status_code == 200
     text = report.text
     header = text.splitlines()[0]
-    for column in ("Username", "Password", "Backlink page", "Account strategy"):
+    for column in (
+        "Username",
+        "Password",
+        "Backlink page",
+        "Account strategy",
+        "Published page",
+        "Verification",
+    ):
         assert column in header
     assert "acmeuser1" in text
     assert "Pass-1234-Value" in text

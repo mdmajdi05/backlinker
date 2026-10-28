@@ -7,12 +7,15 @@ The flow of one project:
    cookies of the sites are reused and the inbox is opened **once** as well.
 2. For each website the service decides the strategy from the live page:
    * a *Continue with Google* button -> the project's Google session is used,
-   * otherwise the sign-up form is filled with a generated username and a
-     strong password (both stored encrypted and shown on the row of the
-     report).
-3. If the sign-up asks for a code, the row receives its **own** address alias
+   * otherwise the sign-up form is filled with the username and password the
+     operator typed once in the details form (a blank field is generated per
+     website).  Both are stored encrypted and shown on the row of the report.
+3. The sign-up uses the Gmail of the project's Google login (or the address
+   typed in the details form).  If the site asks for a code, it is read in the
+   Gmail tab of the same browser; the row receives its **own** address alias
    (``inbox+token@gmail.com``) and only a mail addressed to that token is
-   accepted.  A code is claimed once and bound to its row.
+   accepted.  The App Password inbox is only the fallback.  A code is claimed
+   once and bound to its row.
 4. A CAPTCHA is never bypassed.  The row pauses as **Needs you**, the live
    browser is one click away, and the batch continues with the next site.
 5. Once the account is active the authenticated browser looks for the exact
@@ -38,7 +41,7 @@ from app.core.config import settings
 from app.core.crypto import decrypt, encrypt
 from app.core.logging import get_logger
 from app.db.base import utcnow
-from app.db.models import Opportunity, Project, SiteAccount, Website
+from app.db.models import Opportunity, Project, ProjectSettings, SiteAccount, Website
 from app.db.session import session_scope
 from app.services import backlink_target, gmail_otp, login_browser, project_login
 from app.services import browser as browser_service
@@ -70,6 +73,8 @@ ACTIVE_STATUSES = (STATUS_ACTIVE,)
 
 #: A batch waits this long for one OTP before it pauses the row.
 OTP_TIMEOUT_SECONDS = 240
+#: The App Password inbox is only a fallback: wait less than the Gmail tab.
+FALLBACK_OTP_SECONDS = 90
 #: Human-like pause between two websites of the same batch.
 PAUSE_RANGE = (2.0, 5.0)
 
@@ -191,6 +196,96 @@ def generate_username(website: Website, project: Project) -> str:
     site = (site or "site")[:10]
     brand = (brand or "user")[:6]
     return f"{site}{brand}{secrets.token_hex(2)}"[:24]
+
+
+# --------------------------------------------------------------------------
+# Sign-up details (one answer for every website of the project)
+# --------------------------------------------------------------------------
+def _details_aad(project_id: str) -> str:
+    return f"project-signup:{project_id}"
+
+
+def _settings_row(db: Session, project_id: str) -> ProjectSettings | None:
+    return db.execute(
+        select(ProjectSettings).where(ProjectSettings.project_id == project_id)
+    ).scalar_one_or_none()
+
+
+def signup_details(
+    db: Session, project_id: str, *, reveal: bool = True
+) -> dict[str, Any]:
+    """The username / e-mail / password the operator wants every sign-up to use."""
+    row = _settings_row(db, project_id)
+    data = dict((row.signup_details if row is not None else None) or {})
+    password: str | None = None
+    if data.get("password_encrypted"):
+        try:
+            password = decrypt(
+                str(data["password_encrypted"]), _secret(), _details_aad(project_id)
+            )
+        except Exception:
+            log.warning(
+                "the sign-up password could not be decrypted",
+                extra={"extra_fields": {"project_id": project_id}},
+            )
+    return {
+        "username": str(data.get("username") or ""),
+        "email": str(data.get("email") or ""),
+        "password": password if reveal else None,
+        "has_password": bool(data.get("password_encrypted")),
+    }
+
+
+def save_signup_details(
+    db: Session,
+    project: Project,
+    *,
+    username: str | None = None,
+    password: str | None = None,
+    email: str | None = None,
+) -> dict[str, Any]:
+    """Remember the sign-up details of the project (an empty field = generated).
+
+    A field that is ``None`` is left unchanged; an empty string clears it, so
+    the operator can go back to a generated username or password.
+    """
+    row = _settings_row(db, project.id)
+    if row is None:
+        row = ProjectSettings(project_id=project.id)
+        db.add(row)
+    data = dict(row.signup_details or {})
+    if username is not None:
+        value = username.strip()[:120]
+        if value:
+            data["username"] = value
+        else:
+            data.pop("username", None)
+    if email is not None:
+        value = email.strip()[:320]
+        if value:
+            data["email"] = value
+        else:
+            data.pop("email", None)
+    if password is not None:
+        if password:
+            data["password_encrypted"] = encrypt(
+                password, _secret(), _details_aad(project.id)
+            )
+        else:
+            data.pop("password_encrypted", None)
+    row.signup_details = data
+    db.commit()
+    return signup_details(db, project.id)
+
+
+def apply_signup_details(row: SiteAccount, details: dict[str, Any]) -> None:
+    """Copy the chosen username / password onto one row before it is created."""
+    username = str(details.get("username") or "").strip()
+    if username:
+        row.username = username
+    password = details.get("password") or ""
+    if password:
+        set_password(row, str(password))
 
 
 # --------------------------------------------------------------------------
@@ -347,8 +442,18 @@ def start_batch(
     *,
     website_ids: list[str] | None = None,
     retry: bool = False,
+    username: str | None = None,
+    password: str | None = None,
+    email: str | None = None,
 ) -> dict[str, Any]:
-    """Provision the accounts of a project in one background batch."""
+    """Provision the accounts of a project in one background batch.
+
+    ``username`` / ``password`` / ``email`` are the answers of the details
+    form.  They are remembered for the project and applied to every row that
+    is about to be created, so the same person (the same Gmail) owns all the
+    accounts.  ``None`` keeps the saved value, an empty string clears it (the
+    field is generated per website then).
+    """
     if not settings.allow_browser_automation:
         raise RuntimeError("Browser automation is turned off in the settings.")
     if login_browser.is_open(project.id):
@@ -359,6 +464,17 @@ def start_batch(
         running = _BATCHES.get(project.id)
         if running and running.get("running"):
             return batch_state(project.id)
+
+    if username is not None or password is not None or email is not None:
+        details = save_signup_details(
+            db,
+            project,
+            username=username,
+            password=password,
+            email=email,
+        )
+    else:
+        details = signup_details(db, project.id)
 
     websites = _target_websites(db, project)
     if website_ids:
@@ -371,6 +487,11 @@ def start_batch(
         if row.status in ACTIVE_STATUSES and not retry:
             continue
         selected.append(website)
+    for website in selected:
+        row = ensure_account(db, project.id, website.id)
+        apply_signup_details(row, details)
+    if selected:
+        db.commit()
     if not selected:
         raise RuntimeError("Every website already has an account.")
 
@@ -567,6 +688,91 @@ def _logged_in(page: Any) -> bool:
     return bool(has_private and not has_sign_in)
 
 
+def _has_password_form(page: Any) -> bool:
+    """Whether the page shows a visible password field."""
+    with suppress(Exception):
+        return page.query_selector("input[type='password']:visible") is not None
+    return False
+
+
+_EMPTY_REQUIRED_JS = """
+() => {
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && box.width > 1 && box.height > 1;
+  };
+  return Array.from(document.querySelectorAll(
+    'input[required], textarea[required], select[required]'
+  )).filter(visible).some((el) => {
+    if (el.type === 'checkbox' || el.type === 'radio') return !el.checked;
+    return !String(el.value || '').trim();
+  });
+}
+"""
+
+
+_MISSING_REQUIRED_JS = """
+() => {
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && box.width > 1 && box.height > 1;
+  };
+  const nameOf = (el) => {
+    let label = '';
+    if (el.id) {
+      const node = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (node) label = (node.innerText || '').trim();
+    }
+    if (!label && el.closest('label')) {
+      label = (el.closest('label').innerText || '').trim();
+    }
+    return (
+      label
+      || el.getAttribute('aria-label')
+      || el.getAttribute('placeholder')
+      || el.getAttribute('name')
+      || el.id
+      || el.tagName.toLowerCase()
+    ).slice(0, 60);
+  };
+  const out = [];
+  for (const el of document.querySelectorAll(
+    'input[required], textarea[required], select[required]'
+  )) {
+    if (!visible(el)) continue;
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      if (el.checked) continue;
+    } else if (String(el.value || '').trim()) {
+      continue;
+    }
+    const label = nameOf(el);
+    if (!out.includes(label)) out.push(label);
+  }
+  return out;
+}
+"""
+
+
+def _missing_required(page: Any) -> list[str]:
+    """Labels of visible required fields that are still empty."""
+    with suppress(Exception):
+        found = page.evaluate(_MISSING_REQUIRED_JS)
+        if isinstance(found, list):
+            return [str(item) for item in found if str(item).strip()]
+    return []
+
+
+def _has_empty_required(page: Any) -> bool:
+    """A required field of the current form is still empty (next step)."""
+    with suppress(Exception):
+        return bool(page.evaluate(_EMPTY_REQUIRED_JS))
+    return False
+
+
 def _click_google(page: Any, context: Any) -> tuple[Any, bool]:
     """Click the *Continue with Google* control (returns the page to drive)."""
     marked = page.evaluate(
@@ -694,7 +900,7 @@ def _find_signup_url(page: Any, base: str) -> str:
         marked = page.evaluate(
             """
             () => {
-              const pattern = /(sign\\s*up|signup|register|create\\s+(an\\s+)?account|join)/i;
+              const pattern = /(sign\\s*up|signup|register|registration|create\\s+(an\\s+|a\\s+)?(new\\s+)?account|join|become\\s+a\\s+member|get\\s+started)/i;
               for (const el of document.querySelectorAll('a, button, [role=button]')) {
                 const text = (el.innerText || el.value || '').trim();
                 if (text.length > 60 || !pattern.test(text)) continue;
@@ -719,26 +925,81 @@ def _find_signup_url(page: Any, base: str) -> str:
                     page.click("[data-abk-signup='1']", timeout=5000)
                 return info.value.url
             return page.url
+    return ""
+
+
+def _signup_candidates(base: str) -> list[str]:
+    """The usual sign-up paths, tried when the page has no visible link."""
     parsed = re.match(r"^(https?://[^/]+)", base or "")
-    origin = parsed.group(1) if parsed else base
-    return f"{origin}/signup" if origin else base
+    origin = parsed.group(1) if parsed else base.rstrip("/")
+    if not origin:
+        return []
+    return [
+        f"{origin}{path}"
+        for path in (
+            "/signup",
+            "/sign-up",
+            "/register",
+            "/join",
+            "/create-account",
+            "/account/register",
+        )
+    ]
+
+
+def _signup_form_ready(page: Any) -> bool:
+    """Whether the page really shows a usable sign-up form."""
+    with suppress(Exception):
+        data = page.evaluate(_COLLECT_FIELDS_JS) or {}
+    if not data:
+        return False
+    roles = {_field_role(field) for field in data.get("fields") or []}
+    return "password" in roles and bool(roles & {"email", "username"})
 
 
 def _field_role(field: dict[str, Any]) -> str:
+    """What a form field asks for, guessed from every hint the browser gives."""
     raw = " ".join(
         str(field.get(key) or "")
-        for key in ("name", "id", "placeholder", "label", "autocomplete")
+        for key in ("name", "id", "placeholder", "label", "autocomplete", "aria", "title")
     ).lower()
     text = re.sub(r"[_\-\[\]]+", " ", raw)
-    if field.get("type") == "password":
+    text = re.sub(r"\s+", " ", text).strip()
+    kind = str(field.get("type") or "").lower()
+
+    if kind == "password" or "password" in text or "passwd" in text:
+        if any(word in text for word in ("confirm", "repeat", "again", "retype", "verify")):
+            return "confirm"
         return "password"
-    if "confirm" in text or "repeat" in text or "again" in text:
-        return "confirm"
-    if "email" in text or "e-mail" in text:
+    if kind == "email" or "email" in text or "e-mail" in text:
         return "email"
-    if any(word in text for word in ("username", "user name", "login", "handle", "nickname", "screen name")):
+    if kind == "tel" or any(
+        word in text
+        for word in ("phone", "mobile", "telephone", "contact number", "whatsapp")
+    ):
+        return "phone"
+    if kind == "url" or any(
+        word in text
+        for word in ("website", "web site", "homepage", "home page", "your url", "site url")
+    ):
+        return "website"
+    if any(word in text for word in ("user name", "username", "login name", "handle", "nickname", "screen name", "user id")):
         return "username"
-    if "first name" in text or "last name" in text or text.strip() in ("name", "full name", "your name"):
+    if "first name" in text or "firstname" in text or "given name" in text or "fname" in text:
+        return "first"
+    if "last name" in text or "lastname" in text or "surname" in text or "family name" in text or "lname" in text:
+        return "last"
+    if any(word in text for word in ("company", "business name", "organization", "organisation", "brand name")):
+        return "company"
+    if any(word in text for word in ("address", "street")):
+        return "address"
+    if any(word in text for word in ("zip", "postal", "postcode")):
+        return "zip"
+    if any(word in text for word in ("city", "town")):
+        return "city"
+    if "country" in text:
+        return "country"
+    if any(word in text for word in ("full name", "your name", "display name", "name")):
         return "name"
     return ""
 
@@ -771,6 +1032,23 @@ _COLLECT_FIELDS_JS = """
       selector, name, id, type,
       placeholder: el.getAttribute('placeholder') || '',
       autocomplete: el.getAttribute('autocomplete') || '',
+      aria: el.getAttribute('aria-label') || '',
+      title: el.getAttribute('title') || '',
+      label: labelFor(el),
+    });
+  }
+  const selects = [];
+  for (const el of document.querySelectorAll('select')) {
+    if (!visible(el)) continue;
+    const name = el.getAttribute('name') || '';
+    const id = el.id || '';
+    let selector = '';
+    if (id) selector = '#' + CSS.escape(id);
+    else if (name) selector = 'select[name="' + CSS.escape(name) + '"]';
+    if (!selector) continue;
+    selects.push({
+      selector, name, id,
+      aria: el.getAttribute('aria-label') || '',
       label: labelFor(el),
     });
   }
@@ -783,9 +1061,28 @@ _COLLECT_FIELDS_JS = """
       return {selector, label, checked: el.checked};
     })
     .filter((item) => item.selector);
-  return {fields: out, checkboxes, text: document.body ? document.body.innerText.slice(0, 6000) : ''};
+  return {fields: out, selects, checkboxes, text: document.body ? document.body.innerText.slice(0, 6000) : ''};
 }
 """
+
+
+def _profile_values(project: Project) -> dict[str, str]:
+    """The business values a sign-up form may ask for (best effort)."""
+    profile = getattr(project, "business_profile", None)
+    name = (getattr(profile, "name", "") or project.name or "").strip()
+    website = (
+        getattr(profile, "primary_website", "") or project.target_website or ""
+    ).strip()
+    phone = (getattr(profile, "contact_phone", "") or "").strip()
+    countries = getattr(profile, "target_countries", None) or []
+    country = str(countries[0]).strip() if countries else ""
+    return {
+        "company": name,
+        "name": name,
+        "website": website,
+        "phone": phone,
+        "country": country,
+    }
 
 
 def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, str | None]:
@@ -803,24 +1100,95 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
     password = password_of(row) or ""
     email = row.email or ""
     username = row.username or ""
+    business = _profile_values(project)
+    first = re.split(r"[._\-\s]+", username)[0] if username else ""
+    values: dict[str, str] = {
+        "email": email,
+        "username": username,
+        "first": first,
+        "last": username[len(first) :].strip("._- ") if first else "",
+        "name": business.get("name") or username,
+        "company": business.get("company") or "",
+        "phone": business.get("phone") or "",
+        "website": business.get("website") or "",
+        "address": "",
+        "city": "",
+        "zip": "",
+        "password": password,
+        "confirm": password,
+    }
+
     filled = 0
-    for role, value in (
-        ("email", email),
-        ("username", username),
-        ("name", username),
-        ("password", password),
-        ("confirm", password),
+    for role in (
+        "email",
+        "username",
+        "first",
+        "last",
+        "name",
+        "company",
+        "phone",
+        "website",
+        "address",
+        "city",
+        "zip",
+        "password",
+        "confirm",
     ):
+        value = values.get(role) or ""
         if not value:
             continue
         for index, field in enumerate(roles.get(role, [])):
-            if role == "password" and index > 0:
+            kind = str(field.get("type") or "").lower()
+            if kind in ("checkbox", "radio", "file", "hidden"):
                 continue
             with suppress(Exception):
                 page.fill(field["selector"], value, timeout=6000)
                 filled += 1
             if role == "email" and index == 0:
                 _use_dot_alias_if_rejected(page, field["selector"], row)
+
+    # A country is usually a <select> and the profile knows the target one.
+    country = business.get("country") or ""
+    for select_field in data.get("selects") or []:
+        label = " ".join(
+            str(select_field.get(key) or "") for key in ("label", "name", "id", "aria")
+        ).lower()
+        if "country" not in label and "nation" not in label:
+            continue
+        options: list[dict[str, str]] = []
+        with suppress(Exception):
+            options = page.evaluate(
+                "(sel) => Array.from(document.querySelectorAll(sel + ' option'))"
+                ".map((o) => ({value: o.value, text: (o.innerText || '').trim()}))",
+                select_field["selector"],
+            ) or []
+        chosen = None
+        wanted = country.lower()
+        if wanted:
+            chosen = next(
+                (
+                    option
+                    for option in options
+                    if wanted in option["text"].lower()
+                    or option["text"].lower() in wanted
+                ),
+                None,
+            )
+        if chosen is None:
+            chosen = next(
+                (
+                    option
+                    for option in options
+                    if option["value"]
+                    and not re.search(r"select|choose|please|^-+$", option["text"], re.I)
+                ),
+                None,
+            )
+        if chosen is not None:
+            with suppress(Exception):
+                page.select_option(select_field["selector"], value=chosen["value"])
+                filled += 1
+
     if filled == 0:
         return False, "No email, username or password field was recognised."
 
@@ -830,7 +1198,15 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
         if any(word in label for word in _TERMS_WORDS):
             with suppress(Exception):
                 page.check(checkbox["selector"], timeout=4000)
-            break
+
+    # A form can ask for something the profile has no value for (a custom
+    # required field).  Submitting would only bounce: stop here and tell the
+    # operator exactly which field to type by hand.
+    missing = _missing_required(page)
+    if missing:
+        return False, "These required fields could not be filled by the app: " + (
+            ", ".join(missing[:6])
+        )
 
     clicked = _click_submit(page)
     if not clicked:
@@ -913,6 +1289,85 @@ def _needs_otp(page: Any) -> bool:
     )
 
 
+def _find_login_url(page: Any, base: str) -> str:
+    """The sign-in page of the site (or a sensible guess)."""
+    with suppress(Exception):
+        marked = page.evaluate(
+            """
+            () => {
+              const words = /(log\\s*in|sign\\s*in|login|signin|my\\s*account|account)/i;
+              for (const el of document.querySelectorAll('a[href], button')) {
+                const text = (el.innerText || el.value || '').trim();
+                if (!text || text.length > 50) continue;
+                if (/(log\\s*out|sign\\s*out|register|sign\\s*up)/i.test(text)) continue;
+                const href = el.getAttribute('href') || '';
+                if (!words.test(text) && !/(login|signin|sign-in|log-in)/i.test(href)) continue;
+                if (href && !href.startsWith('#') && !href.startsWith('javascript')) {
+                  return el.href;
+                }
+                el.setAttribute('data-abk-login', '1');
+                return '';
+              }
+              return '';
+            }
+            """
+        )
+    if marked:
+        return str(marked)
+    with suppress(Exception):
+        if page.query_selector("[data-abk-login='1']") is not None:
+            with page.context.expect_page(timeout=5000) as info:
+                page.click("[data-abk-login='1']", timeout=5000)
+            return info.value.url
+    parsed = re.match(r"^(https?://[^/]+)", base or "")
+    origin = parsed.group(1) if parsed else base
+    return f"{origin}/login" if origin else base
+
+
+def _login_existing(page: Any, row: SiteAccount, website: Website) -> bool:
+    """Log in with the stored credentials (after sign-up or a session loss)."""
+    email = (row.email or "").strip()
+    username = (row.username or "").strip()
+    password = password_of(row) or ""
+    if not password or not (email or username):
+        return False
+    login_url = "" if _has_password_form(page) else _find_login_url(page, website.opportunity_url)
+    if login_url and login_url.rstrip("/") != (page.url or "").rstrip("/"):
+        with suppress(Exception):
+            page.goto(login_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            page.wait_for_timeout(1200)
+    with suppress(Exception):
+        if page.query_selector("input[type='password']:visible") is None:
+            return False
+    with suppress(Exception):
+        data = page.evaluate(_COLLECT_FIELDS_JS) or {}
+    roles: dict[str, list[dict[str, Any]]] = {}
+    for field in data.get("fields") or []:
+        role = _field_role(field)
+        if role:
+            roles.setdefault(role, []).append(field)
+    password_field = next(
+        (field for field in roles.get("password", []) if field.get("type") == "password"),
+        None,
+    )
+    login_field = next(
+        (
+            field
+            for role in ("email", "username", "name")
+            for field in roles.get(role, [])
+        ),
+        None,
+    )
+    if password_field is None or login_field is None:
+        return False
+    with suppress(Exception):
+        page.fill(login_field["selector"], email or username, timeout=6000)
+        page.fill(password_field["selector"], password, timeout=6000)
+        _click_submit(page)
+        page.wait_for_timeout(4500)
+    return _logged_in(page)
+
+
 def _success(page: Any, before_url: str) -> bool:
     if _logged_in(page):
         return True
@@ -985,8 +1440,11 @@ def _provision_site(
     project: Project,
     website: Website,
     row: SiteAccount,
-    inbox: gmail_otp.OtpInbox | None,
+    inbox: Any | None,
     gmail_address: str | None,
+    *,
+    details: dict[str, Any] | None = None,
+    fallback_inbox: Any | None = None,
 ) -> None:
     page = _page_for(context)
     started_at = utcnow()
@@ -1094,28 +1552,66 @@ def _provision_site(
 
     # --- Sign-up form ----------------------------------------------------
     row.strategy = STRATEGY_SIGNUP
+    details = details or {}
+    chosen_username = str(details.get("username") or "").strip()
+    chosen_password = str(details.get("password") or "")
+    if chosen_username:
+        row.username = chosen_username
     if not row.username:
         row.username = generate_username(website, project)
+    if chosen_password:
+        set_password(row, chosen_password)
     if not row.password_encrypted:
         set_password(row, generate_password())
-    if gmail_address:
+    base_email = str(details.get("email") or "").strip() or (gmail_address or "").strip()
+    if base_email:
         token = gmail_otp.alias_token(project.id, website.id)
-        row.otp_alias = gmail_otp.alias_for(gmail_address, token)
-        if not row.email or "@" not in row.email:
-            row.email = row.otp_alias
+        current = (row.email or "").strip()
+        base_local = base_email.split("@", 1)[0].lower()
+        current_local = current.split("@", 1)[0].lower() if "@" in current else ""
+        # A Gmail address gets a per-website plus alias so a code can never
+        # land in another row.  Any other address is used exactly as typed.
+        if "@gmail.com" in base_email.lower() or "@googlemail.com" in base_email.lower():
+            alias = gmail_otp.alias_for(base_email, token)
+            if current_local.startswith(base_local) and len(current_local) > len(base_local):
+                row.otp_alias = current
+            else:
+                row.email = alias
+                row.otp_alias = alias
+        else:
+            if not current_local:
+                row.email = base_email
+            row.otp_alias = row.email or base_email
     db.commit()
     _update_item(
         project.id,
         website.id,
         strategy=STRATEGY_SIGNUP,
-        message="Signing up with a generated username and password…",
+        message="Signing up with your username and password…",
     )
 
     signup_url = _find_signup_url(page, website.opportunity_url)
-    if signup_url and signup_url != page.url:
-        with suppress(Exception):
-            page.goto(signup_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-            page.wait_for_timeout(1200)
+    fallback_url = page.url
+    seen_urls: set[str] = set()
+    for candidate in [signup_url, *_signup_candidates(website.opportunity_url)]:
+        if not candidate or candidate in seen_urls:
+            continue
+        seen_urls.add(candidate)
+        if candidate != page.url:
+            with suppress(Exception):
+                page.goto(candidate, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                page.wait_for_timeout(1200)
+        if _signup_form_ready(page):
+            break
+    else:
+        # No guess showed a real form: return to the page we started from and
+        # let the normal "no sign-up form" report explain it.
+        if fallback_url and page.url != fallback_url:
+            with suppress(Exception):
+                page.goto(
+                    fallback_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+                )
+                page.wait_for_timeout(1200)
     row.login_url = page.url
 
     challenge = _challenge(page)
@@ -1135,8 +1631,12 @@ def _provision_site(
             db,
             row,
             STATUS_NEEDS_HUMAN,
-            error=reason or "No sign-up form was found on this website.",
-            message="No sign-up form was found - open the site and check it once.",
+            error=(
+                f"{reason or 'No sign-up form was found on this website.'} "
+                "Open the site from this row, type the username, password and "
+                "e-mail shown here yourself, then press Retry."
+            ),
+            message="Sign-up form not filled - open the site and finish it by hand.",
         )
         return
 
@@ -1153,25 +1653,61 @@ def _provision_site(
         )
         return
 
-    # --- OTP -------------------------------------------------------------
+    # A sign-up is often two steps (account, then a profile detail).  Fill
+    # whatever the next step asks for with the same values, once.
+    if not _needs_otp(page) and _has_empty_required(page):
+        _update_item(
+            project.id, website.id, message="Filling the next step of the form…"
+        )
+        with suppress(Exception):
+            if _fill_signup(page, row, project)[0]:
+                page.wait_for_timeout(4000)
+
+    # --- OTP / confirmation link -----------------------------------------
     if _needs_otp(page):
-        _set_row(db, row, STATUS_OTP_PENDING, message="Waiting for the e-mail code…")
-        if inbox is None or not row.otp_alias:
+        _set_row(db, row, STATUS_OTP_PENDING, message="Waiting for the e-mail…")
+        readers = [reader for reader in (inbox, fallback_inbox) if reader is not None]
+        if not readers or not row.otp_alias:
             _set_row(
                 db,
                 row,
                 STATUS_NEEDS_HUMAN,
-                error="The site asks for an e-mail code, but Gmail is not configured or this row has no alias.",
-                message="E-mail code needed - configure Gmail in the account dialog.",
+                error=(
+                    "The site asks for an e-mail code, but the project's Gmail is "
+                    "not signed in and no App Password inbox is configured for "
+                    "this row."
+                ),
+                message="E-mail code needed - connect Google or add a Gmail App Password.",
             )
             return
-        code, otp_reason = inbox.wait_for_code(
-            alias=row.otp_alias,
-            since=started_at,
-            site_domain=website.domain,
-            timeout=OTP_TIMEOUT_SECONDS,
-        )
-        if code is None:
+        has_field = False
+        with suppress(Exception):
+            has_field = page.query_selector(_OTP_SELECTOR) is not None
+        found: gmail_otp.OtpCode | None = None
+        otp_reason: str | None = None
+        for position, reader in enumerate(readers):
+            # The Gmail tab of the session is the first choice; the App
+            # Password inbox is only a shorter fallback.
+            wait = OTP_TIMEOUT_SECONDS if position == 0 else FALLBACK_OTP_SECONDS
+            if not has_field and isinstance(reader, gmail_otp.BrowserInbox):
+                # The page says "check your email" but shows no field: the mail
+                # may carry either a code or a confirmation link.
+                found, otp_reason = reader.wait_for_code_or_link(
+                    alias=row.otp_alias,
+                    since=started_at,
+                    site_domain=website.domain,
+                    timeout=wait,
+                )
+            else:
+                found, otp_reason = reader.wait_for_code(
+                    alias=row.otp_alias,
+                    since=started_at,
+                    site_domain=website.domain,
+                    timeout=wait,
+                )
+            if found is not None:
+                break
+        if found is None:
             row.otp_state = OTP_EXPIRED
             db.commit()
             _set_row(
@@ -1182,39 +1718,82 @@ def _provision_site(
                 message=otp_reason or "No code arrived - enter it by hand.",
             )
             return
-        set_otp(row, code.code, code.message_id)
-        db.commit()
-        _update_item(project.id, website.id, message=f"Code received ({code.matched_by}).")
-        filled_code = False
-        with suppress(Exception):
-            selector = page.query_selector(_OTP_SELECTOR)
-            if selector is not None:
-                selector.fill(code.code, timeout=6000)
-                filled_code = True
-        if not filled_code:
-            # Some sites show the six boxes of a code separately.
-            with suppress(Exception):
-                boxes = page.query_selector_all(
-                    "input[inputmode='numeric'], input[maxlength='1']"
-                )
-                if len(boxes) >= 4:
-                    for box, digit in zip(boxes, code.code, strict=False):
-                        box.fill(digit, timeout=3000)
-                    filled_code = True
-        if not filled_code:
-            _set_row(
-                db,
-                row,
-                STATUS_NEEDS_HUMAN,
-                error="The code arrived but the page has no code field. Enter it in the live browser.",
-                message="Code arrived - the field is not recognised.",
+        if found.link:
+            _update_item(
+                project.id,
+                website.id,
+                message="Opening the confirmation link from the e-mail…",
             )
-            return
-        _click_submit(page)
-        page.wait_for_timeout(4500)
-        row.otp_state = OTP_USED
-        row.otp_used_at = utcnow()
-        db.commit()
+            link_page = None
+            try:
+                link_page = context.new_page()
+                link_page.goto(
+                    found.link,
+                    wait_until="domcontentloaded",
+                    timeout=NAV_TIMEOUT_MS,
+                )
+                link_page.wait_for_timeout(2500)
+            except Exception as exc:
+                _set_row(
+                    db,
+                    row,
+                    STATUS_NEEDS_HUMAN,
+                    error=f"The confirmation link could not be opened: {exc}",
+                    message="Confirmation link - open the mail once.",
+                )
+                return
+            finally:
+                if link_page is not None:
+                    with suppress(Exception):
+                        link_page.close()
+            # Reload the site in the same session: the account is confirmed
+            # now, and the signed-in check below is the real proof.
+            with suppress(Exception):
+                page.goto(
+                    row.login_url or website.opportunity_url,
+                    wait_until="domcontentloaded",
+                    timeout=NAV_TIMEOUT_MS,
+                )
+                page.wait_for_timeout(1500)
+            row.otp_state = OTP_USED
+            row.otp_used_at = utcnow()
+            db.commit()
+        else:
+            set_otp(row, found.code, found.message_id)
+            db.commit()
+            _update_item(
+                project.id, website.id, message=f"Code received ({found.matched_by})."
+            )
+            filled_code = False
+            with suppress(Exception):
+                selector = page.query_selector(_OTP_SELECTOR)
+                if selector is not None:
+                    selector.fill(found.code, timeout=6000)
+                    filled_code = True
+            if not filled_code:
+                # Some sites show the six boxes of a code separately.
+                with suppress(Exception):
+                    boxes = page.query_selector_all(
+                        "input[inputmode='numeric'], input[maxlength='1']"
+                    )
+                    if len(boxes) >= 4:
+                        for box, digit in zip(boxes, found.code, strict=False):
+                            box.fill(digit, timeout=3000)
+                        filled_code = True
+            if not filled_code:
+                _set_row(
+                    db,
+                    row,
+                    STATUS_NEEDS_HUMAN,
+                    error="The code arrived but the page has no code field. Enter it in the live browser.",
+                    message="Code arrived - the field is not recognised.",
+                )
+                return
+            _click_submit(page)
+            page.wait_for_timeout(4500)
+            row.otp_state = OTP_USED
+            row.otp_used_at = utcnow()
+            db.commit()
 
     # --- Result ----------------------------------------------------------
     if _challenge(page) == "CAPTCHA":
@@ -1227,7 +1806,18 @@ def _provision_site(
         )
         return
 
-    if not _success(page, row.login_url or website.opportunity_url):
+    success_seen = _success(page, row.login_url or website.opportunity_url)
+    signed_in = _logged_in(page)
+    if not signed_in and (success_seen or _has_password_form(page)):
+        # The account exists but the site did not keep the session: sign in
+        # with exactly the credentials shown on the row.
+        _update_item(
+            project.id, website.id, message="Signing in with the created account…"
+        )
+        with suppress(Exception):
+            signed_in = _login_existing(page, row, website)
+
+    if not success_seen and not signed_in:
         path = _screenshot(page, project.id, website.id)
         row.evidence = {**(row.evidence or {}), "screenshot": path}
         db.commit()
@@ -1338,17 +1928,18 @@ def _run_batch(project_id: str, website_ids: list[str]) -> None:
     db = session_scope()
     browser: _Browser | None = None
     inbox: gmail_otp.OtpInbox | None = None
+    web_inbox: gmail_otp.BrowserInbox | None = None
     try:
         project = db.get(Project, project_id)
         if project is None:
             return
+        details = signup_details(db, project_id)
         gmail = gmail_otp.read_settings(db)
         if gmail is not None:
             try:
                 inbox = gmail_otp.OtpInbox(gmail)
                 inbox.open()
             except Exception as exc:
-                gmail = None
                 inbox = None
                 log.warning(
                     "the Gmail session could not be opened",
@@ -1357,8 +1948,8 @@ def _run_batch(project_id: str, website_ids: list[str]) -> None:
                 _update_batch(
                     project_id,
                     message=(
-                        "Gmail could not be opened - sites that need an e-mail "
-                        "code will pause. Check the App Password."
+                        "The App Password inbox could not be opened - codes will "
+                        "be read from the Gmail tab of the browser."
                     ),
                 )
 
@@ -1383,6 +1974,27 @@ def _run_batch(project_id: str, website_ids: list[str]) -> None:
             return
 
         _update_batch(project_id, message="Browser ready - working through the websites.")
+
+        # The sign-ups must use the Gmail of the project's Google login.  The
+        # address is read once from the account page (the same session the
+        # sites see) and remembered when the profile had none.
+        google_email = login_browser.detect_google_email(browser.context) or ""
+        profile = project_login.get_profile(db, project_id)
+        if google_email and profile is not None and not (profile.email or "").strip():
+            profile.email = google_email
+            db.commit()
+        if not google_email and profile is not None:
+            google_email = (profile.email or "").strip()
+        signup_email = str(details.get("email") or "").strip() or google_email
+        connected = bool(profile is not None and profile.status == project_login.STATUS_CONNECTED)
+        if connected:
+            web_inbox = gmail_otp.BrowserInbox(
+                browser.context,
+                signup_email or (gmail.address if gmail is not None else ""),
+            )
+        if not signup_email and gmail is not None:
+            signup_email = gmail.address
+
         for index, website_id in enumerate(website_ids):
             if _stopped(project_id):
                 _update_batch(project_id, message="Stopped by the operator.")
@@ -1404,8 +2016,10 @@ def _run_batch(project_id: str, website_ids: list[str]) -> None:
                     project,
                     website,
                     row,
-                    inbox,
-                    gmail.address if gmail is not None else None,
+                    web_inbox if web_inbox is not None else inbox,
+                    signup_email,
+                    details=details,
+                    fallback_inbox=inbox if web_inbox is not None else None,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 db.rollback()
@@ -1431,6 +2045,9 @@ def _run_batch(project_id: str, website_ids: list[str]) -> None:
         )
         return
     finally:
+        if web_inbox is not None:
+            with suppress(Exception):
+                web_inbox.close()
         if inbox is not None:
             with suppress(Exception):
                 inbox.close()

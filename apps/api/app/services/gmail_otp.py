@@ -32,6 +32,7 @@ from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 from html import unescape
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy.orm import Session
 
@@ -75,6 +76,21 @@ _NOT_A_CODE = {
     1900,
     2000,
 }
+#: A confirmation link of a sign-up mail.
+_LINK = re.compile(r"https?://[^\s<>\"')]+", re.IGNORECASE)
+_LINK_WORDS = (
+    "confirm",
+    "verify",
+    "verification",
+    "activate",
+    "activation",
+    "validate",
+    "registration",
+    "signup",
+    "sign-up",
+    "email-confirm",
+    "email-verify",
+)
 
 
 @dataclass
@@ -195,6 +211,8 @@ class OtpCode:
     sender: str
     received_at: datetime
     matched_by: str
+    #: Set instead of ``code`` when the mail carries a confirmation link.
+    link: str | None = None
 
 
 @dataclass
@@ -285,6 +303,19 @@ def extract_code(text: str) -> str | None:
         if best is None or score > best[0]:
             best = (score, value)
     return best[1] if best else None
+
+
+def extract_link(text: str) -> str | None:
+    """The most plausible confirmation link of a sign-up mail (or ``None``)."""
+    seen: set[str] = set()
+    for match in _LINK.finditer(unescape(text or "")):
+        url = match.group(0).rstrip(".,);]")
+        if url in seen:
+            continue
+        seen.add(url)
+        if any(word in url.lower() for word in _LINK_WORDS):
+            return url
+    return None
 
 
 def _addresses(values: list[str]) -> set[str]:
@@ -509,6 +540,272 @@ class OtpInbox:
         return None, reason or "No e-mail with a code arrived in time."
 
 
+# --------------------------------------------------------------------------
+# Reading the codes from the Gmail tab of the project browser
+# --------------------------------------------------------------------------
+_READ_ROWS_JS = """
+() => {
+  const main = document.querySelector('div[role="main"]');
+  if (!main) return [];
+  const rows = Array.from(main.querySelectorAll('tr'));
+  const out = [];
+  rows.forEach((row, index) => {
+    // A message row carries the sender cell (.yX); the inbox tabs are a
+    // tablist <tr> without it.
+    if (!row.classList.contains('zA') && !row.querySelector('.yX')) return;
+    const text = (row.innerText || '').trim();
+    if (text) out.push({ index, text: text.slice(0, 800) });
+  });
+  return out.slice(0, 8);
+}
+"""
+
+_READ_MESSAGE_JS = """
+() => {
+  const main = document.querySelector('div[role="main"]');
+  if (!main) return { text: '', sender: '' };
+  const sender =
+    main.querySelector('span[email]')?.getAttribute('email') ||
+    main.querySelector('[email]')?.getAttribute('email') || '';
+  return { text: (main.innerText || '').slice(0, 12000), sender };
+}
+"""
+
+
+class GmailTabUnavailable(RuntimeError):
+    """The project's Google session cannot open Gmail (signed out, no Gmail)."""
+
+
+class BrowserInbox:
+    """Read one-time codes from the Gmail tab of the project browser.
+
+    The batch already has a browser that is signed in to the project's Google
+    account, so the codes are read from ``mail.google.com`` in that profile -
+    no App Password is needed.  The search is scoped to the alias of the row
+    (``to:"inbox+token@gmail.com"``), therefore a code of another website can
+    never be picked up.  A mail is claimed once, exactly like the IMAP reader.
+
+    IMAP stays available as the fallback for a project whose Google session
+    cannot open Gmail (for example when the account has no Gmail).
+    """
+
+    def __init__(
+        self,
+        context: Any,
+        base_address: str = "",
+        *,
+        poll_seconds: float = POLL_SECONDS,
+    ):
+        self.context = context
+        self.base_address = base_address
+        self.poll_seconds = poll_seconds
+        self._page: Any = None
+        self._lock = threading.Lock()
+        self._claimed: set[str] = set()
+        self._seen: set[str] = set()
+
+    # -- lifecycle ---------------------------------------------------------
+    def open(self) -> None:
+        """Nothing to open: the tab is created on the first search."""
+
+    def close(self) -> None:
+        page, self._page = self._page, None
+        if page is not None:
+            with suppress(Exception):
+                page.close()
+
+    def __enter__(self) -> BrowserInbox:
+        self.open()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+    # -- reading -----------------------------------------------------------
+    def _tab(self) -> Any:
+        page = self._page
+        if page is not None:
+            with suppress(Exception):
+                if not page.is_closed():
+                    return page
+        page = None
+        for candidate in self.context.pages:
+            with suppress(Exception):
+                if "mail.google.com" in (candidate.url or ""):
+                    page = candidate
+                    break
+        if page is None:
+            page = self.context.new_page()
+        self._page = page
+        return page
+
+    def _search_url(self, alias: str, since: datetime) -> str:
+        age = datetime.now(UTC).replace(tzinfo=None) - since
+        window = "1d" if age < timedelta(days=1) else "2d"
+        query = f'to:"{alias}" newer_than:{window}'
+        return "https://mail.google.com/mail/u/0/#search/" + quote(query, safe="")
+
+    def _search(self, page: Any, alias: str, since: datetime) -> None:
+        page.goto(
+            self._search_url(alias, since),
+            wait_until="domcontentloaded",
+            timeout=45_000,
+        )
+        page.wait_for_timeout(1800)
+        url = ""
+        with suppress(Exception):
+            url = page.url or ""
+        if "accounts.google.com" in url:
+            raise GmailTabUnavailable(
+                "The project's Google account is not signed in to Gmail in this browser."
+            )
+
+    def _rows(self, page: Any) -> list[dict[str, Any]]:
+        try:
+            rows = page.evaluate(_READ_ROWS_JS)
+        except Exception:
+            return []
+        return [row for row in (rows or []) if str(row.get("text") or "").strip()]
+
+    def _read(
+        self, *, alias: str, since: datetime, site_domain: str, mode: str = "code"
+    ) -> OtpCode | None:
+        del site_domain  # the alias search already scopes the mail to the row
+        page = self._tab()
+        search_url = self._search_url(alias, since)
+        self._search(page, alias, since)
+        rows = self._rows(page)
+        if not rows:
+            return None
+        newest = rows[0]
+        key = str(newest.get("text") or "")
+        if key in self._claimed or key in self._seen:
+            return None
+        opened = False
+        data: dict[str, Any] = {}
+        try:
+            locator = page.locator('div[role="main"] tr')
+            locator.nth(int(newest.get("index") or 0)).click(timeout=10_000)
+            opened = True
+            page.wait_for_timeout(1500)
+            data = page.evaluate(_READ_MESSAGE_JS) or {}
+        except Exception:
+            data = {}
+        finally:
+            if opened:
+                with suppress(Exception):
+                    page.go_back(wait_until="domcontentloaded", timeout=15_000)
+            if page.url != search_url:
+                with suppress(Exception):
+                    page.goto(search_url, wait_until="domcontentloaded", timeout=45_000)
+            with suppress(Exception):
+                page.wait_for_timeout(500)
+        text = str(data.get("text") or "")
+        code = extract_code(text) or extract_code(key) if mode != "link" else None
+        link = extract_link(text) if mode != "code" and code is None else None
+        if code is None and link is None:
+            with self._lock:
+                self._seen.add(key)
+            return None
+        with self._lock:
+            if key in self._claimed:
+                return None
+            self._claimed.add(key)
+        return OtpCode(
+            code=code or "",
+            message_id=f"gmail-tab:{key[:60]}",
+            subject=key[:120],
+            sender=str(data.get("sender") or ""),
+            received_at=datetime.now(UTC).replace(tzinfo=None),
+            matched_by="gmail-tab" if code else "gmail-link",
+            link=link,
+        )
+
+    def wait_for_code(
+        self,
+        *,
+        alias: str,
+        since: datetime,
+        site_domain: str,
+        timeout: float = DEFAULT_WAIT_SECONDS,
+    ) -> tuple[OtpCode | None, str | None]:
+        """Poll the Gmail tab until the code addressed to *alias* arrives."""
+        if not alias:
+            return None, "This row has no address alias."
+        deadline = time.monotonic() + max(1.0, timeout)
+        reason: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                code = self._read(alias=alias, since=since, site_domain=site_domain)
+            except GmailTabUnavailable as exc:
+                # Nothing will change by waiting: let the caller fall back to
+                # the App Password inbox straight away.
+                return None, str(exc)
+            except Exception as exc:
+                reason = f"The Gmail tab could not be read: {exc}"
+                code = None
+            if code is not None:
+                return code, None
+            time.sleep(self.poll_seconds)
+        return None, reason or "No e-mail with a code arrived in time."
+
+    def wait_for_link(
+        self,
+        *,
+        alias: str,
+        since: datetime,
+        site_domain: str,
+        timeout: float = DEFAULT_WAIT_SECONDS,
+    ) -> tuple[OtpCode | None, str | None]:
+        """Poll the Gmail tab until the confirmation link of *alias* arrives."""
+        if not alias:
+            return None, "This row has no address alias."
+        deadline = time.monotonic() + max(1.0, timeout)
+        reason: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                found = self._read(
+                    alias=alias, since=since, site_domain=site_domain, mode="link"
+                )
+            except GmailTabUnavailable as exc:
+                return None, str(exc)
+            except Exception as exc:
+                reason = f"The Gmail tab could not be read: {exc}"
+                found = None
+            if found is not None and found.link:
+                return found, None
+            time.sleep(self.poll_seconds)
+        return None, reason or "No confirmation link arrived in time."
+
+    def wait_for_code_or_link(
+        self,
+        *,
+        alias: str,
+        since: datetime,
+        site_domain: str,
+        timeout: float = DEFAULT_WAIT_SECONDS,
+    ) -> tuple[OtpCode | None, str | None]:
+        """Poll once per mail for the first code *or* confirmation link."""
+        if not alias:
+            return None, "This row has no address alias."
+        deadline = time.monotonic() + max(1.0, timeout)
+        reason: str | None = None
+        while time.monotonic() < deadline:
+            try:
+                found = self._read(
+                    alias=alias, since=since, site_domain=site_domain, mode="any"
+                )
+            except GmailTabUnavailable as exc:
+                return None, str(exc)
+            except Exception as exc:
+                reason = f"The Gmail tab could not be read: {exc}"
+                found = None
+            if found is not None:
+                return found, None
+            time.sleep(self.poll_seconds)
+        return None, reason or "No e-mail with a code or a link arrived in time."
+
+
 def check_connection(credentials: GmailSettings) -> tuple[bool, str]:
     """Open and close the inbox once (used by the settings form)."""
     try:
@@ -545,7 +842,9 @@ def latest_message_summary(db: Session, credentials: GmailSettings) -> dict[str,
 
 __all__ = [
     "DEFAULT_WAIT_SECONDS",
+    "BrowserInbox",
     "GmailSettings",
+    "GmailTabUnavailable",
     "OtpCode",
     "OtpInbox",
     "alias_for",
@@ -553,6 +852,7 @@ __all__ = [
     "check_connection",
     "dot_alias_for",
     "extract_code",
+    "extract_link",
     "latest_message_summary",
     "read_settings",
     "save_settings",
