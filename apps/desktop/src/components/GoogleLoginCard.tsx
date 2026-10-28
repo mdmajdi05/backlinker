@@ -257,11 +257,15 @@ export function GoogleLoginCard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm text-content">
-                {connected && state?.email ? (
-                  <>
-                    Google: connected{" "}
-                    <span className="text-content-muted">({state.email})</span>
-                  </>
+                {connected ? (
+                  state?.email ? (
+                    <>
+                      Google: connected{" "}
+                      <span className="text-content-muted">({state.email})</span>
+                    </>
+                  ) : (
+                    "Google: connected"
+                  )
                 ) : expired ? (
                   "Google login expired - re-login to continue."
                 ) : status === "LOGIN_OPEN" ? (

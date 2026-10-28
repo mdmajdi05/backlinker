@@ -915,11 +915,23 @@ class LoginWindow:
 
     def _google_email(self, page: Any) -> str | None:
         """The address of the signed-in account, when the page shows it."""
-        email = _page_email(page)
-        if email:
-            return email
-        # The account page is a web app and may not have painted the address
-        # yet; the Chrome account list is a small, plain fallback.
+        # The account page is a web app: give it a moment to paint, then read
+        # the visible text and the labels of the account menu.
+        for _attempt in range(2):
+            email = _page_email(page)
+            if email:
+                return email
+            with suppress(Exception):
+                page.wait_for_timeout(900)
+        with suppress(Exception):
+            labels = page.locator('[aria-label*="@"]')
+            for index in range(min(labels.count(), 5)):
+                match = _EMAIL.search(
+                    labels.nth(index).get_attribute("aria-label") or ""
+                )
+                if match:
+                    return match.group(0)
+        # The Chrome account list is a small, plain fallback.
         with suppress(Exception):
             page.goto(
                 _GOOGLE_ACCOUNTS_URL,
