@@ -11,7 +11,7 @@ import { Badge, Button, ProgressBar, cn } from "./components";
  * the UI package stays usable on its own (the same pattern as the login view).
  */
 export interface SiteAccountView {
-  strategy: "GOOGLE" | "SIGNUP" | "EXISTING" | "MANUAL" | "UNKNOWN";
+  strategy: "GOOGLE" | "SIGNUP" | "EXISTING" | "DIRECT" | "MANUAL" | "UNKNOWN";
   status:
     | "NOT_STARTED"
     | "QUEUED"
@@ -28,6 +28,13 @@ export interface SiteAccountView {
   backlink_url: string | null;
   backlink_confidence: number;
   backlink_status?: "NONE" | "POSTED" | "VERIFIED" | "NEEDS_HUMAN" | "FAILED";
+  site_intel?: {
+    platform?: string;
+    plan?: string;
+    signup_urls?: string[];
+    notes?: string[];
+    direct?: { kind?: string } | null;
+  };
   backlink_published_url?: string | null;
   backlink_note?: string | null;
   last_error: string | null;
@@ -47,6 +54,7 @@ const STRATEGY_LABEL: Record<SiteAccountView["strategy"], string> = {
   GOOGLE: "Google",
   SIGNUP: "User + pass",
   EXISTING: "Already there",
+  DIRECT: "No account needed",
   MANUAL: "Manual",
   UNKNOWN: "Not detected",
 };
@@ -143,6 +151,14 @@ export function SiteAccountCell({
         <span className="text-[10px] text-content-subtle">
           {STRATEGY_LABEL[account.strategy]}
         </span>
+        {account.site_intel?.platform && account.site_intel.platform !== "unknown" ? (
+          <span
+            className="text-[9px] text-content-subtle"
+            title={(account.site_intel.notes ?? []).join(" ")}
+          >
+            {account.site_intel.platform}
+          </span>
+        ) : null}
       </div>
       {account.username ? (
         <CredentialRow label="user" value={account.username} />

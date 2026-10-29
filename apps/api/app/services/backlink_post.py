@@ -336,13 +336,42 @@ _OPEN_PUBLIC_JS = r"""
 """
 
 
-def collect(page: Any) -> dict[str, Any]:
+def collect(root: Any) -> dict[str, Any]:
     """Read the controls of the current page (empty dict when it is gone)."""
     with suppress(Exception):
-        data = page.evaluate(_COLLECT_JS)
+        data = root.evaluate(_COLLECT_JS)
         if isinstance(data, dict):
             return data
     return {}
+
+
+def _link_root(page: Any, data: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+    """The page itself or the iframe that really carries the link field."""
+    roles = {field_role(field) for field in data.get("fields") or []}
+    if "link" in roles:
+        return page, data
+    with suppress(Exception):
+        for frame in page.frames:
+            with suppress(Exception):
+                if frame is page.main_frame:
+                    continue
+            candidate = collect(frame)
+            if "link" in {field_role(field) for field in candidate.get("fields") or []}:
+                return frame, candidate
+    return page, data
+
+
+def _linked_anywhere(page: Any, landing_url: str) -> str:
+    """The URL of the page/frame that already shows the link (or ``""``)."""
+    with suppress(Exception):
+        if linked_on_page(page.content(), landing_url):
+            return str(page.url or "")
+    with suppress(Exception):
+        for frame in page.frames:
+            with suppress(Exception):
+                if linked_on_page(frame.content(), landing_url):
+                    return str(frame.url or page.url or "")
+    return ""
 
 
 def _submit_button(page: Any, data: dict[str, Any]) -> bool:
@@ -376,9 +405,7 @@ def _submit_button(page: Any, data: dict[str, Any]) -> bool:
 
 
 def _already_linked(page: Any, landing_url: str) -> bool:
-    with suppress(Exception):
-        return linked_on_page(page.content(), landing_url)
-    return False
+    return bool(_linked_anywhere(page, landing_url))
 
 
 def post(
@@ -423,15 +450,17 @@ def post(
         }
 
     # A profile page often shows the link already: no second submission.
-    if _already_linked(page, values.get("link", "")):
+    already = _linked_anywhere(page, values.get("link", ""))
+    if already:
         return {
             "status": STATUS_VERIFIED,
-            "published_url": page.url,
+            "published_url": already,
             "message": "The live page already carries the link - nothing was submitted again.",
             "reasons": ["link found on the page"],
         }
 
     data = collect(page)
+    interact, data = _link_root(page, data)
     fields = list(data.get("fields") or [])
     text = str(data.get("text") or "").lower()
     if not fields:
@@ -473,7 +502,7 @@ def post(
     for term in roles.get("terms", []):
         if str(term.get("type")) in ("checkbox", "radio"):
             with suppress(Exception):
-                page.check(term["selector"], timeout=4000)
+                interact.check(term["selector"], timeout=4000)
 
     filled: dict[str, str] = {}
     for role in (
@@ -506,11 +535,11 @@ def post(
                 continue
             with suppress(Exception):
                 if kind == "select" or str(field.get("tag")) == "select":
-                    chosen = _select_option(page, field["selector"], value)
+                    chosen = _select_option(interact, field["selector"], value)
                     if not chosen:
                         continue
                 else:
-                    page.fill(field["selector"], value, timeout=6000)
+                    interact.fill(field["selector"], value, timeout=6000)
                 filled[role] = value
                 break
 
@@ -541,7 +570,7 @@ def post(
     pages_before: set[int] = set()
     with suppress(Exception):
         pages_before = {id(item) for item in page.context.pages}
-    if not _submit_button(page, data):
+    if not _submit_button(interact, data):
         return {
             "status": STATUS_NEEDS_HUMAN,
             "published_url": None,
@@ -571,7 +600,7 @@ def post(
     after_text = ""
     with suppress(Exception):
         after_text = str(
-            page.evaluate("() => (document.body ? document.body.innerText : '')")
+            interact.evaluate("() => (document.body ? document.body.innerText : '')")
         ).lower()
     public_url = ""
     with suppress(Exception):
@@ -581,10 +610,11 @@ def post(
             page.goto(public_url, wait_until="domcontentloaded", timeout=timeout_ms)
             page.wait_for_timeout(1200)
 
-    if _already_linked(page, values.get("link", "")):
+    live = _linked_anywhere(page, values.get("link", ""))
+    if live:
         return {
             "status": STATUS_VERIFIED,
-            "published_url": page.url,
+            "published_url": live,
             "message": "The link is live on the public page.",
             "reasons": ["link found after submit"],
         }

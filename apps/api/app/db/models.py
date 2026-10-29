@@ -273,6 +273,8 @@ class SiteAccount(IdMixin, TimestampMixin, Base):
     backlink_published_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     #: Why the post stopped / what the site answered (never a fake success).
     backlink_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: What the site's own code showed (platform, sign-up routes, public form).
+    site_intel: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

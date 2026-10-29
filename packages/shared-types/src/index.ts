@@ -1173,6 +1173,7 @@ export type SiteAccountStrategy =
   | "GOOGLE"
   | "SIGNUP"
   | "EXISTING"
+  | "DIRECT"
   | "MANUAL"
   | "UNKNOWN";
 
@@ -1233,6 +1234,17 @@ export interface SiteAccount {
   backlink_published_url: string | null;
   /** Why the post stopped / what the site answered. */
   backlink_note: string | null;
+  /** What the site's own code showed: platform, sign-up routes, public form. */
+  site_intel?: {
+    url?: string;
+    title?: string;
+    platform?: string;
+    plan?: string;
+    signup_urls?: string[];
+    login_urls?: string[];
+    notes?: string[];
+    direct?: { url?: string; action?: string; kind?: string } | null;
+  };
   attempts: number;
   last_error: string | null;
   evidence: Record<string, unknown>;

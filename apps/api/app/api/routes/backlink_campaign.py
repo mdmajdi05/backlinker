@@ -52,6 +52,7 @@ ACCOUNT_STRATEGY = {
     "GOOGLE": "Continue with Google",
     "SIGNUP": "Username + password",
     "EXISTING": "Already had an account",
+    "DIRECT": "No account - public form",
     "MANUAL": "Manual",
     "UNKNOWN": "Not detected",
 }

@@ -50,7 +50,14 @@ from app.db.models import (
     Website,
 )
 from app.db.session import session_scope
-from app.services import backlink_post, backlink_target, gmail_otp, login_browser, project_login
+from app.services import (
+    backlink_post,
+    backlink_target,
+    gmail_otp,
+    login_browser,
+    project_login,
+    site_intel,
+)
 from app.services import browser as browser_service
 
 log = get_logger(__name__)
@@ -58,6 +65,8 @@ log = get_logger(__name__)
 STRATEGY_GOOGLE = "GOOGLE"
 STRATEGY_SIGNUP = "SIGNUP"
 STRATEGY_EXISTING = "EXISTING"
+#: No account at all: the site has a public form that accepts the link.
+STRATEGY_DIRECT = "DIRECT"
 STRATEGY_MANUAL = "MANUAL"
 STRATEGY_UNKNOWN = "UNKNOWN"
 
@@ -344,6 +353,7 @@ def account_payload(
         "backlink_status": row.backlink_status,
         "backlink_published_url": row.backlink_published_url,
         "backlink_note": row.backlink_note,
+        "site_intel": row.site_intel or {},
         "attempts": row.attempts,
         "last_error": row.last_error,
         "evidence": row.evidence or {},
@@ -1694,6 +1704,22 @@ def _provision_site(
         )
         return
 
+    # Read the site's own code before guessing any route: what it is, where
+    # its sign-up lives and whether a public form already accepts a link.
+    intel = site_intel.inspect(page)
+    if intel.get("url"):
+        row.site_intel = site_intel.brief(intel)
+        db.commit()
+        if intel.get("platform") and intel.get("platform") != "unknown":
+            _update_item(
+                project.id,
+                website.id,
+                message=(
+                    f"Read the site: {site_intel.label(intel)} - looking for "
+                    "its sign-up or public form…"
+                ),
+            )
+
     # Already signed in (a previous run or the operator did it).
     if _logged_in(page):
         row.strategy = STRATEGY_EXISTING
@@ -1703,6 +1729,11 @@ def _provision_site(
         _set_row(db, row, STATUS_ACTIVE, message="Already signed in.", strategy=STRATEGY_EXISTING)
         _store_target(db, context, project, website, row)
         _post_backlink(db, context, project, website, row)
+        return
+
+    # No account exists on this site, but its own form accepts a link.
+    if intel.get("plan") == "DIRECT":
+        _direct_post(db, context, project, website, row, intel)
         return
 
     # --- Continue with Google -------------------------------------------
@@ -1815,7 +1846,12 @@ def _provision_site(
     fallback_url = page.url
     seen_urls: set[str] = set()
     opened = False
-    for candidate in [*links, *_signup_candidates(website.opportunity_url)]:
+    intel_links = [str(url) for url in intel.get("signup_urls") or [] if url]
+    for candidate in [
+        *intel_links,
+        *links,
+        *_signup_candidates(website.opportunity_url),
+    ]:
         if not candidate or candidate in seen_urls:
             continue
         seen_urls.add(candidate)
@@ -1860,6 +1896,11 @@ def _provision_site(
             page.wait_for_timeout(1200)
     row.login_url = page.url
 
+    if not opened and intel.get("direct"):
+        # No sign-up at all, but the site's own form already takes a link.
+        _direct_post(db, context, project, website, row, intel)
+        return
+
     challenge = _challenge(page)
     if challenge == "CAPTCHA":
         _set_row(
@@ -1874,13 +1915,15 @@ def _provision_site(
     _dismiss_overlays(page)
     filled, reason = _fill_signup(page, row, project)
     if not filled:
+        found = site_intel.explain(intel) if not opened else ""
         _set_row(
             db,
             row,
             STATUS_NEEDS_HUMAN,
             error=(
                 f"{reason or 'No sign-up form was found on this website.'} "
-                "Open the site from this row, type the username, password and "
+                f"{found} ".strip()
+                + " Open the site from this row, type the username, password and "
                 "e-mail shown here yourself, then press Retry."
             ),
             message="Sign-up form not filled - open the site and finish it by hand.",
@@ -2216,13 +2259,55 @@ def _record_backlink(
         existing.next_verification_at = utcnow()
 
 
+def _direct_post(
+    db: Session,
+    context: Any,
+    project: Project,
+    website: Website,
+    row: SiteAccount,
+    intel: dict[str, Any],
+) -> None:
+    """Post on a site that has no account: its own form already takes a link.
+
+    The inspection found a page with a URL field that works for a visitor
+    (a guest comment form, a public submission form).  Nothing is created, so
+    the row is reported with the ``DIRECT`` strategy and the honest state of
+    the post.
+    """
+    direct = intel.get("direct") or {}
+    target = str(direct.get("url") or row.account_url or website.opportunity_url)
+    row.strategy = STRATEGY_DIRECT
+    row.account_url = target
+    row.backlink_url = target
+    row.backlink_form = {
+        "fields": [
+            {"name": str(name), "type": "text"} for name in direct.get("fields") or []
+        ],
+        "buttons": [],
+        "reasons": [str(direct.get("kind") or "anonymous form")],
+    }
+    row.backlink_confidence = 70
+    row.backlink_found_at = utcnow()
+    row.backlink_status = backlink_post.STATUS_NONE
+    row.backlink_note = None
+    _remember_login(db, context, project.id, website.id)
+    _set_row(
+        db,
+        row,
+        STATUS_ACTIVE,
+        message=f"No account needed - posting through the site's {direct.get('kind') or 'public form'}.",
+        strategy=STRATEGY_DIRECT,
+    )
+    _post_backlink(db, context, project, website, row)
+
+
 def _post_backlink(
     db: Session,
     context: Any,
     project: Project,
     website: Website,
     row: SiteAccount,
-) -> None:
+) -> str:
     """Post the link from the fresh account, honestly.
 
     A successful sign-up is not the same as a posted backlink: this step only
@@ -2231,12 +2316,12 @@ def _post_backlink(
     ``NEEDS_HUMAN`` with the exact reason, so one row never blocks the batch.
     """
     if row.backlink_status == backlink_post.STATUS_VERIFIED:
-        return
+        return row.backlink_status
     if (
         row.backlink_status == backlink_post.STATUS_POSTED
         and row.backlink_published_url
     ):
-        return
+        return row.backlink_status
     if not row.backlink_url:
         row.backlink_status = backlink_post.STATUS_NEEDS_HUMAN
         row.backlink_note = (
@@ -2249,7 +2334,7 @@ def _post_backlink(
             website.id,
             message="Account ready - no link form was found; open the site once.",
         )
-        return
+        return row.backlink_status
     target = row.backlink_url
     values = backlink_post.build_values(
         project,
@@ -2264,7 +2349,7 @@ def _post_backlink(
             "Add the website in the project details."
         )
         db.commit()
-        return
+        return row.backlink_status
     _update_item(project.id, website.id, message="Posting the backlink…")
     page = None
     try:
@@ -2283,7 +2368,7 @@ def _post_backlink(
         row.backlink_status = backlink_post.STATUS_NEEDS_HUMAN
         row.backlink_note = f"The backlink page could not be used: {exc}"
         db.commit()
-        return
+        return row.backlink_status
     finally:
         if page is not None:
             with suppress(Exception):
@@ -2330,6 +2415,7 @@ def _post_backlink(
             website.id,
             message="Account ready - the backlink needs you: open the site and finish it once.",
         )
+    return status
 
 
 # --------------------------------------------------------------------------

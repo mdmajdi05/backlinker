@@ -184,7 +184,21 @@ Most directories need an account before they accept a link. The
    the project once and keeps it open for every row of the list. Gmail is
    opened once and stays available for the whole batch - not one Gmail
    session per website.
-3. Per website the strategy is decided from the **live page**:
+3. **The site is read before anything is guessed.** The page is inspected the
+   way a person reads it: every form and link, the inline JavaScript and the
+   JavaScript bundles the site loads. That tells the batch
+   * what the site is built with (WordPress, Discourse, XenForo, phpBB,
+     Joomla, Drupal, Shopify, Ghost, Webflow, Wix, Squarespace ...) from the
+     resources it really requested,
+   * where its sign-up really is - the link / tab / modal button and even the
+     route inside the site's own code (`registerPath: "/register"`), plus the
+     platform's fixed entry such as `/wp-login.php?action=register`,
+   * and whether a **public form already accepts a link** (a guest comment
+     form or a submission form with a URL field).
+   Route guessing (`/register`, `/signup.php` ...) is only the last resort
+   after the code showed nothing. The platform and the found paths are stored
+   on the row, so the report says what the app saw.
+4. Per website the strategy is decided from the **live page**:
    * a *Continue with Google* button -> the project Google session is used (no
      password is typed, no account chooser is automated; if Google asks for the
      password the row stops as **Needs you**),
@@ -204,14 +218,14 @@ Most directories need an account before they accept a link. The
    languages. If the site does not keep the session after the sign-up, the app
    **logs in with the stored credentials** and only then reports the account
    active.
-4. If the sign-up asks for a code, the row signs up with its **own address
+5. If the sign-up asks for a code, the row signs up with its **own address
    alias** of that Gmail (`inbox+<token>@gmail.com`). The code is read in the
    Gmail tab of the same logged-in browser (the App Password inbox is only the
    fallback). Only a mail addressed to that token is accepted, one code is
    claimed once, and the code is stored encrypted against
    `(project, website)`. A code can never be filled into another project or
    another website; an ambiguous mail pauses the row instead of guessing.
-5. When the account is active the same logged-in browser looks for the exact
+6. When the account is active the same logged-in browser looks for the exact
    page that carries the link field (`/submit`, `/add-listing`, a profile editor
    with a website field, a forum's *new thread*, ...). The found URL, the field
    mapping and a confidence are stored on the row and shown in the
@@ -219,7 +233,7 @@ Most directories need an account before they accept a link. The
    report carries the **Posted link**, **Backlink status**, **Published page**
    and **Verification** columns - so you can open the same live URL and check
    the post yourself.
-6. The same browser then **posts the link**: the website/URL field gets your
+7. The same browser then **posts the link**: the website/URL field gets your
    target website, the anchor/title field your anchor, the description field
    your business description, plus the name, e-mail (only when required),
    phone, category and country the form asks for. It recognises the submit
@@ -232,6 +246,13 @@ Most directories need an account before they accept a link. The
      **Needs you** with the exact reason. The account stays active, so you can
      press **Open site**, finish the form once, then **Retry** - the batch never
      stops for it and never posts the same entry twice on a retry.
+8. **No account needed?** When the inspection shows a public form that already
+   takes a URL (a guest comment form, a public submission form) and no
+   sign-up, no account is created at all: the row is reported with the
+   **No account - public form** strategy and the link is posted right there.
+   The same applies when the sign-up paths were found in the code but none of
+   them opened a real form - the public form is the fallback instead of giving
+   up.
 
 If a form asks for a required field the app has no value for (a custom field,
 an address, ...), it does not submit a half-filled form: the row stops as
@@ -398,6 +419,18 @@ expired** badge). **Re-login** dabao, usi profile me dobara sign-in karo -
 paused kaam session detect hote hi apne aap dobara queue ho jata hai. Row par
 **Save login**, project page ke Google card par **I'm done - save session** se
 window explicitly save hoti hai.
+
+**Site ka code inspect hota hai?**
+Haan. Har site par pehle page ka code padha jata hai - saare form aur link,
+inline JavaScript aur site ki apni JS bundles. Isse pata chalta hai site kis
+platform par hai (WordPress, Discourse, XenForo, phpBB, Joomla, Drupal,
+Shopify, Ghost, Webflow, Wix, Squarespace...), uska signup asal me kahan hai
+(link/tab/modal button, ya code me likha route jaise `registerPath:
+"/register"`, ya platform ka fixed `/wp-login.php?action=register`) aur kya
+koi **public form** pehle se link leta hai (guest comment form ya submission
+form me URL field). URL route guess (`/register`, `/signup.php`) sirf aakhri
+option hai. Jo mila wahi row par store hota hai, isliye report me dikhta hai
+kis site par kya dekha gaya.
 
 **Account kaun banata hai?**
 **Create accounts** ek hi click me poori list ke accounts banata hai - ek hi
