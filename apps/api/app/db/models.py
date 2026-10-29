@@ -266,6 +266,13 @@ class SiteAccount(IdMixin, TimestampMixin, Base):
     backlink_form: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     backlink_confidence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     backlink_found_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: NONE | POSTED | VERIFIED | NEEDS_HUMAN | FAILED - the real state of the
+    #: post that the account made (not the account itself).
+    backlink_status: Mapped[str] = mapped_column(String(24), default="NONE", nullable=False)
+    #: The public page that carries the posted link (the tracking URL).
+    backlink_published_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: Why the post stopped / what the site answered (never a fake success).
+    backlink_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)

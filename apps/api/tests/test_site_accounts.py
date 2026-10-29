@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.core.crypto import decrypt, encrypt
 from app.db.models import Opportunity, Project, SiteAccount, Website
-from app.services import backlink_target, gmail_otp, site_accounts
+from app.services import backlink_post, backlink_target, gmail_otp, site_accounts
 
 API = "/api/v1"
 
@@ -533,6 +533,8 @@ def test_campaign_row_carries_the_account_of_its_website(
         email="inbox+abc@gmail.com",
         backlink_url="https://site.example/profile",
         backlink_confidence=88,
+        backlink_status="POSTED",
+        backlink_published_url="https://site.example/profile/acmeuser1",
     )
     site_accounts.set_password(row, "Pass-1234-Value")
     db_session.add(row)
@@ -545,6 +547,10 @@ def test_campaign_row_carries_the_account_of_its_website(
     assert account["username"] == "acmeuser1"
     assert account["password"] == "Pass-1234-Value"
     assert account["backlink_url"] == "https://site.example/profile"
+    assert account["backlink_status"] == "POSTED"
+    assert (
+        account["backlink_published_url"] == "https://site.example/profile/acmeuser1"
+    )
     assert body["summary"]["account_active"] == 1
 
     report = authenticated_client.get(f"{API}/projects/{project_id}/campaign/report.csv")
@@ -558,10 +564,13 @@ def test_campaign_row_carries_the_account_of_its_website(
         "Account strategy",
         "Published page",
         "Verification",
+        "Posted link",
+        "Backlink status",
     ):
         assert column in header
     assert "acmeuser1" in text
     assert "Pass-1234-Value" in text
+    assert "https://site.example/profile/acmeuser1" in text
 
 
 def test_website_is_untouched_when_no_account_exists(
@@ -612,3 +621,139 @@ def test_website_model_is_reachable(db_session) -> None:
 def test_encrypt_roundtrip_uses_the_installation_secret() -> None:
     value = encrypt("hello", settings.secret_key, "aad")
     assert decrypt(value, settings.secret_key, "aad") == "hello"
+
+
+def test_submission_fields_are_classified_from_any_hint() -> None:
+    role = backlink_post.field_role
+    assert role({"label": "Your website", "type": "text"}) == "link"
+    assert role({"name": "link_url", "type": "url"}) == "link"
+    assert role({"label": "Website name"}) == "name"
+    assert role({"label": "Anchor text"}) == "anchor"
+    assert role({"label": "Description", "tag": "textarea"}) == "description"
+    assert role({"label": "Business name"}) == "name"
+    assert role({"label": "Phone", "type": "tel"}) == "phone"
+    assert role({"label": "Category"}) == "category"
+    assert role({"label": "Country"}) == "country"
+    assert role({"label": "I agree to the terms", "type": "checkbox"}) == "terms"
+    assert role({"label": "Favourite colour"}) == ""
+
+
+def test_submission_values_come_from_the_business_profile() -> None:
+    from types import SimpleNamespace
+
+    profile = SimpleNamespace(
+        name="Acme Analytics",
+        primary_website="https://acme.example",
+        description="Analytics for small shops",
+        business_descriptions=["We make analytics simple."],
+        preferred_anchors=["Acme analytics"],
+        preferred_categories=["Business"],
+        target_countries=["US"],
+        contact_phone="+1 555 0100",
+    )
+    project = SimpleNamespace(
+        name="Acme",
+        target_website="https://acme.example",
+        business_profile=profile,
+    )
+    website = SimpleNamespace(description="", anchor_text="")
+    row = SimpleNamespace(email="inbox+abc@gmail.com")
+    values = backlink_post.build_values(project, website, row)
+    assert values["link"] == "https://acme.example"
+    assert values["anchor"] == "Acme analytics"
+    assert values["description"] == "We make analytics simple."
+    assert values["name"] == "Acme Analytics"
+    assert values["email"] == "inbox+abc@gmail.com"
+    assert values["country"] == "US"
+
+
+def test_a_link_is_only_reported_when_the_page_really_carries_it() -> None:
+    html = '<a href="https://www.acme.example/lp">Acme</a>'
+    assert backlink_post.linked_on_page(html, "https://acme.example") is True
+    assert backlink_post.linked_on_page('<a href="/contact">Mail</a>', "https://acme.example") is False
+    assert backlink_post.linked_on_page(html, "") is False
+
+
+def test_the_signup_paths_cover_the_common_platforms() -> None:
+    paths = site_accounts._signup_candidates("https://directory.example.org/add")
+    for expected in (
+        "/register",
+        "/register.php",
+        "/wp-login.php?action=register",
+        "/users/sign_up",
+        "/account/register",
+        "/join",
+    ):
+        assert any(path.endswith(expected) for path in paths), paths
+
+
+class _NoLinkPage:
+    """A page with a form but without any URL / website field."""
+
+    url = "https://directory.example.org/profile"
+
+    def goto(self, *args, **kwargs) -> None:
+        return None
+
+    def wait_for_timeout(self, *args, **kwargs) -> None:
+        return None
+
+    def content(self) -> str:
+        return "<html><body>profile</body></html>"
+
+    def evaluate(self, script, arg=None):
+        if script is backlink_post._COLLECT_JS:
+            return {
+                "fields": [
+                    {
+                        "selector": "#name",
+                        "label": "Name",
+                        "type": "text",
+                        "required": False,
+                    }
+                ],
+                "buttons": [{"text": "Save", "type": "submit"}],
+                "title": "Profile",
+                "url": self.url,
+                "text": "Edit your profile",
+            }
+        return ""
+
+
+def test_no_link_field_is_reported_instead_of_a_fake_post() -> None:
+    result = backlink_post.post(
+        _NoLinkPage(),
+        target_url="https://directory.example.org/profile",
+        values={"link": "https://acme.example", "name": "Acme"},
+    )
+    assert result["status"] == backlink_post.STATUS_NEEDS_HUMAN
+    assert "no website / URL field" in result["message"]
+
+
+def test_posting_without_a_target_says_so() -> None:
+    result = backlink_post.post(None, target_url="", values={"link": "https://acme.example"})
+    assert result["status"] == backlink_post.STATUS_NEEDS_HUMAN
+
+
+def test_signup_entry_points_cover_links_and_modal_buttons() -> None:
+    """A sign-up form can hide behind a link, a tab or a modal button."""
+
+    class _Root:
+        def __init__(self, found) -> None:
+            self.found = found
+
+        def evaluate(self, *args, **kwargs):
+            return self.found
+
+    class _Page(_Root):
+        def __init__(self, found) -> None:
+            super().__init__(found)
+            self.main_frame = self
+            self.frames = [self]
+
+    page = _Page(
+        ["https://site.example/register", "", "https://site.example/join"]
+    )
+    links, clickables = site_accounts._signup_entry_points(page)
+    assert links == ["https://site.example/register", "https://site.example/join"]
+    assert clickables == [page]

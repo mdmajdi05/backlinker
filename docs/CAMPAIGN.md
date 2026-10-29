@@ -193,11 +193,17 @@ Most directories need an account before they accept a link. The
      account and shown on that website's row** in the campaign table and in the
      CSV report.
    The form is read from the live DOM: e-mail, username, first/last/full name,
-   company, phone, website, address, city, ZIP, country (a `<select>` too),
-   password + confirmation and the terms checkbox. A second step of a
-   multi-step form is filled with the same values. If the site does not keep the
-   session after the sign-up, the app **logs in with the stored credentials**
-   and only then reports the account active.
+   company, phone, website, address, city, ZIP, country (a `<select>` or a
+   custom combobox too), password + confirmation, terms and required consent
+   checkboxes and required radio groups. A second or third step of a
+   multi-step form is filled with the same values. The sign-up entry itself is
+   found however the site presents it: a link, a **Create account** tab, a
+   button that opens a modal, a form inside an iframe, a passwordless
+   e-mail-only form, the usual `/register`, `/signup.php`,
+   `/wp-login.php?action=register` paths and the site's own wording in other
+   languages. If the site does not keep the session after the sign-up, the app
+   **logs in with the stored credentials** and only then reports the account
+   active.
 4. If the sign-up asks for a code, the row signs up with its **own address
    alias** of that Gmail (`inbox+<token>@gmail.com`). The code is read in the
    Gmail tab of the same logged-in browser (the App Password inbox is only the
@@ -210,8 +216,22 @@ Most directories need an account before they accept a link. The
    with a website field, a forum's *new thread*, ...). The found URL, the field
    mapping and a confidence are stored on the row and shown in the
    **Backlink page** column. The link stays clickable, and the downloaded
-   report carries the **Published page** and **Verification** columns - so you
-   can open the same live URL and check the post yourself.
+   report carries the **Posted link**, **Backlink status**, **Published page**
+   and **Verification** columns - so you can open the same live URL and check
+   the post yourself.
+6. The same browser then **posts the link**: the website/URL field gets your
+   target website, the anchor/title field your anchor, the description field
+   your business description, plus the name, e-mail (only when required),
+   phone, category and country the form asks for. It recognises the submit
+   button and only reports a post when it can see a sign of success:
+   * the link is really on the public page -> **Verified** (and the normal
+     verification job is queued),
+   * the site accepted the entry but it is not public yet (moderation) ->
+     **Posted**, with the live page stored as the **Posted link**,
+   * a CAPTCHA, a login wall or a required field the app cannot fill ->
+     **Needs you** with the exact reason. The account stays active, so you can
+     press **Open site**, finish the form once, then **Retry** - the batch never
+     stops for it and never posts the same entry twice on a retry.
 
 If a form asks for a required field the app has no value for (a custom field,
 an address, ...), it does not submit a half-filled form: the row stops as
@@ -246,6 +266,7 @@ settings.
 | **Needs you** + CAPTCHA | the site asked for a human | press **Open site** (streamed on the web, native window on the desktop), solve it once, then **Retry** |
 | **Needs you** + "no sign-up form" | the site has no real sign-up form (or a different flow) | check the site once, or create the account by hand |
 | **Needs you** + "required fields could not be filled" | the form asks for a custom field the app has no value for | press **Open site**, type the username, password, e-mail and the named fields shown on the row, submit, then **Retry** |
+| **Backlink needs you** | the account is active, but the post page asked for a CAPTCHA, a login or an unknown required field | press **Open site**, finish that one post, then **Retry** (the app checks for the link first, so a retry never posts twice) |
 | **Needs you** + "e-mail code" | Gmail is not configured or no code arrived | save the App Password, press **Retry** |
 | **Failed** | the page did not open / a network error | press **Retry** |
 
@@ -387,7 +408,24 @@ jo project ke Google login me use hua tha (khali email field ka matlab wahi
 address). Jis site par **Continue with Google** milta hai wahan project ka
 Google session use hota hai; jahan nahi milta wahan aapke username + password
 se signup hota hai. Dono cheezein usi website ki row me report me dikhti hain
-(username, password, account e-mail) aur CSV me bhi aati hain.
+(username, password, account e-mail) aur CSV me bhi aati hain. Signup page
+kaise bhi ho - link, **Create account** tab, modal button, iframe ke andar ka
+form, bina password wala sirf e-mail form, ya `/register` / `/signup.php` -
+app use dhoondh leta hai; form ke saare fields (name, company, phone, website,
+country ka select/combobox, terms checkbox, required radio) bhar deta hai aur
+2-3 step wale form bhi aage bhar deta hai.
+
+**Account banne ke baad backlink bhi banega?**
+Haan. Account active hote hi wahi logged-in browser aisi page dhoondhta hai
+jahan website/URL field ho (profile editor, add listing, submit, forum) aur
+usme aapki website ka link, anchor, business name, description, category aur
+country bhar kar submit karta hai. Jab link live page par dikh jata hai to row
+**Verified** hoti hai; agar site entry accept karke moderation me rakhti hai to
+row **Posted** hoti hai aur uske saath clickable **Posted link** milta hai.
+CAPTCHA / login / ajeeb required field aayi to account active rehta hai aur
+backlink **Needs you** ho jata hai - **Open site** se form ek baar poora karo,
+phir **Retry**. Retry pe pehle check hota hai ki link pehle se page par hai ya
+nahi, taaki duplicate post na ho.
 
 **OTP kisi doosri site me nahi jayega?**
 Har row apne hi alias (`inbox+token@gmail.com`) se signup karti hai. Code usi

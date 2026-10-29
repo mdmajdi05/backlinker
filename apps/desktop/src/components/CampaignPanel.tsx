@@ -1094,7 +1094,8 @@ export function CampaignPanel({
                               </>
                             ) : null}
                             {accountOf(row) &&
-                            ["NEEDS_HUMAN", "FAILED"].includes(accountOf(row)!.status) &&
+                            (["NEEDS_HUMAN", "FAILED"].includes(accountOf(row)!.status) ||
+                              accountOf(row)!.backlink_status === "NEEDS_HUMAN") &&
                             loginRow?.opportunity_id !== row.opportunity_id ? (
                               <Button
                                 size="sm"
@@ -1362,9 +1363,12 @@ export function CampaignPanel({
             Every field a form asks for is detected and filled (e-mail, name,
             company, phone, website, country, ...). If a custom field cannot be
             filled, the row stops as <strong>Needs you</strong>: open the site, type
-            the values shown on the row, then press Retry. Accounts are only created
-            where the site offers a real sign-up form - a row that cannot be completed
-            is reported with its exact reason.
+            the values shown on the row, then press Retry. After the sign-up the
+            same logged-in browser posts your link on the page it found and stores
+            the live <strong>Posted link</strong> - it is only called verified when
+            the link is really on that page. A site that asks for something only a
+            human can answer keeps the account active and marks the backlink as
+            Needs you.
           </p>
         </div>
       </Dialog>

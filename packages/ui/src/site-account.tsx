@@ -27,6 +27,9 @@ export interface SiteAccountView {
   otp_state: "NONE" | "WAITING" | "RECEIVED" | "USED" | "EXPIRED";
   backlink_url: string | null;
   backlink_confidence: number;
+  backlink_status?: "NONE" | "POSTED" | "VERIFIED" | "NEEDS_HUMAN" | "FAILED";
+  backlink_published_url?: string | null;
+  backlink_note?: string | null;
   last_error: string | null;
 }
 
@@ -155,6 +158,47 @@ export function SiteAccountCell({
       {account.otp_state === "WAITING" || account.otp_state === "RECEIVED" ? (
         <p className="text-[9px] text-info">E-mail code: {account.otp_state.toLowerCase()}</p>
       ) : null}
+      {account.backlink_status && account.backlink_status !== "NONE" ? (
+        <div className="space-y-0.5">
+          <p
+            className={cn(
+              "text-[9px] font-medium",
+              account.backlink_status === "VERIFIED"
+                ? "text-success"
+                : account.backlink_status === "POSTED"
+                  ? "text-info"
+                  : "text-warning",
+            )}
+          >
+            {account.backlink_status === "VERIFIED"
+              ? "Backlink verified"
+              : account.backlink_status === "POSTED"
+                ? "Backlink posted"
+                : "Backlink needs you"}
+          </p>
+          {account.backlink_published_url ? (
+            <a
+              href={account.backlink_published_url}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate text-[9px] text-accent underline"
+              title={account.backlink_published_url}
+            >
+              {account.backlink_published_url}
+            </a>
+          ) : null}
+          {account.backlink_note &&
+          account.backlink_status !== "VERIFIED" &&
+          account.backlink_status !== "POSTED" ? (
+            <p
+              className="line-clamp-2 text-[9px] text-warning"
+              title={account.backlink_note}
+            >
+              {account.backlink_note}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       {account.last_error ? (
         <p
           className={cn(
@@ -166,7 +210,10 @@ export function SiteAccountCell({
           {account.last_error}
         </p>
       ) : null}
-      {onRetry && (account.status === "NEEDS_HUMAN" || account.status === "FAILED") ? (
+      {onRetry &&
+      (account.status === "NEEDS_HUMAN" ||
+        account.status === "FAILED" ||
+        account.backlink_status === "NEEDS_HUMAN") ? (
         <Button size="sm" variant="outline" loading={busy} onClick={onRetry}>
           Retry
         </Button>

@@ -41,9 +41,16 @@ from app.core.config import settings
 from app.core.crypto import decrypt, encrypt
 from app.core.logging import get_logger
 from app.db.base import utcnow
-from app.db.models import Opportunity, Project, ProjectSettings, SiteAccount, Website
+from app.db.models import (
+    BacklinkRecord,
+    Opportunity,
+    Project,
+    ProjectSettings,
+    SiteAccount,
+    Website,
+)
 from app.db.session import session_scope
-from app.services import backlink_target, gmail_otp, login_browser, project_login
+from app.services import backlink_post, backlink_target, gmail_otp, login_browser, project_login
 from app.services import browser as browser_service
 
 log = get_logger(__name__)
@@ -334,6 +341,9 @@ def account_payload(
         "backlink_url": row.backlink_url,
         "backlink_confidence": row.backlink_confidence,
         "backlink_form": row.backlink_form or {},
+        "backlink_status": row.backlink_status,
+        "backlink_published_url": row.backlink_published_url,
+        "backlink_note": row.backlink_note,
         "attempts": row.attempts,
         "last_error": row.last_error,
         "evidence": row.evidence or {},
@@ -768,8 +778,10 @@ def _missing_required(page: Any) -> list[str]:
 
 def _has_empty_required(page: Any) -> bool:
     """A required field of the current form is still empty (next step)."""
-    with suppress(Exception):
-        return bool(page.evaluate(_EMPTY_REQUIRED_JS))
+    for root in _form_roots(page):
+        with suppress(Exception):
+            if root.evaluate(_EMPTY_REQUIRED_JS):
+                return True
     return False
 
 
@@ -895,37 +907,65 @@ def _finish_google(
     )
 
 
-def _find_signup_url(page: Any, base: str) -> str:
+#: Mark every element that opens a sign-up form (link, tab, modal button).
+_FIND_SIGNUP_JS = r"""
+() => {
+  const pattern = /(sign\s*up|signup|register|registration|create\s+(an\s+|a\s+)?(new\s+)?account|join|become\s+a\s+member|get\s+started|registr|anmeld|inscri|cadastr|criar\s+conta|crear\s+cuenta|s'inscrire|créer\s+un\s+compte|konto\s+erstellen|注册|登録)/i;
+  const hrefPattern = /(signup|sign-up|register|registration|join|create-account|create_account|registr|anmeld|inscri|cadastr)/i;
+  const out = [];
+  let markedButton = false;
+  for (const el of document.querySelectorAll('a, button, [role=button], [role=link]')) {
+    const text = (el.innerText || el.value || '').trim();
+    const href = el.getAttribute('href') || '';
+    const byHref = hrefPattern.test(href);
+    if ((!text && !byHref) || text.length > 80) continue;
+    if (!byHref && !pattern.test(text)) continue;
+    // A newsletter or a coupon "join" is not an account.
+    if (/(newsletter|subscribe|coupon|deal|follow us|mailing list)/i.test(text)) continue;
+    if (!href || href.startsWith('#') || href.startsWith('javascript')) {
+      if (markedButton) continue;
+      markedButton = true;
+      el.setAttribute('data-abk-signup', '1');
+      out.push('');
+      continue;
+    }
+    out.push(el.href);
+  }
+  return out;
+}
+"""
+
+
+def _signup_entry_points(page: Any) -> tuple[list[str], list[Any]]:
+    """Every link / button that opens a sign-up form, frames included.
+
+    Returns the hrefs to open and the roots (page or iframe) that carry a
+    button which opens the form without navigating (a modal).
+    """
+    links: list[str] = []
+    clickables: list[Any] = []
+    for root in _form_roots(page):
+        with suppress(Exception):
+            found = root.evaluate(_FIND_SIGNUP_JS) or []
+        for href in found or []:
+            href = str(href or "").strip()
+            if href:
+                if href not in links:
+                    links.append(href)
+            elif root not in clickables:
+                clickables.append(root)
+    return links, clickables
+
+
+def _click_signup_entry(page: Any, root: Any) -> str:
+    """Press the marked sign-up button of ``root`` (a modal or a new tab)."""
     with suppress(Exception):
-        marked = page.evaluate(
-            """
-            () => {
-              const pattern = /(sign\\s*up|signup|register|registration|create\\s+(an\\s+|a\\s+)?(new\\s+)?account|join|become\\s+a\\s+member|get\\s+started)/i;
-              for (const el of document.querySelectorAll('a, button, [role=button]')) {
-                const text = (el.innerText || el.value || '').trim();
-                if (text.length > 60 || !pattern.test(text)) continue;
-                const href = el.getAttribute('href') || '';
-                if (!href || href.startsWith('#') || href.startsWith('javascript')) {
-                  el.setAttribute('data-abk-signup', '1');
-                  return '';
-                }
-                el.setAttribute('data-abk-signup', '1');
-                return el.href;
-              }
-              return '';
-            }
-            """
-        )
-    if marked:
-        return str(marked)
+        with page.context.expect_page(timeout=4000) as info:
+            root.click("[data-abk-signup='1']", timeout=5000)
+        return str(info.value.url or page.url)
     with suppress(Exception):
-        if page.query_selector("[data-abk-signup='1']") is not None:
-            with suppress(Exception):
-                with page.context.expect_page(timeout=5000) as info:
-                    page.click("[data-abk-signup='1']", timeout=5000)
-                return info.value.url
-            return page.url
-    return ""
+        root.click("[data-abk-signup='1']", timeout=5000)
+    return str(page.url or "")
 
 
 def _signup_candidates(base: str) -> list[str]:
@@ -939,22 +979,144 @@ def _signup_candidates(base: str) -> list[str]:
         for path in (
             "/signup",
             "/sign-up",
+            "/signup.php",
             "/register",
+            "/register.php",
+            "/register.html",
             "/join",
+            "/join-now",
             "/create-account",
             "/account/register",
+            "/account/signup",
+            "/account/create",
+            "/user/register",
+            "/users/sign_up",
+            "/members/register",
+            "/member/register",
+            "/wp-login.php?action=register",
+            "/?register=1",
+            "/index.php?action=register",
         )
     ]
 
 
-def _signup_form_ready(page: Any) -> bool:
-    """Whether the page really shows a usable sign-up form."""
+def _form_roots(page: Any) -> list[Any]:
+    """The page itself and every child frame a form may live in."""
+    roots: list[Any] = [page]
     with suppress(Exception):
-        data = page.evaluate(_COLLECT_FIELDS_JS) or {}
-    if not data:
-        return False
-    roles = {_field_role(field) for field in data.get("fields") or []}
-    return "password" in roles and bool(roles & {"email", "username"})
+        roots.extend(frame for frame in page.frames if frame is not page.main_frame)
+    return roots
+
+
+def _frame_with_form(page: Any) -> Any | None:
+    """The page or iframe that really shows a sign-up form."""
+    for root in _form_roots(page):
+        with suppress(Exception):
+            data = root.evaluate(_COLLECT_FIELDS_JS) or {}
+        roles = {_field_role(field) for field in data.get("fields") or []}
+        if "password" in roles and roles & {"email", "username"}:
+            return root
+        # Passwordless sign-up: an e-mail field and a continue / create button.
+        # The mail carries the link, the inbox reads it (same pipeline).
+        if "email" in roles and not (roles & {"password", "confirm"}):
+            buttons = " ".join(
+                str(button.get("text") or "").lower()
+                for button in data.get("buttons") or []
+            )
+            if any(
+                word in buttons
+                for word in (
+                    "sign up",
+                    "signup",
+                    "register",
+                    "create",
+                    "join",
+                    "continue",
+                    "next",
+                    "start",
+                )
+            ):
+                return root
+    return None
+
+
+_DISMISS_OVERLAYS_JS = """
+() => {
+  const containers = document.querySelectorAll(
+    '[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], '
+    + '[id*="gdpr" i], [class*="gdpr" i], #onetrust-banner-sdk, .cc-window'
+  );
+  for (const box of containers) {
+    const text = (box.innerText || '').toLowerCase();
+    if (!/(cookie|consent|privacy|gdpr)/.test(text)) continue;
+    for (const el of box.querySelectorAll('button, a, [role="button"]')) {
+      const label = (el.innerText || el.value || '').trim();
+      if (!label || label.length > 40) continue;
+      if (!/(accept|agree|allow all|got it|understood|allow)/i.test(label)) continue;
+      if (/(reject|decline|settings|manage|only necessary|essential)/i.test(label)) continue;
+      el.click();
+      return label;
+    }
+  }
+  return '';
+}
+"""
+
+
+def _dismiss_overlays(page: Any) -> bool:
+    """Close the cookie / consent banner that hides a form (best effort)."""
+    for root in _form_roots(page):
+        with suppress(Exception):
+            label = root.evaluate(_DISMISS_OVERLAYS_JS)
+            if label:
+                page.wait_for_timeout(600)
+                return True
+    return False
+
+
+_CHECK_RADIOS_JS = """
+() => {
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden'
+      && box.width > 1 && box.height > 1;
+  };
+  const nameOf = (el) => {
+    if (el.id) {
+      const node = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (node) return (node.innerText || '').toLowerCase();
+    }
+    const parent = el.closest('label');
+    return parent ? (parent.innerText || '').toLowerCase() : '';
+  };
+  const groups = {};
+  for (const el of document.querySelectorAll('input[type="radio"]')) {
+    if (!visible(el) || !el.name) continue;
+    (groups[el.name] = groups[el.name] || []).push(el);
+  }
+  let clicked = 0;
+  for (const name of Object.keys(groups)) {
+    const group = groups[name];
+    if (group.some((el) => el.checked)) continue;
+    if (!group.some((el) => el.required || el.getAttribute('aria-required') === 'true')) continue;
+    const preferred = group.find((el) =>
+      /(business|company|organis|organization|professional|yes|agree)/i.test(nameOf(el))
+    );
+    const choice = preferred || group[0];
+    choice.click();
+    clicked += 1;
+  }
+  return clicked;
+}
+"""
+
+
+def _check_radios(root: Any) -> int:
+    """Pick a sensible option in every empty required radio group."""
+    with suppress(Exception):
+        return int(root.evaluate(_CHECK_RADIOS_JS) or 0)
+    return 0
 
 
 def _field_role(field: dict[str, Any]) -> str:
@@ -1018,9 +1180,10 @@ _COLLECT_FIELDS_JS = """
     return parts.join(' ').replace(/\\s+/g, ' ').trim();
   };
   const out = [];
-  for (const el of document.querySelectorAll('input, textarea')) {
+  for (const el of document.querySelectorAll('input, textarea, [contenteditable="true"]')) {
     if (!visible(el)) continue;
-    const type = (el.getAttribute('type') || el.tagName).toLowerCase();
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || (tag === 'input' ? 'text' : tag)).toLowerCase();
     if (['hidden', 'submit', 'button', 'reset', 'file', 'image'].includes(type)) continue;
     const name = el.getAttribute('name') || '';
     const id = el.id || '';
@@ -1029,12 +1192,13 @@ _COLLECT_FIELDS_JS = """
     else if (name) selector = el.tagName.toLowerCase() + '[name="' + CSS.escape(name) + '"]';
     if (!selector) continue;
     out.push({
-      selector, name, id, type,
+      selector, name, id, tag, type,
       placeholder: el.getAttribute('placeholder') || '',
       autocomplete: el.getAttribute('autocomplete') || '',
       aria: el.getAttribute('aria-label') || '',
       title: el.getAttribute('title') || '',
       label: labelFor(el),
+      required: el.required === true || el.getAttribute('aria-required') === 'true',
     });
   }
   const selects = [];
@@ -1052,16 +1216,32 @@ _COLLECT_FIELDS_JS = """
       label: labelFor(el),
     });
   }
+  const combos = [];
+  for (const el of document.querySelectorAll('[role="combobox"]')) {
+    if (!visible(el)) continue;
+    const id = el.id || '';
+    let selector = id ? '#' + CSS.escape(id) : '';
+    if (!selector) {
+      const parent = el.parentElement;
+      if (parent && parent.id) selector = '#' + CSS.escape(parent.id);
+    }
+    if (!selector) continue;
+    combos.push({
+      selector,
+      aria: el.getAttribute('aria-label') || '',
+      label: labelFor(el) || (el.innerText || '').trim(),
+    });
+  }
   const checkboxes = Array.from(document.querySelectorAll('input[type=checkbox]'))
     .filter(visible)
     .map((el) => {
       const label = labelFor(el);
       let selector = el.id ? '#' + CSS.escape(el.id)
         : (el.getAttribute('name') ? 'input[name="' + CSS.escape(el.getAttribute('name')) + '"]' : '');
-      return {selector, label, checked: el.checked};
+      return {selector, label, checked: el.checked, required: el.required === true};
     })
     .filter((item) => item.selector);
-  return {fields: out, selects, checkboxes, text: document.body ? document.body.innerText.slice(0, 6000) : ''};
+  return {fields: out, selects, combos, checkboxes, text: document.body ? document.body.innerText.slice(0, 6000) : ''};
 }
 """
 
@@ -1085,9 +1265,23 @@ def _profile_values(project: Project) -> dict[str, str]:
     }
 
 
+def _wait_for_signup_form(page: Any, timeout: float = 6.0) -> Any | None:
+    """Wait briefly for a JavaScript-rendered form (or for its iframe)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        root = _frame_with_form(page)
+        if root is not None:
+            return root
+        if time.monotonic() >= deadline:
+            return None
+        with suppress(Exception):
+            page.wait_for_timeout(500)
+
+
 def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, str | None]:
+    root = _frame_with_form(page) or page
     with suppress(Exception):
-        data = page.evaluate(_COLLECT_FIELDS_JS)
+        data = root.evaluate(_COLLECT_FIELDS_JS)
     if not data:
         return False, "The sign-up form could not be read."
     fields = data.get("fields") or []
@@ -1142,10 +1336,10 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
             if kind in ("checkbox", "radio", "file", "hidden"):
                 continue
             with suppress(Exception):
-                page.fill(field["selector"], value, timeout=6000)
+                root.fill(field["selector"], value, timeout=6000)
                 filled += 1
             if role == "email" and index == 0:
-                _use_dot_alias_if_rejected(page, field["selector"], row)
+                _use_dot_alias_if_rejected(root, field["selector"], row)
 
     # A country is usually a <select> and the profile knows the target one.
     country = business.get("country") or ""
@@ -1157,7 +1351,7 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
             continue
         options: list[dict[str, str]] = []
         with suppress(Exception):
-            options = page.evaluate(
+            options = root.evaluate(
                 "(sel) => Array.from(document.querySelectorAll(sel + ' option'))"
                 ".map((o) => ({value: o.value, text: (o.innerText || '').trim()}))",
                 select_field["selector"],
@@ -1186,29 +1380,54 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
             )
         if chosen is not None:
             with suppress(Exception):
-                page.select_option(select_field["selector"], value=chosen["value"])
+                root.select_option(select_field["selector"], value=chosen["value"])
                 filled += 1
+
+    # A custom country widget (React select and friends): click, type, Enter.
+    for combo in data.get("combos") or []:
+        label = " ".join(
+            str(combo.get(key) or "") for key in ("label", "aria")
+        ).lower()
+        if "country" not in label and "nation" not in label:
+            continue
+        if not country:
+            continue
+        with suppress(Exception):
+            root.click(combo["selector"], timeout=4000)
+            page.keyboard.type(country, delay=40)
+            page.wait_for_timeout(700)
+            page.keyboard.press("Enter")
+            filled += 1
 
     if filled == 0:
         return False, "No email, username or password field was recognised."
 
-    # Terms checkbox: only check the ones that mention terms / privacy.
+    # Terms and required consent checkboxes: only check them, never marketing.
     for checkbox in data.get("checkboxes") or []:
         label = str(checkbox.get("label") or "").lower()
-        if any(word in label for word in _TERMS_WORDS):
+        terms = any(word in label for word in _TERMS_WORDS)
+        required = bool(checkbox.get("required"))
+        marketing = any(
+            word in label
+            for word in ("newsletter", "marketing", "offers", "promotions", "updates")
+        )
+        if (terms or required) and not marketing:
             with suppress(Exception):
-                page.check(checkbox["selector"], timeout=4000)
+                root.check(checkbox["selector"], timeout=4000)
+
+    # Required radio groups (Business / Individual ...): pick a real option.
+    _check_radios(root)
 
     # A form can ask for something the profile has no value for (a custom
     # required field).  Submitting would only bounce: stop here and tell the
     # operator exactly which field to type by hand.
-    missing = _missing_required(page)
+    missing = _missing_required(root)
     if missing:
         return False, "These required fields could not be filled by the app: " + (
             ", ".join(missing[:6])
         )
 
-    clicked = _click_submit(page)
+    clicked = _click_submit(root)
     if not clicked:
         with suppress(Exception):
             page.keyboard.press("Enter")
@@ -1483,6 +1702,7 @@ def _provision_site(
         _remember_login(db, context, project.id, website.id)
         _set_row(db, row, STATUS_ACTIVE, message="Already signed in.", strategy=STRATEGY_EXISTING)
         _store_target(db, context, project, website, row)
+        _post_backlink(db, context, project, website, row)
         return
 
     # --- Continue with Google -------------------------------------------
@@ -1529,6 +1749,7 @@ def _provision_site(
                 strategy=STRATEGY_GOOGLE,
             )
             _store_target(db, context, project, website, row)
+            _post_backlink(db, context, project, website, row)
             return
         if outcome == "human":
             _set_row(
@@ -1590,10 +1811,11 @@ def _provision_site(
         message="Signing up with your username and password…",
     )
 
-    signup_url = _find_signup_url(page, website.opportunity_url)
+    links, clickables = _signup_entry_points(page)
     fallback_url = page.url
     seen_urls: set[str] = set()
-    for candidate in [signup_url, *_signup_candidates(website.opportunity_url)]:
+    opened = False
+    for candidate in [*links, *_signup_candidates(website.opportunity_url)]:
         if not candidate or candidate in seen_urls:
             continue
         seen_urls.add(candidate)
@@ -1601,17 +1823,41 @@ def _provision_site(
             with suppress(Exception):
                 page.goto(candidate, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
                 page.wait_for_timeout(1200)
-        if _signup_form_ready(page):
+        _dismiss_overlays(page)
+        if _wait_for_signup_form(page):
+            opened = True
             break
-    else:
-        # No guess showed a real form: return to the page we started from and
-        # let the normal "no sign-up form" report explain it.
+
+    if not opened and clickables:
+        # The form lives behind a modal / tab, so a link alone is not enough.
         if fallback_url and page.url != fallback_url:
             with suppress(Exception):
-                page.goto(
-                    fallback_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
-                )
+                page.goto(fallback_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
                 page.wait_for_timeout(1200)
+        for root in clickables:
+            opened_url = ""
+            with suppress(Exception):
+                opened_url = _click_signup_entry(page, root)
+            page.wait_for_timeout(1500)
+            _dismiss_overlays(page)
+            if opened_url and opened_url != page.url:
+                with suppress(Exception):
+                    page.goto(opened_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                    page.wait_for_timeout(1200)
+            if _wait_for_signup_form(page):
+                opened = True
+                break
+            if fallback_url and page.url != fallback_url:
+                with suppress(Exception):
+                    page.goto(fallback_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+                    page.wait_for_timeout(1200)
+
+    if not opened and fallback_url and page.url != fallback_url:
+        # No guess showed a real form: return to the page we started from and
+        # let the normal "no sign-up form" report explain it.
+        with suppress(Exception):
+            page.goto(fallback_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            page.wait_for_timeout(1200)
     row.login_url = page.url
 
     challenge = _challenge(page)
@@ -1625,6 +1871,7 @@ def _provision_site(
         )
         return
 
+    _dismiss_overlays(page)
     filled, reason = _fill_signup(page, row, project)
     if not filled:
         _set_row(
@@ -1653,15 +1900,24 @@ def _provision_site(
         )
         return
 
-    # A sign-up is often two steps (account, then a profile detail).  Fill
-    # whatever the next step asks for with the same values, once.
-    if not _needs_otp(page) and _has_empty_required(page):
+    # A sign-up is often two or three steps (account, then a profile detail).
+    # Fill whatever the next step asks for with the same values, but never
+    # submit the same form forever: at most three extra steps.
+    for step in range(3):
+        if _needs_otp(page):
+            break
+        if not _has_empty_required(page):
+            break
         _update_item(
-            project.id, website.id, message="Filling the next step of the form…"
+            project.id,
+            website.id,
+            message=f"Filling step {step + 2} of the sign-up form…",
         )
+        _dismiss_overlays(page)
         with suppress(Exception):
-            if _fill_signup(page, row, project)[0]:
-                page.wait_for_timeout(4000)
+            if not _fill_signup(page, row, project)[0]:
+                break
+            page.wait_for_timeout(4000)
 
     # --- OTP / confirmation link -----------------------------------------
     if _needs_otp(page):
@@ -1864,6 +2120,7 @@ def _provision_site(
         strategy=STRATEGY_SIGNUP,
     )
     _store_target(db, context, project, website, row)
+    _post_backlink(db, context, project, website, row)
 
 
 def _confirm_login(page: Any, base_url: str) -> bool:
@@ -1919,6 +2176,160 @@ def _store_target(
         website.id,
         message=f"Account ready - backlink page found ({row.backlink_confidence}%).",
     )
+
+
+def _record_backlink(
+    db: Session,
+    project: Project,
+    row: SiteAccount,
+    *,
+    published_url: str,
+    landing: str,
+) -> None:
+    """Queue the posted link for the normal verification engine."""
+    existing = db.execute(
+        select(BacklinkRecord).where(
+            BacklinkRecord.project_id == project.id,
+            BacklinkRecord.published_page_url == published_url,
+            BacklinkRecord.expected_destination_url == landing,
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(
+            BacklinkRecord(
+                project_id=project.id,
+                target_website=published_url[:500],
+                expected_link_url=published_url,
+                published_page_url=published_url,
+                expected_destination_url=landing,
+                verification_status="PUBLISHED_UNVERIFIED",
+                next_verification_at=utcnow(),
+                evidence={
+                    "source": "site_account",
+                    "account_id": row.id,
+                    "account_url": row.account_url,
+                    "reasons": (row.backlink_form or {}).get("reasons") or [],
+                },
+            )
+        )
+    else:
+        existing.next_verification_at = utcnow()
+
+
+def _post_backlink(
+    db: Session,
+    context: Any,
+    project: Project,
+    website: Website,
+    row: SiteAccount,
+) -> None:
+    """Post the link from the fresh account, honestly.
+
+    A successful sign-up is not the same as a posted backlink: this step only
+    reports ``POSTED``/``VERIFIED`` when the live page proves it.  A CAPTCHA or
+    an unknown required field leaves the account active and marks the post as
+    ``NEEDS_HUMAN`` with the exact reason, so one row never blocks the batch.
+    """
+    if row.backlink_status == backlink_post.STATUS_VERIFIED:
+        return
+    if (
+        row.backlink_status == backlink_post.STATUS_POSTED
+        and row.backlink_published_url
+    ):
+        return
+    if not row.backlink_url:
+        row.backlink_status = backlink_post.STATUS_NEEDS_HUMAN
+        row.backlink_note = (
+            "No page with a link field was found while logged in. Open the "
+            "account once and use its profile / listing editor, then retry."
+        )
+        db.commit()
+        _update_item(
+            project.id,
+            website.id,
+            message="Account ready - no link form was found; open the site once.",
+        )
+        return
+    target = row.backlink_url
+    values = backlink_post.build_values(
+        project,
+        website,
+        row,
+        landing_url=str(getattr(project, "target_website", "") or ""),
+    )
+    if not values.get("link"):
+        row.backlink_status = backlink_post.STATUS_NEEDS_HUMAN
+        row.backlink_note = (
+            "The project has no target website, so there is no link to place. "
+            "Add the website in the project details."
+        )
+        db.commit()
+        return
+    _update_item(project.id, website.id, message="Posting the backlink…")
+    page = None
+    try:
+        page = context.new_page()
+        result = backlink_post.post(
+            page,
+            target_url=target,
+            values=values,
+            challenge=lambda: _challenge(page),
+        )
+    except Exception as exc:  # pragma: no cover - browser dependent
+        log.warning(
+            "posting the backlink failed",
+            extra={"extra_fields": {"project_id": project.id, "website_id": website.id}},
+        )
+        row.backlink_status = backlink_post.STATUS_NEEDS_HUMAN
+        row.backlink_note = f"The backlink page could not be used: {exc}"
+        db.commit()
+        return
+    finally:
+        if page is not None:
+            with suppress(Exception):
+                page.close()
+
+    status = str(result.get("status") or backlink_post.STATUS_NEEDS_HUMAN)
+    row.backlink_status = status
+    row.backlink_note = result.get("message")
+    published = str(result.get("published_url") or "")
+    if status in (backlink_post.STATUS_POSTED, backlink_post.STATUS_VERIFIED):
+        # Only a real post gets a tracking link; a page that merely stopped
+        # must never look like a published backlink.
+        row.backlink_published_url = published or target
+    else:
+        row.backlink_published_url = None
+    if status in (backlink_post.STATUS_POSTED, backlink_post.STATUS_VERIFIED):
+        row.evidence = {
+            **(row.evidence or {}),
+            "backlink": {
+                "status": status,
+                "published_url": published,
+                "reasons": result.get("reasons") or [],
+            },
+        }
+        _record_backlink(
+            db,
+            project,
+            row,
+            published_url=published or target,
+            landing=values["link"],
+        )
+    db.commit()
+    if status == backlink_post.STATUS_VERIFIED:
+        _update_item(
+            project.id, website.id, message="Backlink posted and verified on the live page."
+        )
+    elif status == backlink_post.STATUS_POSTED:
+        _update_item(
+            project.id, website.id, message="Backlink posted - waiting for the site to publish it."
+        )
+    else:
+        _update_item(
+            project.id,
+            website.id,
+            message="Account ready - the backlink needs you: open the site and finish it once.",
+        )
 
 
 # --------------------------------------------------------------------------

@@ -1227,6 +1227,12 @@ export interface SiteAccount {
     buttons?: string[];
     reasons?: string[];
   };
+  /** NONE | POSTED | VERIFIED | NEEDS_HUMAN | FAILED. */
+  backlink_status: "NONE" | "POSTED" | "VERIFIED" | "NEEDS_HUMAN" | "FAILED";
+  /** The live page that carries the posted link (the tracking URL). */
+  backlink_published_url: string | null;
+  /** Why the post stopped / what the site answered. */
+  backlink_note: string | null;
   attempts: number;
   last_error: string | null;
   evidence: Record<string, unknown>;
