@@ -757,3 +757,53 @@ def test_signup_entry_points_cover_links_and_modal_buttons() -> None:
     links, clickables = site_accounts._signup_entry_points(page)
     assert links == ["https://site.example/register", "https://site.example/join"]
     assert clickables == [page]
+
+
+def test_alias_carries_the_website_name() -> None:
+    token = gmail_otp.site_alias_token("https://www.itnegbuy.com/", "w1")
+    assert token == "itnegbuy-com"
+    alias = gmail_otp.alias_for("owner@gmail.com", token)
+    assert alias == "owner+itnegbuy-com@gmail.com"
+
+
+def test_alias_stays_mail_safe_and_short() -> None:
+    token = gmail_otp.site_alias_token("Ünïcode & Spaces!!", "w1")
+    assert token
+    assert all(char.isalnum() or char == "-" for char in token)
+    assert len(gmail_otp.site_alias_token("a" * 200, "w1")) <= 32
+    # Nothing usable falls back to the random token, never an empty local part.
+    assert gmail_otp.site_alias_token("", "w1")
+
+
+def test_dot_alias_still_reaches_the_real_inbox() -> None:
+    dotted = gmail_otp.dot_alias_for("itnegbuy+itnegbuy-com@gmail.com")
+    local = dotted.split("@", 1)[0]
+    assert "." in local
+    # Gmail ignores dots: removing them gives back the real inbox local part.
+    assert local.replace(".", "") == "itnegbuy"
+
+
+def test_signup_never_fills_a_password_change_or_a_code() -> None:
+    for field in (
+        {"name": "current_password"},
+        {"name": "change_password"},
+        {"name": "otp", "placeholder": "Verification code"},
+        {"name": "coupon_code"},
+        {"name": "vat_number"},
+        {"name": "fax"},
+        {"name": "security_question"},
+        {"name": "newsletter", "type": "checkbox"},
+        {"name": "credit_card_number"},
+        {"name": "how_did_you_hear"},
+    ):
+        assert site_accounts._skip_reason(field), field
+    # The real sign-up fields are still filled.
+    for field in (
+        {"name": "email", "type": "email"},
+        {"name": "username"},
+        {"name": "password", "type": "password"},
+        {"name": "password_confirm", "type": "password"},
+        {"name": "first_name"},
+        {"name": "company"},
+    ):
+        assert site_accounts._skip_reason(field) is None, field

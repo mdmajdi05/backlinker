@@ -207,3 +207,68 @@ def test_explain_names_the_reason_instead_of_guessing() -> None:
     text = site_intel.explain(intel)
     assert "WordPress" in text
     assert site_intel.label(intel) == "WordPress"
+
+
+def test_continue_with_google_is_detected_and_preferred() -> None:
+    data = _page(
+        links=[_link("Register", "https://directory.example.org/register")],
+        buttons=[{"text": "Continue with Google", "type": "button"}],
+    )
+    intel = site_intel.analyze(data)
+    assert intel["oauth"][0]["provider"] == "google"
+    assert intel["oauth"][0]["how"] == "button"
+    # Google reuses the project session: no password, no code.
+    assert intel["plan"] == "GOOGLE"
+
+
+def test_google_inside_an_oauth_iframe_is_detected() -> None:
+    data = _page(
+        url="https://directory.example.org/signup",
+        iframes=["https://accounts.google.com/gsi/button?client_id=x"],
+    )
+    intel = site_intel.analyze(data)
+    assert [item["provider"] for item in intel["oauth"]] == ["google"]
+    assert intel["plan"] == "GOOGLE"
+
+
+def test_other_providers_do_not_override_a_password_signup() -> None:
+    data = _page(
+        links=[
+            _link("Sign up", "https://directory.example.org/register"),
+            _link("Continue with Facebook", "https://www.facebook.com/dialog/oauth?client_id=1"),
+        ]
+    )
+    intel = site_intel.analyze(data)
+    assert {item["provider"] for item in intel["oauth"]} == {"facebook"}
+    assert intel["plan"] == "SIGNUP"
+
+
+def test_internal_pages_are_ranked_for_the_backlink() -> None:
+    data = _page(
+        links=[
+            _link("Login", "https://directory.example.org/login"),
+            _link("Forum", "https://directory.example.org/forum"),
+            _link("Submit a listing", "https://directory.example.org/add-listing"),
+            _link("Edit profile", "https://directory.example.org/profile/edit"),
+            _link("Write a post", "https://directory.example.org/blog/write"),
+        ]
+    )
+    urls = site_intel.analyze(data)["backlink_urls"]
+    assert urls[0].endswith("/profile/edit")
+    assert any(url.endswith("/add-listing") for url in urls)
+    assert not any("/login" in url for url in urls)
+
+
+def test_the_csv_site_check_says_what_was_seen_and_left_empty() -> None:
+    from app.api.routes.backlink_campaign import _site_check
+
+    cell = _site_check(
+        {
+            "platform": "wordpress",
+            "plan": "SIGNUP",
+            "fields": {"skipped": [{"field": "coupon_code", "why": "left alone"}]},
+        }
+    )
+    assert "wordpress" in cell
+    assert "plan SIGNUP" in cell
+    assert "coupon_code" in cell

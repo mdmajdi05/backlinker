@@ -69,6 +69,23 @@ ACCOUNT_STATUS = {
 }
 
 
+def _site_check(intel: dict) -> str:
+    """One readable cell: what the site inspection saw and what it skipped."""
+    parts: list[str] = []
+    if intel.get("platform"):
+        parts.append(str(intel["platform"]))
+    if intel.get("plan"):
+        parts.append(f"plan {intel['plan']}")
+    skipped = [
+        str(item.get("field") or "").strip()
+        for item in (intel.get("fields") or {}).get("skipped") or []
+        if str(item.get("field") or "").strip()
+    ]
+    if skipped:
+        parts.append("left empty: " + ", ".join(skipped[:5]))
+    return " · ".join(parts)
+
+
 class AddWebsitesIn(BaseModel):
     """The input box of the campaign.
 
@@ -142,6 +159,7 @@ def export_campaign_report(
             "Username",
             "Password",
             "Account e-mail",
+            "Site check",
             "Backlink page",
             "Backlink confidence",
             "Posted link",
@@ -166,6 +184,7 @@ def export_campaign_report(
                 account.get("username") or "",
                 account.get("password") or "",
                 account.get("email") or "",
+                _site_check(account.get("site_intel") or {}),
                 account.get("backlink_url") or "",
                 account.get("backlink_confidence") or 0,
                 account.get("backlink_published_url") or "",

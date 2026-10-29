@@ -184,6 +184,25 @@ def alias_token(project_id: str, website_id: str) -> str:
     return f"{project_id[:4]}{website_id[:4]}{digest}".lower()
 
 
+def site_alias_token(site: str, website_id: str = "") -> str:
+    """A readable label of the website for the alias (``example.com``).
+
+    The inbox then shows *which site* sent the code instead of an opaque
+    hexadecimal token: ``you+example-com@gmail.com``.  Everything that is not
+    a letter or a digit becomes ``-`` so the local part stays valid, and an
+    empty / unusable name falls back to the old random token.
+    """
+    text = (site or "").strip().lower()
+    text = re.sub(r"^[a-z][a-z0-9+.-]*://", "", text)
+    text = text.split("/", 1)[0]
+    text = text.removeprefix("www.")
+    slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    slug = slug[:32].strip("-")
+    if not slug:
+        return alias_token("", website_id)
+    return slug
+
+
 def alias_for(address: str, token: str) -> str:
     """``name+token@gmail.com`` (Gmail delivers it to ``name@gmail.com``)."""
     local, _, domain = address.partition("@")
@@ -192,12 +211,21 @@ def alias_for(address: str, token: str) -> str:
     return f"{local}+{token}@{domain}"
 
 
-def dot_alias_for(address: str, token: str) -> str:
-    """A dots-only alias for sites that refuse ``+`` (Gmail ignores dots)."""
+def dot_alias_for(address: str, token: str = "") -> str:
+    """A dots-only variant of *address* for sites that refuse ``+``.
+
+    Gmail ignores dots in the local part, so ``i.nbox@gmail.com`` still reaches
+    ``inbox@gmail.com``.  A dot variant cannot carry the website name; it is
+    only used for the rare form that rejects plus addressing.
+    """
     local, _, domain = address.partition("@")
     if not domain:
         return address
-    return f"{local}.{token}@{domain}"
+    # Drop an existing plus alias first: only dots of the real inbox count.
+    local = local.split("+", 1)[0]
+    if len(local) < 2:
+        return address
+    return f"{local[0]}.{local[1:]}@{domain}"
 
 
 # --------------------------------------------------------------------------
@@ -856,5 +884,6 @@ __all__ = [
     "latest_message_summary",
     "read_settings",
     "save_settings",
+    "site_alias_token",
     "status_payload",
 ]

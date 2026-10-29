@@ -32,6 +32,9 @@ export interface SiteAccountView {
     platform?: string;
     plan?: string;
     signup_urls?: string[];
+    oauth?: { provider?: string; how?: string }[];
+    backlink_urls?: string[];
+    fields?: { filled?: string[]; skipped?: { field?: string; why?: string }[] };
     notes?: string[];
     direct?: { kind?: string } | null;
   };
@@ -154,9 +157,21 @@ export function SiteAccountCell({
         {account.site_intel?.platform && account.site_intel.platform !== "unknown" ? (
           <span
             className="text-[9px] text-content-subtle"
-            title={(account.site_intel.notes ?? []).join(" ")}
+            title={[
+              ...(account.site_intel.notes ?? []),
+              account.site_intel.fields?.skipped?.length
+                ? "Left empty: " +
+                  account.site_intel.fields.skipped
+                    .map((item) => item.field)
+                    .filter(Boolean)
+                    .join(", ")
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             {account.site_intel.platform}
+            {account.site_intel.plan === "GOOGLE" ? " · Google" : ""}
           </span>
         ) : null}
       </div>

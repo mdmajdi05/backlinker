@@ -74,6 +74,68 @@ _LOGIN_HREF = re.compile(
     re.I,
 )
 
+#: An OAuth flow in a URL (the provider's own host or the site's callback).
+_OAUTH_HREF = re.compile(
+    r"(accounts\.google\.com|google\.com/o/oauth2|/auth/google|oauth2?/google|google-login|"
+    r"facebook\.com/(?:v[\d.]+/)?dialog/oauth|api\.facebook\.com|/auth/facebook|"
+    r"appleid\.apple\.com|apple\.com/auth|/auth/apple|"
+    r"github\.com/login/oauth|api\.github\.com/oauth|/auth/github|"
+    r"twitter\.com/oauth|api\.twitter\.com/oauth|x\.com/oauth|"
+    r"linkedin\.com/oauth|api\.linkedin\.com/oauth|"
+    r"login\.microsoftonline\.com|/auth/microsoft)",
+    re.I,
+)
+#: "Continue with Google" / "Mit Google anmelden" ...
+_OAUTH_TEXT = re.compile(
+    r"(?:continue|sign\s*in|sign\s*up|log\s*in|login|register|join)\s*(?:with|using|via)\s*"
+    r"(google|facebook|apple|github|twitter|x|linkedin|microsoft)",
+    re.I,
+)
+#: A provider name alone on a button inside a sign-in / sign-up card.
+_OAUTH_BUTTON = re.compile(
+    r"^(google|facebook|apple|github|twitter|linkedin|microsoft)$", re.I
+)
+_PROVIDERS = {
+    "google": "google",
+    "facebook": "facebook",
+    "apple": "apple",
+    "github": "github",
+    "twitter": "twitter",
+    "x": "twitter",
+    "linkedin": "linkedin",
+    "microsoft": "microsoft",
+}
+
+#: Internal pages where a link can be placed, best first (intel -> discovery).
+_BACKLINK_RANKS: tuple[tuple[re.Pattern[str], int, str], ...] = (
+    (
+        re.compile(r"(profile|my[-_ ]?account|account[-_ ]?(profile|settings)|settings/profile|edit[-_ ]?profile|dashboard)", re.I),
+        40,
+        "profile editor",
+    ),
+    (
+        re.compile(r"(submit|add[-_ ]?(listing|business|site|website|url|place)|get[-_ ]listed|list[-_ ]your|new[-_ ]listing|place[-_ ](ad|listing)|classified|directory)", re.I),
+        30,
+        "submission page",
+    ),
+    (
+        re.compile(r"(forum|community|thread|topic|discussion|board)", re.I),
+        20,
+        "forum",
+    ),
+    (
+        re.compile(r"(post|write|blog|publish|comment|reply)", re.I),
+        10,
+        "posting page",
+    ),
+)
+_BACKLINK_SKIP = re.compile(
+    r"(login|signin|sign-in|log-in|register|signup|sign-up|logout|password|"
+    r"privacy|terms|cookie|search|cart|checkout|payment|unsubscribe|"
+    r"\.(?:css|js|png|jpe?g|gif|svg|webp|ico|pdf|xml|json|zip)(?:$|\?))",
+    re.I,
+)
+
 #: The sign-up entry point a platform always has (used when the page is quiet).
 PLATFORM_SIGNUP = {
     "wordpress": ["/wp-login.php?action=register"],
@@ -195,6 +257,10 @@ _SNAPSHOT_JS = r"""
     .map((script) => (script.src ? abs(script.src) : ''))
     .filter(Boolean)
     .slice(0, 15);
+  const iframes = Array.from(document.querySelectorAll('iframe[src]'))
+    .map((frame) => abs(frame.getAttribute('src') || ''))
+    .filter(Boolean)
+    .slice(0, 10);
   const inline = Array.from(document.scripts)
     .filter((script) => !script.src)
     .map((script) => script.textContent || '')
@@ -210,7 +276,7 @@ _SNAPSHOT_JS = r"""
     title: document.title || '',
     generator: ((document.querySelector('meta[name=generator]') || {}).content) || '',
     lang: document.documentElement.lang || '',
-    forms, links, buttons, scripts, inline, resources,
+    forms, links, buttons, scripts, inline, resources, iframes,
     bodyText: document.body ? document.body.innerText.slice(0, 7000) : '',
   };
 }
@@ -407,6 +473,116 @@ def login_urls(data: dict[str, Any], platform: str = "unknown") -> list[str]:
     return found[:_MAX_LOGIN]
 
 
+def oauth_providers(data: dict[str, Any]) -> list[dict[str, str]]:
+    """The single-sign-on options the page really shows, Google first.
+
+    A link to ``accounts.google.com`` is definitive; a button that says
+    "Continue with Google" counts too, also when it lives inside a sign-up
+    modal.  Other providers are reported (the row can still use its password),
+    but only Google shares the session the batch already has.
+    """
+    page_url = str(data.get("url") or "")
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(provider: str, url: str, how: str) -> None:
+        key = _PROVIDERS.get(provider.lower(), provider.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        found.append({"provider": key, "url": _clean(url, page_url), "how": how})
+
+    for link in data.get("links") or []:
+        href = str(link.get("href") or "")
+        text = str(link.get("text") or "")
+        match = _OAUTH_HREF.search(href)
+        if match:
+            host = match.group(1).lower()
+            provider = next(
+                (
+                    name
+                    for name in ("google", "facebook", "apple", "github", "twitter", "linkedin", "microsoft")
+                    if name in host
+                ),
+                "oauth",
+            )
+            add(provider, href, "link")
+            continue
+        named = _OAUTH_TEXT.search(text)
+        if named:
+            add(named.group(1), href, "link text")
+
+    for button in data.get("buttons") or []:
+        text = str(button.get("text") or "")
+        named = _OAUTH_TEXT.search(text)
+        if named:
+            add(named.group(1), "", "button")
+            continue
+        alone = _OAUTH_BUTTON.match(text.strip())
+        if alone:
+            add(alone.group(1), "", "button")
+
+    for frame in data.get("iframes") or []:
+        match = _OAUTH_HREF.search(str(frame))
+        if not match:
+            continue
+        host = match.group(1).lower()
+        provider = next(
+            (
+                name
+                for name in ("google", "facebook", "apple", "github", "twitter", "linkedin", "microsoft")
+                if name in host
+            ),
+            "oauth",
+        )
+        add(provider, str(frame), "iframe")
+
+    # Google is the only provider the batch can continue on its own.
+    found.sort(key=lambda item: 0 if item["provider"] == "google" else 1)
+    return found
+
+
+def backlink_urls(data: dict[str, Any], *, limit: int = 8) -> list[str]:
+    """The internal pages where a link can be placed, best path first.
+
+    This is the post-sign-up half of the inspection: instead of trying the
+    generic ``/profile`` guesses, the site's own navigation is ranked
+    (profile editor > submission/listing page > forum > post/comment) and the
+    discovery step receives those URLs first.
+    """
+    page_url = str(data.get("url") or "")
+    ranked: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for index, link in enumerate(data.get("links") or []):
+        href = str(link.get("href") or "")
+        text = str(link.get("text") or "")
+        cleaned = _clean(href, page_url)
+        if not cleaned or cleaned in seen:
+            continue
+        if not _same_origin(cleaned, page_url):
+            continue
+        if _BACKLINK_SKIP.search(cleaned) or _skip_text(text):
+            continue
+        for pattern, weight, _kind in _BACKLINK_RANKS:
+            if pattern.search(cleaned) or pattern.search(text):
+                seen.add(cleaned)
+                ranked.append((weight, -index, cleaned))
+                break
+    ranked.sort(reverse=True)
+    return [url for _weight, _order, url in ranked[:limit]]
+
+
+def _skip_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(log\s*out|sign\s*out|unsubscribe|delete|cancel|privacy|terms|"
+            r"cookie|advertis|pricing|cart|checkout)",
+            text or "",
+            re.I,
+        )
+    )
+
+
 def _looks_like_link_field(field: dict[str, Any]) -> bool:
     role = backlink_post.field_role(
         {
@@ -495,10 +671,19 @@ def api_routes(script_text: str) -> list[str]:
 def plan(intel: dict[str, Any]) -> str:
     """What the batch should do with this site.
 
-    ``SIGNUP`` first (a durable account), ``DIRECT`` when the site has no
-    sign-up but does have a public form, ``LOGIN`` when only a sign-in page
-    was found and ``NONE`` when the code shows neither.
+    ``GOOGLE`` when a *Continue with Google* control exists - it reuses the
+    project's connected Google session, so there is no password to type and no
+    code to wait for.  Then ``SIGNUP`` (a durable account of its own),
+    ``DIRECT`` when the site has no sign-up but does have a public form,
+    ``LOGIN`` when only a sign-in page was found and ``NONE`` when the code
+    shows neither.
     """
+    providers = {
+        str(item.get("provider") or "").lower()
+        for item in intel.get("oauth") or []
+    }
+    if "google" in providers:
+        return "GOOGLE"
     if intel.get("signup_urls"):
         return "SIGNUP"
     if intel.get("direct"):
@@ -515,6 +700,8 @@ def analyze(data: dict[str, Any], *, script_text: str = "") -> dict[str, Any]:
     signups = signup_urls(data, script_text, platform)
     logins = login_urls(data, platform)
     direct = direct_form(data)
+    oauth = oauth_providers(data)
+    targets = backlink_urls(data)
     result: dict[str, Any] = {
         "url": page_url,
         "title": str(data.get("title") or ""),
@@ -522,7 +709,9 @@ def analyze(data: dict[str, Any], *, script_text: str = "") -> dict[str, Any]:
         "platform_evidence": evidence,
         "signup_urls": signups,
         "login_urls": logins,
+        "oauth": oauth,
         "direct": direct,
+        "backlink_urls": targets,
         "api": api_routes(script_text),
         "forms": len(data.get("forms") or []),
         "notes": [],
@@ -532,6 +721,12 @@ def analyze(data: dict[str, Any], *, script_text: str = "") -> dict[str, Any]:
         result["notes"].append(
             "The site's own code shows " + ", ".join(evidence[:3]) + "."
         )
+    if oauth:
+        names = ", ".join(item["provider"] for item in oauth[:3])
+        result["notes"].append(
+            f"The page offers single sign-on ({names}); Google is used when it "
+            "is one of them."
+        )
     if direct:
         result["notes"].append(
             f"A {direct['kind']} with a link field works without an account."
@@ -540,6 +735,10 @@ def analyze(data: dict[str, Any], *, script_text: str = "") -> dict[str, Any]:
         result["notes"].append("The page asks visitors to sign in before posting.")
     if signups:
         result["notes"].append(f"{len(signups)} sign-up path(s) found in the code.")
+    if targets:
+        result["notes"].append(
+            f"{len(targets)} internal page(s) can carry the link after sign-up."
+        )
     return result
 
 
@@ -583,6 +782,11 @@ def brief(intel: dict[str, Any]) -> dict[str, Any]:
         "plan": intel.get("plan") or "NONE",
         "signup_urls": list(intel.get("signup_urls") or [])[:6],
         "login_urls": list(intel.get("login_urls") or [])[:3],
+        "oauth": [
+            {"provider": item.get("provider"), "how": item.get("how")}
+            for item in list(intel.get("oauth") or [])[:4]
+        ],
+        "backlink_urls": list(intel.get("backlink_urls") or [])[:8],
         "api": list(intel.get("api") or [])[:5],
         "direct": (
             {
@@ -625,6 +829,7 @@ __all__ = [
     "PLATFORM_SIGNUP",
     "analyze",
     "api_routes",
+    "backlink_urls",
     "brief",
     "classify_platform",
     "direct_form",
@@ -632,6 +837,7 @@ __all__ = [
     "inspect",
     "label",
     "login_urls",
+    "oauth_providers",
     "plan",
     "signup_urls",
     "snapshot",

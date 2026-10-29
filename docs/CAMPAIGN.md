@@ -193,15 +193,23 @@ Most directories need an account before they accept a link. The
    * where its sign-up really is - the link / tab / modal button and even the
      route inside the site's own code (`registerPath: "/register"`), plus the
      platform's fixed entry such as `/wp-login.php?action=register`,
-   * and whether a **public form already accepts a link** (a guest comment
-     form or a submission form with a URL field).
+   * whether the page offers **single sign-on** (a *Continue with Google*
+     button or link, also inside a sign-up modal or an embedded login card)
+     and which other providers it shows,
+   * whether a **public form already accepts a link** (a guest comment form or
+     a submission form with a URL field),
+   * and which **internal pages can carry the link after the sign-up**
+     (profile editor > submission / listing page > forum > post / comment).
    Route guessing (`/register`, `/signup.php` ...) is only the last resort
-   after the code showed nothing. The platform and the found paths are stored
-   on the row, so the report says what the app saw.
+   after the code showed nothing. The platform, the found paths, the sign-in
+   options, the ranked link pages and the fields that were filled or left
+   alone are stored on the row, so the report says what the app saw.
 4. Per website the strategy is decided from the **live page**:
-   * a *Continue with Google* button -> the project Google session is used (no
+   * a *Continue with Google* control -> the project Google session is used (no
      password is typed, no account chooser is automated; if Google asks for the
-     password the row stops as **Needs you**),
+     password the row stops as **Needs you**). If the button only appears
+     inside the sign-up modal, the modal is opened first and Google is clicked
+     there,
    * otherwise the sign-up form is filled with **your** username and password
      (generated when the field was left blank). **Both are stored with the
      account and shown on that website's row** in the campaign table and in the
@@ -210,7 +218,13 @@ Most directories need an account before they accept a link. The
    company, phone, website, address, city, ZIP, country (a `<select>` or a
    custom combobox too), password + confirmation, terms and required consent
    checkboxes and required radio groups. A second or third step of a
-   multi-step form is filled with the same values. The sign-up entry itself is
+   multi-step form is filled with the same values. Fields that must never be
+   touched are recognised and skipped with a reason: *current / old password*,
+   password-change fields, CAPTCHA / OTP / verification codes, security
+   questions, invitation / referral / coupon / VAT / fax, card or bank data,
+   date of birth / gender / company size and marketing or newsletter
+   opt-ins. The row keeps the filled and the skipped fields, so nothing looks
+   mysteriously empty. The sign-up entry itself is
    found however the site presents it: a link, a **Create account** tab, a
    button that opens a modal, a form inside an iframe, a passwordless
    e-mail-only form, the usual `/register`, `/signup.php`,
@@ -219,15 +233,20 @@ Most directories need an account before they accept a link. The
    **logs in with the stored credentials** and only then reports the account
    active.
 5. If the sign-up asks for a code, the row signs up with its **own address
-   alias** of that Gmail (`inbox+<token>@gmail.com`). The code is read in the
+   alias** of that Gmail, named after the website so the inbox is readable:
+   `inbox+example-com@gmail.com`. Two rows that share a domain get a short
+   suffix, never the same alias. If a form refuses `+`, a dots-only variant of
+   the real inbox is used instead (Gmail ignores dots). The code is read in the
    Gmail tab of the same logged-in browser (the App Password inbox is only the
-   fallback). Only a mail addressed to that token is accepted, one code is
+   fallback). Only a mail addressed to that alias is accepted, one code is
    claimed once, and the code is stored encrypted against
    `(project, website)`. A code can never be filled into another project or
    another website; an ambiguous mail pauses the row instead of guessing.
 6. When the account is active the same logged-in browser looks for the exact
-   page that carries the link field (`/submit`, `/add-listing`, a profile editor
-   with a website field, a forum's *new thread*, ...). The found URL, the field
+   page that carries the link field. The pages the inspection ranked from the
+   site's own navigation are tried first (profile editor, submission / listing
+   page, forum, post / comment), then the links of the page itself, then the
+   usual `/submit`, `/add-listing`, profile guesses. The found URL, the field
    mapping and a confidence are stored on the row and shown in the
    **Backlink page** column. The link stays clickable, and the downloaded
    report carries the **Posted link**, **Backlink status**, **Published page**
@@ -426,11 +445,14 @@ inline JavaScript aur site ki apni JS bundles. Isse pata chalta hai site kis
 platform par hai (WordPress, Discourse, XenForo, phpBB, Joomla, Drupal,
 Shopify, Ghost, Webflow, Wix, Squarespace...), uska signup asal me kahan hai
 (link/tab/modal button, ya code me likha route jaise `registerPath:
-"/register"`, ya platform ka fixed `/wp-login.php?action=register`) aur kya
-koi **public form** pehle se link leta hai (guest comment form ya submission
-form me URL field). URL route guess (`/register`, `/signup.php`) sirf aakhri
-option hai. Jo mila wahi row par store hota hai, isliye report me dikhta hai
-kis site par kya dekha gaya.
+"/register"`, ya platform ka fixed `/wp-login.php?action=register`), kya
+**Continue with Google** ya koi aur single sign-on button hai (signup modal ke
+andar wala bhi), kya koi **public form** pehle se link leta hai (guest comment
+form ya submission form me URL field), aur signup ke baad link kis **internal
+page** par banega (profile editor > submit/listing page > forum > post). URL
+route guess (`/register`, `/signup.php`) sirf aakhri option hai. Jo mila wahi
+row par store hota hai, isliye report me dikhta hai kis site par kya dekha
+gaya.
 
 **Account kaun banata hai?**
 **Create accounts** ek hi click me poori list ke accounts banata hai - ek hi
@@ -446,7 +468,11 @@ kaise bhi ho - link, **Create account** tab, modal button, iframe ke andar ka
 form, bina password wala sirf e-mail form, ya `/register` / `/signup.php` -
 app use dhoondh leta hai; form ke saare fields (name, company, phone, website,
 country ka select/combobox, terms checkbox, required radio) bhar deta hai aur
-2-3 step wale form bhi aage bhar deta hai.
+2-3 step wale form bhi aage bhar deta hai. Jo field kabhi touch nahi karta:
+current/old password, password-change, CAPTCHA/OTP code, security question,
+invite/referral/coupon/VAT/fax, card/bank details, date of birth/gender,
+company size aur newsletter/marketing opt-in. Kya bhara aur kya chhoda, dono
+row par dikhte hain.
 
 **Account banne ke baad backlink bhi banega?**
 Haan. Account active hote hi wahi logged-in browser aisi page dhoondhta hai
@@ -461,8 +487,11 @@ phir **Retry**. Retry pe pehle check hota hai ki link pehle se page par hai ya
 nahi, taaki duplicate post na ho.
 
 **OTP kisi doosri site me nahi jayega?**
-Har row apne hi alias (`inbox+token@gmail.com`) se signup karti hai. Code usi
-browser ke Gmail tab me padha jata hai (App Password inbox sirf fallback hai).
+Har row apne hi alias se signup karti hai, jisme website ka naam hota hai:
+`inbox+example-com@gmail.com` (ek hi domain par do rows ho to chhota suffix).
+Form `+` reject kare to asli inbox ka dots-wala roop use hota hai (Gmail dots
+ignore karta hai). Code usi browser ke Gmail tab me padha jata hai (App
+Password inbox sirf fallback hai).
 Sirf usi alias par aaya code accept hota hai, wo ek hi baar claim hota hai,
 aur `(project, website)` ke against encrypted save hota hai. Do different
 codes ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar

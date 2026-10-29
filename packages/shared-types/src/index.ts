@@ -1242,6 +1242,9 @@ export interface SiteAccount {
     plan?: string;
     signup_urls?: string[];
     login_urls?: string[];
+    oauth?: { provider?: string; how?: string }[];
+    backlink_urls?: string[];
+    fields?: { filled?: string[]; skipped?: { field?: string; why?: string }[] };
     notes?: string[];
     direct?: { url?: string; action?: string; kind?: string } | null;
   };

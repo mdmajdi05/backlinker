@@ -119,6 +119,45 @@ _SUBMIT_WORDS = (
     "get started",
 )
 _TERMS_WORDS = ("agree", "terms", "privacy", "accept")
+#: Fields a sign-up form may show but the batch must never fill or check:
+#: changing an existing password, codes, security questions, billing data,
+#: marketing opt-ins or social handles.  Typing into one of these can lock an
+#: account or subscribe the operator to mail they never asked for.
+_SKIP_FIELD = re.compile(
+    r"(current\s*password|old\s*password|existing\s*password|previous\s*password|"
+    r"change\s*password|password\s*change|"
+    r"invite|invitation|referral|referrer|consultant|coupon|voucher|promo\s*code|"
+    r"discount|gift\s*card|"
+    r"\bvat\b|tax\s*(id|number)|\bgst\b|\bein\b|company\s*(reg|number)|"
+    r"\bfax\b|"
+    r"captcha|recaptcha|hcaptcha|turnstile|"
+    r"one[-\s]*time|verification\s*code|security\s*code|sms\s*code|\botp\b|2fa|mfa|"
+    r"security\s*question|secret\s*(answer|question)|"
+    r"newsletter|marketing|promotions?|special\s*offers?|"
+    r"credit\s*card|card\s*number|cvv|cvc|billing|iban|bank\s*account|"
+    r"twitter|facebook|instagram|linkedin|youtube|tiktok|pinterest|"
+    r"company\s*size|employees|revenue|budget|"
+    r"how\s*did\s*you\s*(hear|find)|hear\s*about|"
+    r"date\s*of\s*birth|birthday|\bdob\b|\bage\b|gender|"
+    r"\bsearch\b|\bsubscribe\b)",
+    re.I,
+)
+
+
+def _skip_reason(field: dict[str, Any]) -> str | None:
+    """Why a sign-up field must be left alone (``None`` = safe to fill)."""
+    raw = " ".join(
+        str(field.get(key) or "")
+        for key in ("name", "id", "placeholder", "label", "autocomplete", "aria", "title")
+    ).lower()
+    text = re.sub(r"[_\-\[\]]+", " ", raw)
+    kind = str(field.get("type") or "").lower()
+    if kind in ("hidden", "submit", "button", "reset", "file", "image"):
+        return "not a text field"
+    match = _SKIP_FIELD.search(text)
+    if match:
+        return f"left alone ({match.group(1).strip()})"
+    return None
 _SUCCESS_WORDS = (
     "welcome",
     "account created",
@@ -796,9 +835,12 @@ def _has_empty_required(page: Any) -> bool:
 
 
 def _click_google(page: Any, context: Any) -> tuple[Any, bool]:
-    """Click the *Continue with Google* control (returns the page to drive)."""
-    marked = page.evaluate(
-        """
+    """Click the *Continue with Google* control (returns the page to drive).
+
+    The control is searched on the page and inside its frames, because a
+    sign-up modal (or an embedded login card) often holds it.
+    """
+    marker = """
         () => {
           const pattern = /(continue|sign\\s*in|sign\\s*up|log\\s*in|register).{0,25}google|google.{0,25}(continue|sign\\s*in|sign\\s*up|log\\s*in)/i;
           const oauth = /accounts\\.google\\.com|\\/auth\\/google|oauth\\/google|google-login/i;
@@ -813,13 +855,25 @@ def _click_google(page: Any, context: Any) -> tuple[Any, bool]:
           }
           return false;
         }
-        """
-    )
-    if not marked:
+    """
+    roots: list[Any] = [page]
+    with suppress(Exception):
+        roots.extend(
+            frame for frame in page.frames if frame is not page.main_frame
+        )
+    root = None
+    for candidate in roots:
+        marked = False
+        with suppress(Exception):
+            marked = bool(candidate.evaluate(marker))
+        if marked:
+            root = candidate
+            break
+    if root is None:
         return page, False
     try:
         with context.expect_page(timeout=7000) as info:
-            page.click("[data-abk-google='1']", timeout=8000)
+            root.click("[data-abk-google='1']", timeout=8000)
         return info.value, True
     except Exception:
         return page, True
@@ -1296,7 +1350,18 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
         return False, "The sign-up form could not be read."
     fields = data.get("fields") or []
     roles: dict[str, list[dict[str, Any]]] = {}
+    skipped: list[dict[str, str]] = []
     for field in fields:
+        # Never touch "current password", codes, security questions, billing
+        # data or marketing opt-ins: the reason is kept for the row.
+        why = _skip_reason(field)
+        if why:
+            label = " ".join(
+                str(field.get(key) or "")
+                for key in ("name", "id", "placeholder", "label")
+            ).strip()
+            skipped.append({"field": label[:80] or "unnamed field", "why": why})
+            continue
         role = _field_role(field)
         if role:
             roles.setdefault(role, []).append(field)
@@ -1323,6 +1388,7 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
     }
 
     filled = 0
+    filled_roles: list[str] = []
     for role in (
         "email",
         "username",
@@ -1348,6 +1414,8 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
             with suppress(Exception):
                 root.fill(field["selector"], value, timeout=6000)
                 filled += 1
+                if role not in filled_roles:
+                    filled_roles.append(role)
             if role == "email" and index == 0:
                 _use_dot_alias_if_rejected(root, field["selector"], row)
 
@@ -1409,7 +1477,23 @@ def _fill_signup(page: Any, row: SiteAccount, project: Project) -> tuple[bool, s
             page.keyboard.press("Enter")
             filled += 1
 
+    # The report keeps exactly what was filled and what was deliberately left
+    # alone, so the operator never has to guess why a field stayed empty.
+    row.site_intel = {
+        **(row.site_intel or {}),
+        "fields": {
+            "filled": filled_roles,
+            "skipped": skipped[:12],
+        },
+    }
+
     if filled == 0:
+        if skipped:
+            return False, (
+                "Only fields that must stay empty were found ("
+                + "; ".join(item["why"] for item in skipped[:3])
+                + ")."
+            )
         return False, "No email, username or password field was recognised."
 
     # Terms and required consent checkboxes: only check them, never marketing.
@@ -1460,8 +1544,10 @@ def _use_dot_alias_if_rejected(page: Any, selector: str, row: SiteAccount) -> No
     value = row.email or ""
     if "+" not in value or "@" not in value:
         return
-    local, _, domain = value.partition("@")
-    fallback = f"{local.replace('+', '.')}@{domain}"
+    # Only dots of the real inbox reach it: itnegbuy+site -> i.tnegbuy.
+    fallback = gmail_otp.dot_alias_for(value)
+    if fallback == value:
+        return
     switched = False
     with suppress(Exception):
         feedback = page.evaluate(_VALIDATION_JS, selector)
@@ -1663,6 +1749,89 @@ def _set_row(
     )
 
 
+def _try_google(
+    db: Session,
+    context: Any,
+    project: Project,
+    website: Website,
+    row: SiteAccount,
+    page: Any,
+    gmail_address: str | None,
+) -> bool:
+    """Use *Continue with Google* when the page offers it.
+
+    Returns ``True`` when the flow was handled (the row already carries the
+    outcome) and ``False`` when no control was found, so the caller can sign up
+    with a password instead.  Also called again once a sign-up modal is open,
+    because many sites show the Google button only inside that modal.
+    """
+    oauth_page, clicked = _click_google(page, context)
+    if clicked:
+        row.strategy = STRATEGY_GOOGLE
+        _update_item(project.id, website.id, strategy=STRATEGY_GOOGLE, message="Signing in with Google…")
+        email = gmail_address or ""
+        project_email = ""
+        with suppress(Exception):
+            profile = project_login.get_profile(db, project.id)
+            project_email = (profile.email if profile is not None else "") or ""
+        outcome, message = _finish_google(
+            oauth_page, context, email=project_email or email
+        )
+        if outcome == "ok":
+            page = _page_for(context)
+            page.wait_for_timeout(1500)
+            row.login_url = page.url
+            if not _confirm_login(page, website.opportunity_url):
+                path = _screenshot(page, project.id, website.id)
+                row.evidence = {**(row.evidence or {}), "screenshot": path}
+                db.commit()
+                _set_row(
+                    db,
+                    row,
+                    STATUS_NEEDS_HUMAN,
+                    error=(
+                        "Google returned to the website but no signed in state "
+                        "appeared. Open the site once, finish the last step, then "
+                        "press Retry."
+                    ),
+                    message="Google returned - confirm the account once.",
+                    strategy=STRATEGY_GOOGLE,
+                )
+                return True
+            row.account_url = page.url
+            _remember_login(db, context, project.id, website.id)
+            _set_row(
+                db,
+                row,
+                STATUS_ACTIVE,
+                message="Account created with Google.",
+                strategy=STRATEGY_GOOGLE,
+            )
+            _store_target(db, context, project, website, row)
+            _post_backlink(db, context, project, website, row)
+            return True
+        if outcome == "human":
+            _set_row(
+                db,
+                row,
+                STATUS_NEEDS_HUMAN,
+                error=message,
+                message=message,
+                strategy=STRATEGY_GOOGLE,
+            )
+            return True
+        _set_row(
+            db,
+            row,
+            STATUS_FAILED,
+            error=message or "The Google sign-in failed.",
+            message="The Google sign-in failed.",
+            strategy=STRATEGY_GOOGLE,
+        )
+        return True
+    return False
+
+
 def _provision_site(
     db: Session,
     context: Any,
@@ -1737,69 +1906,7 @@ def _provision_site(
         return
 
     # --- Continue with Google -------------------------------------------
-    oauth_page, clicked = _click_google(page, context)
-    if clicked:
-        row.strategy = STRATEGY_GOOGLE
-        _update_item(project.id, website.id, strategy=STRATEGY_GOOGLE, message="Signing in with Google…")
-        email = gmail_address or ""
-        project_email = ""
-        with suppress(Exception):
-            profile = project_login.get_profile(db, project.id)
-            project_email = (profile.email if profile is not None else "") or ""
-        outcome, message = _finish_google(
-            oauth_page, context, email=project_email or email
-        )
-        if outcome == "ok":
-            page = _page_for(context)
-            page.wait_for_timeout(1500)
-            row.login_url = page.url
-            if not _confirm_login(page, website.opportunity_url):
-                path = _screenshot(page, project.id, website.id)
-                row.evidence = {**(row.evidence or {}), "screenshot": path}
-                db.commit()
-                _set_row(
-                    db,
-                    row,
-                    STATUS_NEEDS_HUMAN,
-                    error=(
-                        "Google returned to the website but no signed in state "
-                        "appeared. Open the site once, finish the last step, then "
-                        "press Retry."
-                    ),
-                    message="Google returned - confirm the account once.",
-                    strategy=STRATEGY_GOOGLE,
-                )
-                return
-            row.account_url = page.url
-            _remember_login(db, context, project.id, website.id)
-            _set_row(
-                db,
-                row,
-                STATUS_ACTIVE,
-                message="Account created with Google.",
-                strategy=STRATEGY_GOOGLE,
-            )
-            _store_target(db, context, project, website, row)
-            _post_backlink(db, context, project, website, row)
-            return
-        if outcome == "human":
-            _set_row(
-                db,
-                row,
-                STATUS_NEEDS_HUMAN,
-                error=message,
-                message=message,
-                strategy=STRATEGY_GOOGLE,
-            )
-            return
-        _set_row(
-            db,
-            row,
-            STATUS_FAILED,
-            error=message or "The Google sign-in failed.",
-            message="The Google sign-in failed.",
-            strategy=STRATEGY_GOOGLE,
-        )
+    if _try_google(db, context, project, website, row, page, gmail_address):
         return
 
     # --- Sign-up form ----------------------------------------------------
@@ -1817,7 +1924,24 @@ def _provision_site(
         set_password(row, generate_password())
     base_email = str(details.get("email") or "").strip() or (gmail_address or "").strip()
     if base_email:
-        token = gmail_otp.alias_token(project.id, website.id)
+        # The alias carries the website name so the inbox shows which site a
+        # code belongs to: you+example-com@gmail.com.  Two rows of the same
+        # project that share a domain get a short suffix, never the same alias.
+        token = gmail_otp.site_alias_token(
+            website.domain or website.name, website.id
+        )
+        candidate = gmail_otp.alias_for(base_email, token)
+        clash = (
+            db.query(SiteAccount.id)
+            .filter(
+                SiteAccount.project_id == project.id,
+                SiteAccount.website_id != website.id,
+                SiteAccount.otp_alias == candidate,
+            )
+            .first()
+        )
+        if clash is not None:
+            token = f"{token}-{website.id[:4]}"
         current = (row.email or "").strip()
         base_local = base_email.split("@", 1)[0].lower()
         current_local = current.split("@", 1)[0].lower() if "@" in current else ""
@@ -1899,6 +2023,15 @@ def _provision_site(
     if not opened and intel.get("direct"):
         # No sign-up at all, but the site's own form already takes a link.
         _direct_post(db, context, project, website, row, intel)
+        return
+
+    # Many sites show "Continue with Google" only inside the sign-up modal:
+    # now that the form is open, prefer it over typing a password again.
+    if (
+        opened
+        and intel.get("plan") == "GOOGLE"
+        and _try_google(db, context, project, website, row, page, gmail_address)
+    ):
         return
 
     challenge = _challenge(page)
@@ -2186,6 +2319,12 @@ def _confirm_login(page: Any, base_url: str) -> bool:
     return _logged_in(page)
 
 
+def _ranked_targets(row: SiteAccount) -> list[str]:
+    """The internal pages the site inspection ranked for the backlink."""
+    intel = row.site_intel or {}
+    return [str(url) for url in intel.get("backlink_urls") or [] if url][:8]
+
+
 def _store_target(
     db: Session, context: Any, project: Project, website: Website, row: SiteAccount
 ) -> None:
@@ -2193,7 +2332,10 @@ def _store_target(
     _update_item(project.id, website.id, message="Looking for the backlink page…")
     try:
         result = backlink_target.discover(
-            context, website, start_url=row.account_url or website.opportunity_url
+            context,
+            website,
+            start_url=row.account_url or website.opportunity_url,
+            extra_urls=_ranked_targets(row),
         )
     except Exception as exc:  # pragma: no cover - browser dependent
         log.warning("backlink discovery failed", extra={"extra_fields": {"error": str(exc)}})
@@ -2603,7 +2745,10 @@ def discover_target(db: Session, project: Project, website: Website) -> dict[str
         )
         try:
             result = backlink_target.discover(
-                context, website, start_url=row.account_url or website.opportunity_url
+                context,
+                website,
+                start_url=row.account_url or website.opportunity_url,
+                extra_urls=_ranked_targets(row),
             )
         finally:
             with suppress(Exception):

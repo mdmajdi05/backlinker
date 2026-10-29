@@ -360,8 +360,19 @@ def _inspect(page: Any, url: str, link_text: str) -> dict[str, Any] | None:
     }
 
 
-def discover(context: Any, website: Any, *, start_url: str | None = None) -> dict[str, Any]:
-    """Walk an authenticated browser and return the best backlink target."""
+def discover(
+    context: Any,
+    website: Any,
+    *,
+    start_url: str | None = None,
+    extra_urls: list[str] | None = None,
+) -> dict[str, Any]:
+    """Walk an authenticated browser and return the best backlink target.
+
+    ``extra_urls`` are the internal pages the site inspection already ranked
+    (profile editor, submission page, forum ...).  They are tried right after
+    the current page, before generic guesses.
+    """
     base = (
         (start_url or "").strip()
         or str(getattr(website, "opportunity_url", "") or "").strip()
@@ -383,6 +394,10 @@ def discover(context: Any, website: Any, *, start_url: str | None = None) -> dic
             return {"found": False, "url": None, "confidence": 0, "fields": [], "reasons": [f"The site could not be opened: {exc}"]}
 
         candidates: list[tuple[str, str]] = [(base, "current page")]
+        for url in extra_urls or []:
+            url = (url or "").strip()
+            if url:
+                candidates.append((url, "ranked by site inspection"))
         candidates.extend(_candidate_links(page, base))
         candidates.extend(_common_paths(base))
 
