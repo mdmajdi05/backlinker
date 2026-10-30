@@ -241,6 +241,10 @@ def item_payload(
                 "name": website.name,
                 "domain": website.domain,
                 "opportunity_url": website.opportunity_url,
+                "signup_url": website.signup_url,
+                "post_url": website.post_url,
+                "recipe": website.recipe if isinstance(website.recipe, dict) else None,
+                "registration_required": website.registration_required,
                 "category": website.category,
                 "niche": website.niche or "",
                 "status": website.status,
@@ -376,6 +380,8 @@ def create_entry(
     notes: str | None = None,
     submission_method: str = "UNKNOWN",
     status: str = DEFAULT_STATUS,
+    signup_url: str | None = None,
+    post_url: str | None = None,
 ) -> Website:
     """Add a website to the central list."""
     normalized = normalize_url(opportunity_url)
@@ -384,6 +390,8 @@ def create_entry(
         name=(name or "").strip() or domain,
         domain=domain,
         opportunity_url=normalized,
+        signup_url=(signup_url or "").strip() or None,
+        post_url=(post_url or "").strip() or None,
         category=normalize_category(category),
         niche=normalize_niche(niche),
         discovery_source="manual",
@@ -421,6 +429,10 @@ def update_entry(db: Session, website: Website, changes: dict[str, Any]) -> Webs
         website.status = str(changes["status"]).strip().upper()
     if "excluded_until" in changes:
         website.excluded_until = changes["excluded_until"]
+    if "signup_url" in changes:
+        website.signup_url = (str(changes["signup_url"]).strip() or None) if changes["signup_url"] else None
+    if "post_url" in changes:
+        website.post_url = (str(changes["post_url"]).strip() or None) if changes["post_url"] else None
     website.version += 1
     website.updated_at = utcnow()
     db.commit()

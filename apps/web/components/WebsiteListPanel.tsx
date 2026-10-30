@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import { api, type WebsiteStatsRow } from "@autobacklinker/api-client";
-import type { WebsiteImportResult, WebsiteListItem } from "@autobacklinker/shared-types";
+import type {
+  WebsiteImportResult,
+  WebsiteListItem,
+  WebsiteRecipe,
+} from "@autobacklinker/shared-types";
 import {
   Alert,
   Badge,
@@ -46,6 +50,8 @@ type SortKey = "name" | "domain" | "status" | "created_at" | "updated_at";
 
 interface AddForm {
   opportunity_url: string;
+  signup_url: string;
+  post_url: string;
   name: string;
   category: string;
   niche: string;
@@ -55,12 +61,28 @@ interface AddForm {
 
 const EMPTY_ADD_FORM: AddForm = {
   opportunity_url: "",
+  signup_url: "",
+  post_url: "",
   name: "",
   category: "BUSINESS_DIRECTORY",
   niche: "",
   notes: "",
   submission_method: "UNKNOWN",
 };
+
+/** One short line that names the stored procedure of a website. */
+function recipeSummary(row: WebsiteListItem): string {
+  const recipe = row.recipe;
+  if (!recipe || !recipe.checked_at) return "not read yet";
+  if (recipe.reachable === false) return "unreachable";
+  const parts: string[] = [];
+  if (recipe.needs_signup === false) parts.push("no signup");
+  else if (recipe.needs_signup) parts.push(recipe.google ? "signup (Google)" : "signup");
+  if (recipe.verification === "otp") parts.push("code");
+  else if (recipe.verification === "link") parts.push("link");
+  if (recipe.post_url) parts.push("post page");
+  return parts.join(" · ") || "read";
+}
 
 /**
  * The central list of the websites.
@@ -104,6 +126,11 @@ export function WebsiteListPanel({
   const [addError, setAddError] = React.useState<string | null>(null);
   const [adding, setAdding] = React.useState(false);
 
+  const [readNow, setReadNow] = React.useState(true);
+  const [readItem, setReadItem] = React.useState<WebsiteListItem | null>(null);
+  const [readingId, setReadingId] = React.useState<string | null>(null);
+  const [readingAll, setReadingAll] = React.useState(false);
+
   const [editItem, setEditItem] = React.useState<WebsiteListItem | null>(null);
   const [editForm, setEditForm] = React.useState({
     name: "",
@@ -111,6 +138,8 @@ export function WebsiteListPanel({
     niche: "",
     status: "",
     notes: "",
+    signup_url: "",
+    post_url: "",
   });
   const [editError, setEditError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -320,8 +349,10 @@ export function WebsiteListPanel({
     }
     setAdding(true);
     try {
-      await api.websites.create(apiClient, {
+      const created = await api.websites.create(apiClient, {
         opportunity_url: addForm.opportunity_url.trim(),
+        signup_url: addForm.signup_url.trim() || undefined,
+        post_url: addForm.post_url.trim() || undefined,
         name: addForm.name.trim() || undefined,
         category: addForm.category || undefined,
         niche: addForm.niche.trim() || undefined,
@@ -332,6 +363,12 @@ export function WebsiteListPanel({
       setAddOpen(false);
       setAddForm(EMPTY_ADD_FORM);
       refreshAll();
+      if (readNow) {
+        // Read the site's own procedure in the background of the dialog: the
+        // sign-up page, the verification and the post page are stored on the
+        // row, so the next account run does not have to guess.
+        void readRecipe(created).catch(() => undefined);
+      }
     } catch (err) {
       setAddError(errorMessage(err));
     } finally {
@@ -348,6 +385,8 @@ export function WebsiteListPanel({
       niche: row.niche ?? "",
       status: row.status ?? "",
       notes: row.notes ?? "",
+      signup_url: row.signup_url ?? "",
+      post_url: row.post_url ?? "",
     });
   };
 
@@ -362,6 +401,8 @@ export function WebsiteListPanel({
         niche: editForm.niche.trim(),
         status: editForm.status,
         notes: editForm.notes.trim(),
+        signup_url: editForm.signup_url.trim() || null,
+        post_url: editForm.post_url.trim() || null,
       });
       toast.push("Website updated", "success");
       setEditItem(null);
@@ -370,6 +411,65 @@ export function WebsiteListPanel({
       setEditError(errorMessage(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Read the procedure of one website the way the system sees it.
+   *
+   * The sign-up page, the mail verification and the post page are stored on
+   * the row, so the account batch and the report can show the real steps
+   * instead of a guess.  A pasted URL is always tried first.
+   */
+  const readRecipe = async (row: WebsiteListItem): Promise<WebsiteRecipe> => {
+    setReadingId(row.id);
+    try {
+      const result = await api.websites.refreshRecipe(apiClient, row.id);
+      const parts = [
+        result.needs_signup ? "signup" : "no signup",
+        result.recipe?.verification && result.recipe.verification !== "unknown"
+          ? `${result.recipe.verification} verification`
+          : null,
+        result.post_url ? "post page found" : "post page not found yet",
+      ].filter(Boolean);
+      toast.push(`${row.domain}: ${parts.join(" · ")}`, "success");
+      setReadItem({
+        ...row,
+        signup_url: result.signup_url,
+        post_url: result.post_url,
+        recipe: result.recipe,
+      });
+      refreshAll();
+      return result.recipe;
+    } catch (err) {
+      toast.push(errorMessage(err), "error");
+      throw err;
+    } finally {
+      setReadingId(null);
+    }
+  };
+
+  /** Read the next websites that have no procedure yet. */
+  const readAll = async () => {
+    setReadingAll(true);
+    try {
+      const result = await api.websites.refreshRecipes(apiClient, {
+        limit: 10,
+        only_missing: true,
+      });
+      if (result.probed === 0) {
+        toast.push("Every website already has a procedure", "info");
+      } else {
+        toast.push(
+          `${result.probed} website(s) read - signup and post pages stored`,
+          "success",
+        );
+      }
+      refreshAll();
+    } catch (err) {
+      toast.push(errorMessage(err), "error");
+    } finally {
+      setReadingAll(false);
     }
   };
 
@@ -524,6 +624,15 @@ export function WebsiteListPanel({
           </Button>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            loading={readingAll}
+            onClick={() => void readAll()}
+            title="Read the sign-up and post page of the next websites that have no procedure yet"
+          >
+            Read procedures
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -723,6 +832,9 @@ export function WebsiteListPanel({
                     </Td>
                     <Td className="text-xs">
                       <p className="max-w-[10rem] truncate">{row.domain}</p>
+                      <p className="max-w-[10rem] truncate text-[11px] text-content-muted">
+                        {recipeSummary(row)}
+                      </p>
                     </Td>
                     <Td>
                       <Badge tone="neutral">
@@ -800,6 +912,15 @@ export function WebsiteListPanel({
                     </Td>
                     <Td>
                       <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          loading={readingId === row.id}
+                          onClick={() => void readRecipe(row).catch(() => undefined)}
+                          title="Read the sign-up page, the verification and the post page"
+                        >
+                          {row.recipe?.checked_at ? "Procedure" : "Read site"}
+                        </Button>
                         <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>
                           Edit
                         </Button>
@@ -877,6 +998,47 @@ export function WebsiteListPanel({
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Sign-up page"
+              hint="Optional - paste it if you know it. Empty: the app reads the site and finds it."
+            >
+              <Input
+                value={addForm.signup_url}
+                onChange={(event) =>
+                  setAddForm((prev) => ({ ...prev, signup_url: event.target.value }))
+                }
+                placeholder="https://example.com/register"
+              />
+            </Field>
+            <Field
+              label="Backlink post page"
+              hint="Optional - the page with the form where the link goes."
+            >
+              <Input
+                value={addForm.post_url}
+                onChange={(event) =>
+                  setAddForm((prev) => ({ ...prev, post_url: event.target.value }))
+                }
+                placeholder="https://example.com/add-listing"
+              />
+            </Field>
+          </div>
+
+          <label className="flex items-start gap-2 rounded-md border border-line bg-surface-muted/40 px-3 py-2 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={readNow}
+              onChange={(event) => setReadNow(event.target.checked)}
+            />
+            <span>
+              Read the site now - the app opens the page, records whether a
+              sign-up is needed, which mail verification it uses and where the
+              link is posted.
+            </span>
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name" hint="Shown in the list">
               <Input
                 value={addForm.name}
@@ -930,6 +1092,80 @@ export function WebsiteListPanel({
             />
           </Field>
         </div>
+      </Dialog>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Procedure of the website                                          */}
+      {/* ---------------------------------------------------------------- */}
+      <Dialog
+        open={readItem !== null}
+        onClose={() => setReadItem(null)}
+        title={readItem ? `Procedure of ${readItem.name}` : "Procedure"}
+        description="What the app read on the site: the sign-up page, the mail verification and the page where the link is posted."
+        width="lg"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setReadItem(null)}>
+              Close
+            </Button>
+            <Button
+              variant="outline"
+              loading={readingId === readItem?.id}
+              onClick={() => {
+                if (readItem) void readRecipe(readItem).catch(() => undefined);
+              }}
+            >
+              Read again
+            </Button>
+          </>
+        }
+      >
+        {readItem ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge tone={readItem.recipe?.needs_signup ? "info" : "neutral"}>
+                {readItem.recipe?.needs_signup === false ? "No signup" : "Signup needed"}
+              </Badge>
+              {readItem.recipe?.verification ? (
+                <Badge tone="neutral">
+                  verification: {readItem.recipe.verification}
+                </Badge>
+              ) : null}
+              {readItem.recipe?.google ? <Badge tone="success">Google sign-in</Badge> : null}
+              {readItem.recipe?.captcha ? <Badge tone="warning">CAPTCHA</Badge> : null}
+              {readItem.recipe?.platform && readItem.recipe.platform !== "unknown" ? (
+                <Badge tone="neutral">{readItem.recipe.platform}</Badge>
+              ) : null}
+            </div>
+
+            <Field label="Sign-up page">
+              <Input readOnly value={readItem.signup_url ?? "not found"} />
+            </Field>
+            <Field label="Backlink post page">
+              <Input readOnly value={readItem.post_url ?? "not found"} />
+            </Field>
+
+            <div>
+              <p className="mb-1 text-xs font-medium text-content">Steps on this site</p>
+              <ol className="list-decimal space-y-1 pl-5 text-sm text-content-muted">
+                {(readItem.recipe?.steps ?? []).map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+                {(readItem.recipe?.steps ?? []).length === 0 ? (
+                  <li>No steps stored yet - press Read again.</li>
+                ) : null}
+              </ol>
+            </div>
+
+            {readItem.recipe?.notes && readItem.recipe.notes.length > 0 ? (
+              <div className="rounded-md border border-line bg-surface-muted/40 px-3 py-2 text-xs text-content-muted">
+                {readItem.recipe.notes.map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Dialog>
 
       {/* ---------------------------------------------------------------- */}
@@ -1011,6 +1247,27 @@ export function WebsiteListPanel({
               ))}
             </Select>
           </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Sign-up page" hint="Empty: the app reads the site and finds it">
+              <Input
+                value={editForm.signup_url}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, signup_url: event.target.value }))
+                }
+                placeholder="https://example.com/register"
+              />
+            </Field>
+            <Field label="Backlink post page" hint="Where the link form lives">
+              <Input
+                value={editForm.post_url}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, post_url: event.target.value }))
+                }
+                placeholder="https://example.com/add-listing"
+              />
+            </Field>
+          </div>
 
           <Field label="Notes">
             <Textarea

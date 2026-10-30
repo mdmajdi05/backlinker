@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, Pagination
 from app.core.config import settings
@@ -26,10 +27,14 @@ from app.schemas import (
     WebsiteCreateIn,
     WebsiteImportResult,
     WebsiteListItem,
+    WebsiteRecipeBatchIn,
+    WebsiteRecipeBatchOut,
+    WebsiteRecipeOut,
+    WebsiteRecipeRow,
     WebsiteStatsRow,
     WebsiteUpdateIn,
 )
-from app.services import access, automation_setup, form_finder
+from app.services import access, automation_setup, form_finder, site_recipe
 from app.services import site_details as details_service
 from app.services import websites as website_service
 from app.services.audit import record_audit
@@ -126,6 +131,8 @@ def create_website(
         niche=payload.niche,
         notes=payload.notes,
         submission_method=payload.submission_method,
+        signup_url=payload.signup_url,
+        post_url=payload.post_url,
     )
     record_event(
         db,
@@ -278,6 +285,81 @@ def find_website_submission_page(
     website = _entry(db, website_id)
     result = form_finder.find_submission_page(db, website, payload.form_url)
     return WebsiteAutomationFindOut(**result)
+
+
+@router.post("/websites/{website_id}/recipe", response_model=WebsiteRecipeOut)
+def refresh_website_recipe(
+    website_id: str, db: DbSession, user: CurrentUser
+) -> WebsiteRecipeOut:
+    """Read this website now: sign-up page, verification and post page.
+
+    The operator's ``signup_url`` / ``post_url`` hints are tried first, so a
+    pasted URL is verified instead of guessed.  Only static HTML is read; no
+    account is created and no form is submitted.
+    """
+    del user
+    website = _entry(db, website_id)
+    recipe = site_recipe.refresh(db, website)
+    record_event(
+        db,
+        "website.recipe",
+        f"Read the procedure of {website.domain}",
+        website_id=website.id,
+        metadata={
+            "signup_url": website.signup_url,
+            "post_url": website.post_url,
+            "needs_signup": recipe.get("needs_signup"),
+        },
+    )
+    return WebsiteRecipeOut(
+        website_id=website.id,
+        signup_url=website.signup_url,
+        post_url=website.post_url,
+        needs_signup=recipe.get("needs_signup"),
+        steps=[str(step) for step in recipe.get("steps") or []],
+        recipe=recipe,
+    )
+
+
+@router.post("/websites/recipes", response_model=WebsiteRecipeBatchOut)
+def refresh_website_recipes(
+    payload: WebsiteRecipeBatchIn, db: DbSession, user: CurrentUser
+) -> WebsiteRecipeBatchOut:
+    """Read several websites at once and store their procedures.
+
+    The batch is deliberately small and bounded: a probe is a handful of GET
+    requests, and the caller repeats the call for the next page of websites.
+    """
+    del user
+    limit = max(1, min(int(payload.limit or 10), 25))
+    statement = select(Website).where(Website.status != "DELETED")
+    if payload.website_ids:
+        statement = statement.where(Website.id.in_(payload.website_ids))
+    rows = list(db.execute(statement.limit(200)).scalars())
+    if payload.only_missing:
+        rows = [
+            row for row in rows
+            if not (isinstance(row.recipe, dict) and row.recipe.get("checked_at"))
+        ]
+    chosen = rows[:limit]
+    site_recipe.refresh_many(db, chosen)
+    return WebsiteRecipeBatchOut(
+        probed=len(chosen),
+        rows=[
+            WebsiteRecipeRow(
+                website_id=row.id,
+                domain=row.domain,
+                state=(
+                    "ok"
+                    if isinstance(row.recipe, dict) and row.recipe.get("reachable")
+                    else "unreachable"
+                ),
+                signup_url=row.signup_url,
+                post_url=row.post_url,
+            )
+            for row in chosen
+        ],
+    )
 
 
 @router.delete("/websites/{website_id}", status_code=status.HTTP_204_NO_CONTENT)

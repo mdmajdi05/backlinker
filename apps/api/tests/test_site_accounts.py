@@ -938,3 +938,96 @@ def test_turning_the_wait_off_stops_the_row_at_once(db_session) -> None:
     assert row.status == site_accounts.STATUS_NEEDS_HUMAN
     assert "Retry" in (row.last_error or "")
     assert datetime.now(UTC) - started < timedelta(seconds=5)
+
+
+class _FlowPage:
+    """A page stand-in that answers the flow probes of the service."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        url: str = "https://directory.example.org/join",
+        fields: list[dict[str, object]] | None = None,
+        password: bool = False,
+        solved: bool = False,
+    ) -> None:
+        self._text = text
+        self._fields = fields or []
+        self._password = password
+        self._solved = solved
+        self.url = url
+        self.frames: list[object] = []
+        self.main_frame = None
+        self.navigated: list[str] = []
+
+    def query_selector(self, selector: str, *_args: object) -> object | None:
+        if self._password and "type='password'" in selector:
+            return object()
+        return None
+
+    def inner_text(self, *_args: object) -> str:
+        return self._text
+
+    def evaluate(self, script: str, *_args: object) -> object:
+        if "g-recaptcha-response" in script:
+            return self._solved
+        if "fields" in script and "querySelectorAll" in script:
+            return {"fields": self._fields, "buttons": []}
+        return ""
+
+    def wait_for_timeout(self, *_args: object) -> None:
+        return None
+
+    def goto(self, url: str, **_kwargs: object) -> None:
+        self.navigated.append(url)
+
+
+def test_flow_state_names_the_real_step() -> None:
+    assert (
+        site_accounts._flow_state(
+            _FlowPage(text="Please verify your email address to continue.")
+        )
+        == "VERIFY"
+    )
+    assert (
+        site_accounts._flow_state(_FlowPage(text="Your account is pending approval."))
+        == "PENDING"
+    )
+    assert (
+        site_accounts._flow_state(
+            _FlowPage(
+                fields=[
+                    {"name": "email", "type": "email"},
+                    {"name": "password", "type": "password"},
+                ],
+                password=True,
+            )
+        )
+        == "LOGIN_FORM"
+    )
+    assert (
+        site_accounts._flow_state(
+            _FlowPage(
+                fields=[
+                    {"name": "email", "type": "email"},
+                    {"name": "username", "type": "text"},
+                    {"name": "password", "type": "password"},
+                ]
+            )
+        )
+        == "SIGNUP_FORM"
+    )
+    assert (
+        site_accounts._flow_state(
+            _FlowPage(url="https://accounts.google.com/signin/oauth")
+        )
+        == "OAUTH"
+    )
+    assert site_accounts._flow_state(_FlowPage()) == "UNKNOWN"
+
+
+def test_confirm_login_never_navigates_away_from_a_verify_page() -> None:
+    page = _FlowPage(text="We sent you a code - enter it to verify your email.")
+    assert site_accounts._confirm_login(page, "https://directory.example.org/") is False
+    assert page.navigated == []

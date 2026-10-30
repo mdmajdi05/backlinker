@@ -959,11 +959,65 @@ export interface WebsiteAutomationFindResult extends WebsiteAutomationDetectResu
 }
 
 /** One row of the central website list. */
+/** The stored procedure of a website (one probe of its live pages). */
+export interface WebsiteRecipe {
+  checked_at?: string;
+  start_url?: string;
+  reachable?: boolean;
+  error?: string;
+  platform?: string;
+  signup_url?: string;
+  signup_urls?: string[];
+  /** ``verified`` = the page really carries the form, ``hint`` = pasted. */
+  signup_confidence?: "verified" | "hint" | "none";
+  post_url?: string;
+  post_urls?: string[];
+  /** ``verified`` = the page really carries the link form, else ``none``. */
+  post_confidence?: "verified" | "hint" | "none";
+  needs_signup?: boolean | null;
+  google?: boolean;
+  verification?: "otp" | "link" | "none" | "unknown";
+  captcha?: boolean;
+  direct_form?: boolean;
+  plan?: string;
+  steps?: string[];
+  notes?: string[];
+}
+
+export interface WebsiteRecipeResult {
+  website_id: string;
+  signup_url: string | null;
+  post_url: string | null;
+  needs_signup: boolean | null;
+  steps: string[];
+  recipe: WebsiteRecipe;
+}
+
+export interface WebsiteRecipeRow {
+  website_id: string;
+  domain: string;
+  state: string;
+  signup_url: string | null;
+  post_url: string | null;
+}
+
+export interface WebsiteRecipeBatchResult {
+  probed: number;
+  rows: WebsiteRecipeRow[];
+}
+
 export interface WebsiteListItem {
   id: string;
   name: string;
   domain: string;
   opportunity_url: string;
+  /** The sign-up page (pasted by the operator or found by the probe). */
+  signup_url?: string | null;
+  /** The page where the backlink is posted. */
+  post_url?: string | null;
+  /** The procedure the probe read: sign-up, verification, post page. */
+  recipe?: WebsiteRecipe | null;
+  registration_required?: boolean | null;
   category: string;
   niche: string;
   status: string;

@@ -184,6 +184,13 @@ export function normalizeWebsite(raw: unknown): WebsiteListItem {
     name: text(data.name),
     domain: text(data.domain),
     opportunity_url: text(data.opportunity_url),
+    signup_url: optionalText(data.signup_url),
+    post_url: optionalText(data.post_url),
+    recipe: (data.recipe ?? null) as WebsiteListItem["recipe"],
+    registration_required:
+      typeof data.registration_required === "boolean"
+        ? data.registration_required
+        : null,
     category: text(data.category),
     niche: text(data.niche),
     status: text(data.status).trim().toUpperCase() || "NEEDS_REVIEW",
@@ -276,11 +283,50 @@ export async function fetchWebsiteStats(
 
 export interface WebsiteCreateInput {
   opportunity_url: string;
+  /** The sign-up page, when the operator knows it (empty = find it). */
+  signup_url?: string;
+  /** The page where the link is posted (empty = find it). */
+  post_url?: string;
   name?: string;
   category?: string;
   niche?: string;
   notes?: string;
   submission_method?: string;
+}
+
+/** The procedure of one website, as the local backend stored it. */
+export interface WebsiteRecipeResult {
+  website_id: string;
+  signup_url: string | null;
+  post_url: string | null;
+  needs_signup: boolean | null;
+  steps: string[];
+  recipe: Record<string, unknown> & {
+    checked_at?: string;
+    reachable?: boolean;
+    verification?: string;
+    google?: boolean;
+    captcha?: boolean;
+    platform?: string;
+    post_url?: string;
+    notes?: string[];
+  };
+}
+
+/** Read the procedure of one website now (sign-up, verification, post page). */
+export async function refreshWebsiteRecipe(id: string): Promise<WebsiteRecipeResult> {
+  return (await api.websites.refreshRecipe(apiClient, id)) as WebsiteRecipeResult;
+}
+
+/** Read several websites at once; ``probed`` is how many were opened. */
+export async function refreshWebsiteRecipes(limit = 10): Promise<{
+  probed: number;
+  rows: { website_id: string; domain: string; state: string }[];
+}> {
+  return (await api.websites.refreshRecipes(apiClient, {
+    limit,
+    only_missing: true,
+  })) as { probed: number; rows: { website_id: string; domain: string; state: string }[] };
 }
 
 /** Adds one website to the central list. */
@@ -294,6 +340,8 @@ export async function createWebsite(
   if (input.category?.trim()) body.category = input.category.trim();
   if (input.niche?.trim()) body.niche = input.niche.trim();
   if (input.notes?.trim()) body.notes = input.notes.trim();
+  if (input.signup_url?.trim()) body.signup_url = input.signup_url.trim();
+  if (input.post_url?.trim()) body.post_url = input.post_url.trim();
   if (input.submission_method?.trim()) {
     body.submission_method = input.submission_method.trim();
   }

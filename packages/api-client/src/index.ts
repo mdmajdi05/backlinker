@@ -95,6 +95,8 @@ import type {
   RecycleBinItem,
   RecycleBinPage,
   WebsiteListItem,
+  WebsiteRecipeBatchResult,
+  WebsiteRecipeResult,
   WebsiteStats,
   StorageTestResult,
   SyncChangesResponse,
@@ -874,6 +876,18 @@ export const api = {
     /** Follow the "add listing" links of the homepage to the real form. */
     findAutomationForm: (c: ApiClient, id: string, body: { form_url?: string } = {}) =>
       c.post<WebsiteAutomationFindResult>(`/api/v1/websites/${id}/automation/find-form`, body),
+    /**
+     * Read the procedure of one website now: its sign-up page, the mail
+     * verification and the page where the link is posted.  A pasted
+     * `signup_url` / `post_url` is tried first.
+     */
+    refreshRecipe: (c: ApiClient, id: string) =>
+      c.post<WebsiteRecipeResult>(`/api/v1/websites/${id}/recipe`),
+    /** Read several websites at once (a small, bounded batch). */
+    refreshRecipes: (
+      c: ApiClient,
+      body: { website_ids?: string[]; limit?: number; only_missing?: boolean } = {},
+    ) => c.post<WebsiteRecipeBatchResult>("/api/v1/websites/recipes", body),
   },
 
   /** The automatic submission of a project. */

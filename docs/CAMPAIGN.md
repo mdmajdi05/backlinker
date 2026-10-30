@@ -40,6 +40,38 @@ The Excel / CSV columns are the ones of the central list:
 | `Anchor Text` | the text of the link (optional) |
 | `Description`, `Email`, `Notes` | optional values of the site |
 
+#### Sign-up page and post page (new)
+
+**Add website** now asks for two optional URLs beside the website URL:
+
+* **Sign-up page** - the page with the registration form, when you know it,
+* **Backlink post page** - the page with the form where the link is posted.
+
+Empty is fine: **Read the site now** (ticked by default) opens the site and
+records its real procedure on the row - whether a sign-up is needed, whether
+Google sign-in is offered, whether the verification mail carries a code or a
+link, and which page takes the backlink. The list row then shows a short line
+(`signup (Google) · code · post page`) and the **Procedure** dialog shows the
+steps the site asks for, with both URLs.
+
+**Read procedures** in the toolbar reads the next ten websites that have no
+procedure yet, so a whole list becomes understood without opening each row.
+A pasted sign-up / post URL is always tried first; the probe only fills the
+gaps.
+
+The same probe can be run from the terminal, against the same database:
+
+```bash
+cd apps/api
+python -m scripts.probe_recipes --all          # every website
+python -m scripts.probe_recipes --domain g2.com --force --json
+```
+
+API: `POST /api/v1/websites/{id}/recipe` (one site) and
+`POST /api/v1/websites/recipes` (a bounded batch, `only_missing` by default).
+A probe reads static HTML only - it never creates an account and never
+submits a form.
+
 ### 2. Press Start backlinks
 
 One click:
@@ -287,6 +319,20 @@ Most directories need an account before they accept a link. The
    them opened a real form - the public form is the fallback instead of giving
    up.
 
+The flow follows the **step the site is on** instead of guessing URLs. After
+the form is submitted (or Google returns), the app reads the page once more and
+names the step it sees: e-mail verification, pending review, a form to finish,
+the sign-up form itself, an OAuth redirect, or signed in. It never navigates to
+another path in the middle of that step, and it never reloads the home page
+while a code, a confirmation link or a CAPTCHA is waiting. A cookie banner or
+an onboarding card ("Skip / Got it / Next") is closed first, so the check sees
+the real page.
+
+If the site creates the account but hides the prompt, the alias inbox is still
+read once (briefly): a code is typed, a confirmation link is opened, and the
+row continues. When the page is a "pending approval" page the app says exactly
+that instead of pretending the account is active.
+
 If a form asks for a required field the app has no value for (a custom field,
 an address, ...), it does not submit a half-filled form: the row stops as
 **Needs you**, names the field, and leaves the site open through **Open site**.
@@ -530,6 +576,33 @@ Sirf usi alias par aaya code accept hota hai, wo ek hi baar claim hota hai,
 aur `(project, website)` ke against encrypted save hota hai. Do different
 codes ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar
 ruk jati hai.
+
+**Naya website add karte waqt signup/post page dena?**
+Add website dialog me do optional URL hain - **Sign-up page** aur **Backlink
+post page**. Khali chhod do to "Read the site now" tick rehne par app khud site
+khol kar poori procedure row par save kar leti hai: signup chahiye ya nahi,
+Google login hai ya nahi, mail me code aayega ya link, aur backlink kis page
+par post hoga. List me row par chhoti line dikhti hai (`signup (Google) · code
+· post page`) aur **Procedure** button par poore steps + dono URL. Toolbar ka
+**Read procedures** agle 10 website jo abhi padhi nahi gayi, wo ek saath padh
+leta hai. Jo URL aapne paste kiya wo pehle try hota hai, baaki app khud dhoondti
+hai. Terminal se bhi: `python -m scripts.probe_recipes --all`.
+
+**Signup ke baad site kuch aur maang rahi ho to?**
+App page ko padh kar step pehchanti hai - verification, pending approval,
+"profile complete karo" form, signup form, OAuth redirect ya signed in - aur
+usi step par rukti hai. Beech me koi naya URL guess karke nahi kholti, aur
+verification/CAPTCHA ke waqt home page reload nahi karti. Cookie banner ya
+onboarding card (Skip / Got it / Next) pehle band hota hai. Agar site prompt
+chhupa de to bhi app aapke alias ka Gmail ek baar chupchap check karti hai -
+code mile to bharti hai, link mile to khol kar verify karti hai.
+
+**Google ke baad koi aur screen aaye to?**
+Account chooser ke baad jo bhi card aata hai (consent, "aur options", unusual
+button), app us card ka primary **Continue / Allow / Confirm / Next** button
+dabati hai - Cancel / Back / "Use another account" kabhi nahi. Google ka apna
+error ("couldn't sign you in", "access blocked") aaye to wahi text row par
+likha aata hai.
 
 **Verification link aaya to?**
 Mail me link ho to app usi logged-in browser me link kholti hai, site ka apna

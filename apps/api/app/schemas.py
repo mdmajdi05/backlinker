@@ -471,6 +471,12 @@ class WebsiteListItem(BaseModel):
     score: float
     notes: str | None = None
     excluded_until: datetime | None = None
+    #: The sign-up page and the post page (a hint from the operator, or the
+    #: page the inspection found), plus the stored procedure of the site.
+    signup_url: str | None = None
+    post_url: str | None = None
+    recipe: dict[str, Any] | None = None
+    registration_required: bool | None = None
     #: The explicitly assigned submission adapter (key and row id).
     adapter_id: str | None = None
     adapter_key: str | None = None
@@ -509,6 +515,11 @@ class WebsiteCreateIn(BaseModel):
     niche: str = ""
     notes: str | None = None
     submission_method: str = "UNKNOWN"
+    #: The sign-up page and the page where the link is posted.  Both are
+    #: optional: a filled value is used first, an empty one is discovered by
+    #: the recipe probe.
+    signup_url: str | None = None
+    post_url: str | None = None
 
     @field_validator("opportunity_url")
     @classmethod
@@ -516,6 +527,18 @@ class WebsiteCreateIn(BaseModel):
         from app.core.net import validate_http_url
 
         candidate = (value or "").strip()
+        if not candidate.startswith(("http://", "https://")):
+            candidate = f"https://{candidate}"
+        return validate_http_url(candidate)
+
+    @field_validator("signup_url", "post_url")
+    @classmethod
+    def _validate_optional_url(cls, value: str | None) -> str | None:
+        from app.core.net import validate_http_url
+
+        candidate = (value or "").strip()
+        if not candidate:
+            return None
         if not candidate.startswith(("http://", "https://")):
             candidate = f"https://{candidate}"
         return validate_http_url(candidate)
@@ -530,6 +553,20 @@ class WebsiteUpdateIn(BaseModel):
     notes: str | None = None
     status: str | None = None
     excluded_until: datetime | None = None
+    signup_url: str | None = None
+    post_url: str | None = None
+
+    @field_validator("signup_url", "post_url")
+    @classmethod
+    def _validate_optional_url(cls, value: str | None) -> str | None:
+        from app.core.net import validate_http_url
+
+        candidate = (value or "").strip()
+        if not candidate:
+            return None
+        if not candidate.startswith(("http://", "https://")):
+            candidate = f"https://{candidate}"
+        return validate_http_url(candidate)
 
     @field_validator("status")
     @classmethod
@@ -544,6 +581,46 @@ class WebsiteUpdateIn(BaseModel):
                 f"'{value}' is not a website status ({', '.join(WEBSITE_STATUSES)})"
             )
         return status
+
+
+class WebsiteRecipeOut(BaseModel):
+    """The procedure of one website (as the last probe read it)."""
+
+    website_id: str
+    signup_url: str | None = None
+    post_url: str | None = None
+    needs_signup: bool | None = None
+    steps: list[str] = Field(default_factory=list)
+    recipe: dict[str, Any] = Field(default_factory=dict)
+
+
+class WebsiteRecipeRow(BaseModel):
+    """The outcome of probing one website of a batch."""
+
+    website_id: str
+    domain: str
+    state: str
+    signup_url: str | None = None
+    post_url: str | None = None
+
+
+class WebsiteRecipeBatchOut(BaseModel):
+    """The outcome of probing several websites at once."""
+
+    probed: int = 0
+    rows: list[WebsiteRecipeRow] = Field(default_factory=list)
+
+
+class WebsiteRecipeBatchIn(BaseModel):
+    """Which websites the batch probe should read.
+
+    An empty ``website_ids`` means "the websites of the list", and
+    ``only_missing`` skips the ones that already have a recipe.
+    """
+
+    website_ids: list[str] = Field(default_factory=list)
+    limit: int = 10
+    only_missing: bool = True
 
 
 class WebsiteAutomationIn(BaseModel):

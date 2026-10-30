@@ -34,13 +34,15 @@ import {
   fetchWebsiteStats,
   fetchWebsites,
   importWebsites,
+  refreshWebsiteRecipe,
+  refreshWebsiteRecipes,
   removeWebsite,
   updateWebsite,
   websiteStatusLabel,
   websiteStatusOptions,
   type WebsiteImportInput,
 } from "../lib/websites";
-import type { Project } from "@autobacklinker/shared-types";
+import type { Project, WebsiteListItem } from "@autobacklinker/shared-types";
 import type { WebsiteStatsRow } from "@autobacklinker/api-client";
 
 /**
@@ -56,6 +58,20 @@ import type { WebsiteStatsRow } from "@autobacklinker/api-client";
  */
 
 const PAGE_SIZE = 25;
+
+/** One short line that names the stored procedure of a website. */
+function recipeSummary(item: WebsiteListItem): string {
+  const recipe = item.recipe;
+  if (!recipe || !recipe.checked_at) return "procedure: not read yet";
+  if (recipe.reachable === false) return "procedure: unreachable";
+  const parts: string[] = [];
+  if (recipe.needs_signup === false) parts.push("no signup");
+  else if (recipe.needs_signup) parts.push(recipe.google ? "signup (Google)" : "signup");
+  if (recipe.verification === "otp") parts.push("code");
+  else if (recipe.verification === "link") parts.push("link");
+  if (recipe.post_url) parts.push("post page");
+  return parts.join(" · ") || "procedure: read";
+}
 
 const SPREADSHEET_FILTERS = [
   { name: "Excel", extensions: ["xlsx", "xls"] },
@@ -158,6 +174,9 @@ export function WebsiteListPanel({
   const [selected, setSelected] = React.useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [readingId, setReadingId] = React.useState<string | null>(null);
+  const [readingAll, setReadingAll] = React.useState(false);
+  const [readItem, setReadItem] = React.useState<WebsiteListItem | null>(null);
   const [savingId, setSavingId] = React.useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<string[] | null>(null);
 
@@ -239,6 +258,56 @@ export function WebsiteListPanel({
       websites.reload();
     } finally {
       setSavingId(null);
+    }
+  }
+
+  /**
+   * Read the procedure of one website: its sign-up page, the mail
+   * verification and the page where the link is posted.  A pasted URL is
+   * always tried first.
+   */
+  async function readRecipe(item: WebsiteListItem) {
+    setReadingId(item.id);
+    try {
+      const result = await refreshWebsiteRecipe(item.id);
+      const parts = [
+        result.needs_signup ? "signup" : "no signup",
+        result.recipe?.verification && result.recipe.verification !== "unknown"
+          ? `${result.recipe.verification} verification`
+          : null,
+        result.post_url ? "post page found" : "post page not found yet",
+      ].filter(Boolean);
+      toast.push(`${item.domain}: ${parts.join(" · ")}`, "success");
+      setReadItem({
+        ...item,
+        signup_url: result.signup_url,
+        post_url: result.post_url,
+        recipe: result.recipe as WebsiteListItem["recipe"],
+      });
+      websites.reload();
+    } catch (err) {
+      toast.push(errorText(err, "Could not read the website"), "error");
+    } finally {
+      setReadingId(null);
+    }
+  }
+
+  /** Read the next websites that have no procedure yet. */
+  async function readAll() {
+    setReadingAll(true);
+    try {
+      const result = await refreshWebsiteRecipes(10);
+      toast.push(
+        result.probed === 0
+          ? "Every website already has a procedure"
+          : `${result.probed} website(s) read - signup and post pages stored`,
+        "success",
+      );
+      websites.reload();
+    } catch (err) {
+      toast.push(errorText(err, "Could not read the websites"), "error");
+    } finally {
+      setReadingAll(false);
     }
   }
 
@@ -349,6 +418,15 @@ export function WebsiteListPanel({
               onClick={applyBulkStatus}
             >
               Apply to {selected.length}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              loading={readingAll}
+              onClick={() => void readAll()}
+              title="Read the sign-up and post page of the next websites that have no procedure yet"
+            >
+              Read procedures
             </Button>
             <Button
               size="sm"
@@ -483,6 +561,9 @@ export function WebsiteListPanel({
                           <p className="truncate text-xs text-content-subtle">
                             {item.domain || "—"}
                           </p>
+                          <p className="truncate text-[11px] text-content-subtle">
+                            {recipeSummary(item)}
+                          </p>
                         </div>
                       </Td>
                       <Td className="whitespace-nowrap text-xs">
@@ -541,6 +622,15 @@ export function WebsiteListPanel({
                       <Td className="whitespace-nowrap text-right">
                         <Button
                           size="sm"
+                          variant="ghost"
+                          loading={readingId === item.id}
+                          onClick={() => void readRecipe(item)}
+                          title="Read the sign-up page, the verification and the post page"
+                        >
+                          {item.recipe?.checked_at ? "Procedure" : "Read site"}
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="outline"
                           onClick={() => setDeleteTarget([item.id])}
                           title={`Move ${label} to the recycle bin`}
@@ -562,6 +652,76 @@ export function WebsiteListPanel({
           </>
         ) : null}
       </CardBody>
+
+      <Dialog
+        open={readItem !== null}
+        onClose={() => setReadItem(null)}
+        title={readItem ? `Procedure of ${readItem.name}` : "Procedure"}
+        description="What the app read on the site: the sign-up page, the mail verification and the page where the link is posted."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setReadItem(null)}>
+              Close
+            </Button>
+            <Button
+              variant="outline"
+              loading={readingId === readItem?.id}
+              onClick={() => {
+                if (readItem) void readRecipe(readItem);
+              }}
+            >
+              Read again
+            </Button>
+          </>
+        }
+      >
+        {readItem ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge tone={readItem.recipe?.needs_signup ? "accent" : "neutral"}>
+                {readItem.recipe?.needs_signup === false ? "No signup" : "Signup needed"}
+              </Badge>
+              {readItem.recipe?.verification ? (
+                <Badge tone="neutral">
+                  verification: {readItem.recipe.verification}
+                </Badge>
+              ) : null}
+              {readItem.recipe?.google ? <Badge tone="success">Google sign-in</Badge> : null}
+              {readItem.recipe?.captcha ? <Badge tone="warning">CAPTCHA</Badge> : null}
+              {readItem.recipe?.platform && readItem.recipe.platform !== "unknown" ? (
+                <Badge tone="neutral">{readItem.recipe.platform}</Badge>
+              ) : null}
+            </div>
+
+            <Field label="Sign-up page">
+              <Input readOnly value={readItem.signup_url ?? "not found"} />
+            </Field>
+            <Field label="Backlink post page">
+              <Input readOnly value={readItem.post_url ?? "not found"} />
+            </Field>
+
+            <div>
+              <p className="mb-1 text-xs font-medium text-content">Steps on this site</p>
+              <ol className="list-decimal space-y-1 pl-5 text-sm text-content-muted">
+                {(readItem.recipe?.steps ?? []).map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+                {(readItem.recipe?.steps ?? []).length === 0 ? (
+                  <li>No steps stored yet - press Read again.</li>
+                ) : null}
+              </ol>
+            </div>
+
+            {readItem.recipe?.notes && readItem.recipe.notes.length > 0 ? (
+              <div className="rounded-md border border-line bg-surface-muted/40 px-3 py-2 text-xs text-content-muted">
+                {readItem.recipe.notes.map((note) => (
+                  <p key={note}>{note}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Dialog>
 
       <AddWebsiteDialog
         open={addOpen}
@@ -617,6 +777,9 @@ function AddWebsiteDialog({
 }) {
   const toast = useToast();
   const [url, setUrl] = React.useState("");
+  const [signupUrl, setSignupUrl] = React.useState("");
+  const [postUrl, setPostUrl] = React.useState("");
+  const [readNow, setReadNow] = React.useState(true);
   const [name, setName] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [niche, setNiche] = React.useState("");
@@ -628,6 +791,9 @@ function AddWebsiteDialog({
   React.useEffect(() => {
     if (!open) return;
     setUrl("");
+    setSignupUrl("");
+    setPostUrl("");
+    setReadNow(true);
     setName("");
     setCategory("");
     setNiche("");
@@ -642,6 +808,8 @@ function AddWebsiteDialog({
     try {
       const created = await createWebsite({
         opportunity_url: url,
+        signup_url: signupUrl,
+        post_url: postUrl,
         name,
         category,
         niche,
@@ -650,6 +818,11 @@ function AddWebsiteDialog({
       });
       const label = created.name || created.domain || url;
       toast.push(`${label} was added to the website list`, "success");
+      if (readNow) {
+        // Read the site's own procedure right away: the sign-up page, the
+        // mail verification and the post page are stored on the row.
+        void refreshWebsiteRecipe(created.id).catch(() => undefined);
+      }
       void sendNativeNotification(
         "Auto Backlinker",
         `${label} was added to the website list.`,
@@ -695,6 +868,38 @@ function AddWebsiteDialog({
             placeholder="https://example.com/submit"
           />
         </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field
+            label="Sign-up page"
+            hint="Optional - empty means: read the site and find it."
+          >
+            <Input
+              value={signupUrl}
+              onChange={(event) => setSignupUrl(event.target.value)}
+              placeholder="https://example.com/register"
+            />
+          </Field>
+          <Field
+            label="Backlink post page"
+            hint="Optional - the page with the form where the link goes."
+          >
+            <Input
+              value={postUrl}
+              onChange={(event) => setPostUrl(event.target.value)}
+              placeholder="https://example.com/add-listing"
+            />
+          </Field>
+        </div>
+        <label className="flex items-start gap-2 rounded-md border border-line bg-surface-muted/40 px-3 py-2 text-xs">
+          <Checkbox
+            checked={readNow}
+            onChange={(event) => setReadNow(event.target.checked)}
+          />
+          <span>
+            Read the site now - records whether a signup is needed, which mail
+            verification it uses and where the link is posted.
+          </span>
+        </label>
         <Field label="Name" hint="Leave empty to use the name of the site.">
           <Input
             value={name}

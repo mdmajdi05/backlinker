@@ -60,6 +60,7 @@ from app.services import (
     login_browser,
     project_login,
     site_intel,
+    site_recipe,
 )
 from app.services import browser as browser_service
 
@@ -1049,6 +1050,10 @@ _GOOGLE_STATE_JS = r"""
 """
 
 #: Click the "Continue as <profile>" tile / account row of the project.
+#:
+#: When the project's address is known, only a tile that names it is clicked -
+#: picking "the first account in the list" would sign in as whichever Google
+#: account happens to be first.
 _ACCOUNT_TILE_JS = r"""
 (email) => {
   const wanted = (email || '').trim().toLowerCase();
@@ -1058,11 +1063,11 @@ _ACCOUNT_TILE_JS = r"""
     const text = ((node.innerText || '') + '').replace(/\s+/g, ' ').trim();
     if (!text || text.length > 160) continue;
     const low = text.toLowerCase();
-    const matched =
-      (wanted && low.includes(wanted)) ||
-      (local.length >= 4 && low.includes(local)) ||
-      /^continue as\b/.test(low) ||
-      /^(continue|sign in|choose|select|use)\b.{0,40}\b(account|google)\b/.test(low);
+    const matched = wanted
+      ? (low.includes(wanted) || (local.length >= 4 && low.includes(local)))
+      : (/^continue as\b/.test(low)
+         || /^(continue|sign in|choose|select|use)\b.{0,40}\b(account|google)\b/.test(low)
+         || /@/.test(low));
     if (!matched) continue;
     candidates.push({ node, size: text.length });
   }
@@ -1104,6 +1109,73 @@ _GOOGLE_CONSENT_JS = r"""
   return '';
 }
 """
+
+
+#: Any other primary button of a Google card (icon-only / unusual wording).
+_GOOGLE_PRIMARY_JS = r"""
+() => {
+  const deny = /(cancel|back|use another|another account|remove|deny|not now|skip|no thanks|sign out|try another way|learn more|help|privacy|terms|switch account|forgot)/i;
+  const visible = (el) => {
+    try {
+      const box = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && !el.disabled && box.width > 1 && box.height > 1;
+    } catch (e) { return false; }
+  };
+  const seen = [];
+  for (const el of document.querySelectorAll('button, [role=button], input[type=submit]')) {
+    if (!visible(el)) continue;
+    const text = ((el.innerText || el.value || el.getAttribute('aria-label') || '') + '')
+      .replace(/\s+/g, ' ').trim();
+    if (deny.test(text)) continue;
+    seen.push({ el, text });
+  }
+  if (!seen.length) return '';
+  // Prefer a button inside a dialog / card, otherwise the first of the page.
+  const card = seen.find((item) => item.el.closest(
+    '[role=dialog], [aria-modal=true], form, div[jsname], div[data-identifier]'
+  ));
+  const chosen = card || seen[0];
+  try { chosen.el.click(); } catch (e) { return ''; }
+  return chosen.text.slice(0, 80);
+}
+"""
+
+#: The wording of a Google error that only the operator can resolve.
+_GOOGLE_ERROR_WORDS = (
+    "couldn't sign you in",
+    "couldn’t sign you in",
+    "this browser or app may not be secure",
+    "access blocked",
+    "this account has been disabled",
+    "sign-in attempt was blocked",
+    "google couldn't verify",
+)
+
+
+def _google_click_primary(target: Any) -> str:
+    """Press the single primary button of an unusual Google card."""
+    for root in _google_roots(target):
+        text = ""
+        with suppress(Exception):
+            text = str(root.evaluate(_GOOGLE_PRIMARY_JS) or "")
+        if text:
+            return text
+    return ""
+
+
+def _google_error(target: Any) -> str:
+    """The exact Google error text that stops the flow (``""`` when none)."""
+    text = ""
+    with suppress(Exception):
+        text = str(target.evaluate(
+            "() => (document.body ? document.body.innerText : '').toLowerCase()"
+        ) or "")
+    for marker in _GOOGLE_ERROR_WORDS:
+        if marker in text:
+            return marker
+    return ""
 
 
 def _is_google_page(page: Any) -> bool:
@@ -1160,7 +1232,8 @@ def _pick_google_account(target: Any, email: str) -> bool:
             patterns.append(re.compile(re.escape(email), re.IGNORECASE))
         if len(local) >= 4:
             patterns.append(re.compile(re.escape(local), re.IGNORECASE))
-        patterns.append(re.compile(r"continue as\b", re.IGNORECASE))
+        if not email:
+            patterns.append(re.compile(r"continue as\b", re.IGNORECASE))
         for pattern in patterns:
             with suppress(Exception):
                 tile = root.get_by_text(pattern).first
@@ -1189,6 +1262,7 @@ def _finish_google(
     tile_clicks = 0
     last_tile = 0.0
     gone_since: float | None = None
+    chooser_since: float | None = None
     while time.monotonic() < deadline:
         pages = [item for item in context.pages if not item.is_closed()]
         google = [item for item in pages if _is_google_page(item)]
@@ -1210,6 +1284,13 @@ def _finish_google(
                     "Google asked for an extra check (2-step verification or a "
                     "phone code). Finish it once in the live browser, then retry.",
                 )
+            blocked = _google_error(target)
+            if blocked:
+                return (
+                    "human",
+                    f"Google refused this sign-in: \"{blocked}\". Sign in once in "
+                    "the login view of the project, then create the accounts again.",
+                )
             # The "Continue as <name>" tile needs a click in the popup.  If
             # the chooser is still on screen after a click (Google had not
             # attached its handler yet) it is clicked again, a few times.
@@ -1221,6 +1302,18 @@ def _finish_google(
                         ".test(document.body ? document.body.innerText : '')"
                     )
                 )
+            if chooser:
+                chooser_since = chooser_since or time.monotonic()
+                if time.monotonic() - chooser_since > 20.0:
+                    wanted = f" ({email})" if email else ""
+                    return (
+                        "human",
+                        "The Google account chooser does not offer the project's "
+                        f"account{wanted}. Sign in once with that account in the "
+                        "login view of the project, then create the accounts again.",
+                    )
+            else:
+                chooser_since = None
             if (
                 chooser
                 and tile_clicks < 6
@@ -1230,14 +1323,19 @@ def _finish_google(
                 picked = True
                 tile_clicks += 1
                 last_tile = time.monotonic()
+                chooser_since = None
                 time.sleep(1.5)
                 continue
             clicked = _google_consent(target)
+            if not clicked:
+                # An unusual card (icon-only button, extra "options" step):
+                # press its single primary button, never a cancel/back one.
+                clicked = _google_click_primary(target)
             if clicked:
                 clicks += 1
-                if clicks > 8:
+                if clicks > 10:
                     break
-                time.sleep(1.5)
+                time.sleep(1.8)
                 continue
             time.sleep(1.0)
             continue
@@ -1311,6 +1409,8 @@ def _finish_profile(page: Any, row: SiteAccount, project: Project) -> bool:
         data = page.evaluate(_COLLECT_FIELDS_JS) or {}
     fields = list(data.get("fields") or [])
     if not fields:
+        # No form to fill, but an onboarding card may still block the page.
+        _dismiss_modal(page)
         return False
     business = _profile_values(project)
     username = (row.username or "").strip()
@@ -1354,7 +1454,7 @@ def _finish_profile(page: Any, row: SiteAccount, project: Project) -> bool:
 #: Close the onboarding / cookie card that appears after a sign-in.
 _MODAL_BUTTON_JS = r"""
 () => {
-  const words = /^(skip|skip for now|maybe later|not now|later|no thanks|got it|continue|done|ok|close|dismiss|start exploring|let.s go|finish later)$/i;
+  const words = /^(skip|skip for now|maybe later|not now|later|no thanks|got it|continue|next|proceed|start|start exploring|let.s go|done|ok|close|dismiss|finish|finish later)$/i;
   const visible = (el) => {
     try {
       const box = el.getBoundingClientRect();
@@ -1441,6 +1541,108 @@ def _verification_needed(page: Any) -> bool:
     return any(marker in text for marker in _VERIFY_WORDS)
 
 
+#: Wording of a site that took the sign-up but keeps it on hold.
+_PENDING_WORDS = (
+    "pending",
+    "awaiting approval",
+    "awaiting review",
+    "under review",
+    "will be reviewed",
+    "needs approval",
+    "not approved yet",
+    "account is inactive",
+    "activate your account",
+    "confirm your account",
+    "your application",
+)
+
+#: What step of the sign-up the page is really on.
+_FLOW_STATES = (
+    "CAPTCHA",
+    "SIGNED_IN",
+    "VERIFY",
+    "PENDING",
+    "FINISH_FORM",
+    "SIGNUP_FORM",
+    "LOGIN_FORM",
+    "OAUTH",
+    "UNKNOWN",
+)
+
+
+def _settle(page: Any, *, timeout_ms: int = 6000) -> None:
+    """Let the page finish the redirect it just started (never guess a URL)."""
+    with suppress(Exception):
+        page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+    # A site with a live connection (chat, notifications) never goes idle, so
+    # the idle wait is short: the step detection below decides the rest.
+    with suppress(Exception):
+        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 2000))
+    with suppress(Exception):
+        page.wait_for_timeout(700)
+
+
+def _oauth_busy(page: Any) -> bool:
+    """Is the browser in the middle of a sign-in redirect right now?"""
+    with suppress(Exception):
+        url = str(page.url or "").lower()
+    return any(
+        marker in url
+        for marker in ("accounts.google.", "/oauth", "oauth/", "/auth/", "callback", "/sso")
+    )
+
+
+def _flow_state(page: Any) -> str:
+    """Name the step the page is on, so the caller stops guessing a route.
+
+    The order matters: a signed-in control wins, then a human challenge, then
+    a pending / verification prompt, then a form.  A page that is still in the
+    middle of an OAuth redirect is never treated as a form page.
+    """
+    if _challenge(page) == "CAPTCHA":
+        return "CAPTCHA"
+    if _logged_in(page):
+        return "SIGNED_IN"
+    if _verification_needed(page):
+        return "VERIFY"
+    text = _body_text(page)
+    if any(word in text for word in _PENDING_WORDS):
+        return "PENDING"
+    if _oauth_busy(page):
+        return "OAUTH"
+    if _has_password_form(page):
+        # A password field on a page that also asks to finish the profile is
+        # a sign-in form, not a second sign-up.
+        return "LOGIN_FORM"
+    if _wait_for_signup_form(page, timeout=0.5) is not None:
+        return "SIGNUP_FORM"
+    if text.strip():
+        return "UNKNOWN"
+    return "UNKNOWN"
+
+
+def _complete_pending_form(
+    page: Any, row: SiteAccount, project: Project
+) -> bool:
+    """Fill the one form a site shows *after* Google / sign-up.
+
+    Many sites return from Google with the e-mail already known and ask for a
+    username, a name or a company before they create the account.  That form
+    is filled with the row's own values and submitted once, instead of
+    navigating somewhere else.
+    """
+    if not _has_empty_required(page):
+        return False
+    if not _has_password_form(page) and _wait_for_signup_form(page, 0.5) is None:
+        return False
+    filled, _reason = _fill_signup(page, row, project)
+    if not filled:
+        return False
+    _click_submit(page)
+    page.wait_for_timeout(4500)
+    return True
+
+
 def _click_verify_button(page: Any) -> str:
     for root in _form_roots(page):
         text = ""
@@ -1454,10 +1656,25 @@ def _click_verify_button(page: Any) -> str:
     return ""
 
 
-def _fill_verification_code(page: Any, code: str) -> bool:
-    """Type the code into one field, or into the six boxes of a split field."""
-    if not code:
-        return False
+#: A control that opens the code form ("Verify e-mail", "Enter the code").
+_OPEN_VERIFY_JS = r"""
+() => {
+  const words = /(verify|confirm|activate).{0,20}(e-?mail|account)|enter (the )?code|i have (a )?code|use (a )?code|enter code/i;
+  const deny = /(resend|send again|change|edit|back|cancel|remove|delete)/i;
+  for (const el of document.querySelectorAll('a, button, [role=button]')) {
+    const text = ((el.innerText || el.value || '') + '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 60 || deny.test(text)) continue;
+    if (words.test(text)) {
+      el.setAttribute('data-abk-open-verify', '1');
+      return text;
+    }
+  }
+  return '';
+}
+"""
+
+
+def _type_code_into(page: Any, code: str) -> bool:
     for root in _form_roots(page):
         with suppress(Exception):
             field = root.query_selector(_OTP_SELECTOR)
@@ -1473,6 +1690,34 @@ def _fill_verification_code(page: Any, code: str) -> bool:
                 for box, digit in zip(boxes, code, strict=False):
                     box.fill(digit, timeout=3000)
                 return True
+    return False
+
+
+def _fill_verification_code(page: Any, code: str) -> bool:
+    """Type the code into one field, or into the six boxes of a split field.
+
+    If the site keeps the field behind its own "Verify e-mail / Enter the
+    code" control, that control is opened first - the verification step is
+    never skipped just because the field was hidden.
+    """
+    if not code:
+        return False
+    if _type_code_into(page, code):
+        return True
+    opened = False
+    for root in _form_roots(page):
+        label = ""
+        with suppress(Exception):
+            label = str(root.evaluate(_OPEN_VERIFY_JS) or "")
+        if not label:
+            continue
+        with suppress(Exception):
+            root.click("[data-abk-open-verify='1']", timeout=5000)
+        page.wait_for_timeout(1800)
+        opened = True
+        break
+    if opened:
+        return _type_code_into(page, code)
     return False
 
 
@@ -1530,6 +1775,9 @@ def _verify_with_inbox(
     inbox: Any | None,
     fallback_inbox: Any | None,
     started_at: Any,
+    *,
+    seconds: float | None = None,
+    force: bool = False,
 ) -> tuple[bool, str | None]:
     """Finish whatever the site asks to verify the account.
 
@@ -1537,8 +1785,12 @@ def _verify_with_inbox(
     link with another "Confirm" button; all of them are handled.  The Gmail tab
     is read first, the App Password inbox is the fallback, and only a mail for
     this row's alias is accepted.
+
+    ``force`` reads the inbox even when the page does not visibly ask for a
+    code - a site sometimes creates the account and hides the prompt.  The
+    shorter ``seconds`` window is used for that check.
     """
-    if not _verification_needed(page):
+    if not force and not _verification_needed(page):
         return False, None
     readers = [reader for reader in (inbox, fallback_inbox) if reader is not None]
     if not readers or not row.otp_alias:
@@ -1550,6 +1802,8 @@ def _verify_with_inbox(
     last_reason: str | None = None
     for position, reader in enumerate(readers):
         wait = OTP_TIMEOUT_SECONDS if position == 0 else FALLBACK_OTP_SECONDS
+        if seconds is not None:
+            wait = seconds if position == 0 else min(seconds, FALLBACK_OTP_SECONDS)
         if isinstance(reader, gmail_otp.BrowserInbox):
             found, reason = reader.wait_for_code_or_link(
                 alias=row.otp_alias,
@@ -1615,8 +1869,9 @@ def _verify_with_inbox(
         row.otp_used_at = utcnow()
         db.commit()
         return True, None
-    row.otp_state = OTP_EXPIRED
-    db.commit()
+    if not force:
+        row.otp_state = OTP_EXPIRED
+        db.commit()
     return False, last_reason or "No verification e-mail arrived in time."
 
 
@@ -2406,6 +2661,9 @@ def _try_google(
     row: SiteAccount,
     page: Any,
     gmail_address: str | None,
+    inbox: Any | None = None,
+    fallback_inbox: Any | None = None,
+    started_at: Any = None,
 ) -> bool:
     """Use *Continue with Google* when the page offers it.
 
@@ -2428,7 +2686,9 @@ def _try_google(
         )
         if outcome == "ok":
             page = _page_for(context)
-            page.wait_for_timeout(1500)
+            # Let the site finish its own redirect first: navigating away in
+            # the middle of the sign-in is what used to lose the account.
+            _settle(page)
             row.login_url = page.url
             # A site often opens a cookie banner or a "complete your profile"
             # card right after Google returns; close/fill it before the check.
@@ -2436,6 +2696,25 @@ def _try_google(
                 _dismiss_overlays(page)
             _dismiss_modal(page)
             _finish_profile(page, row, project)
+            if not _logged_in(page) and _verification_needed(page):
+                ok, _reason = _verify_with_inbox(
+                    db,
+                    context,
+                    project,
+                    website,
+                    row,
+                    page,
+                    inbox,
+                    fallback_inbox,
+                    started_at or utcnow(),
+                )
+                if ok:
+                    _settle(page)
+                    _dismiss_modal(page)
+                    _finish_profile(page, row, project)
+            if not _logged_in(page) and _complete_pending_form(page, row, project):
+                _settle(page)
+                _finish_profile(page, row, project)
             if not _confirm_login(page, website.opportunity_url):
                 path = _screenshot(page, project.id, website.id)
                 row.evidence = {**(row.evidence or {}), "screenshot": path}
@@ -2538,6 +2817,18 @@ def _provision_site(
         )
         return
 
+    # Read the site's own procedure once: the sign-up page, the verification
+    # and the post page.  A stored recipe is reused, so this is a handful of
+    # requests only on the first run of a website.
+    if not (isinstance(website.recipe, dict) and website.recipe.get("checked_at")):
+        _update_item(
+            project.id,
+            website.id,
+            message="Reading the site's sign-up and post pages…",
+        )
+        with suppress(Exception):
+            site_recipe.refresh(db, website, budget_s=10.0)
+
     # Read the site's own code before guessing any route: what it is, where
     # its sign-up lives and whether a public form already accepts a link.
     intel = site_intel.inspect(page)
@@ -2600,7 +2891,18 @@ def _provision_site(
             return
 
     # --- Continue with Google -------------------------------------------
-    if _try_google(db, context, project, website, row, page, gmail_address):
+    if _try_google(
+        db,
+        context,
+        project,
+        website,
+        row,
+        page,
+        gmail_address,
+        inbox,
+        fallback_inbox,
+        started_at,
+    ):
         return
 
     # --- Sign-up form ----------------------------------------------------
@@ -2664,11 +2966,31 @@ def _provision_site(
     seen_urls: set[str] = set()
     opened = False
     intel_links = [str(url) for url in intel.get("signup_urls") or [] if url]
+    # The page the operator pasted (or the recipe found) is tried before any
+    # guess, so a known sign-up page is opened in one step.
+    known: list[str] = []
+    for url in (website.signup_url, *_recipe_urls(website, "signup_urls")):
+        cleaned = (url or "").strip()
+        if cleaned and cleaned not in known:
+            known.append(cleaned)
     for candidate in [
+        *known,
         *intel_links,
         *links,
         *_signup_candidates(website.opportunity_url),
     ]:
+        # The page in front of us may already be the sign-up form (or the
+        # middle of a sign-in redirect): never jump to a guessed URL then.
+        if _oauth_busy(page):
+            _settle(page)
+            if _wait_for_signup_form(page, timeout=2.0) is not None:
+                opened = True
+                break
+            if _logged_in(page) or _verification_needed(page):
+                break
+        if _wait_for_signup_form(page, timeout=0.5) is not None:
+            opened = True
+            break
         if not candidate or candidate in seen_urls:
             continue
         seen_urls.add(candidate)
@@ -2722,8 +3044,18 @@ def _provision_site(
     # now that the form is open, prefer it over typing a password again.
     if (
         opened
-        and intel.get("plan") == "GOOGLE"
-        and _try_google(db, context, project, website, row, page, gmail_address)
+        and _try_google(
+            db,
+            context,
+            project,
+            website,
+            row,
+            page,
+            gmail_address,
+            inbox,
+            fallback_inbox,
+            started_at,
+        )
     ):
         return
 
@@ -2809,7 +3141,7 @@ def _provision_site(
             page.wait_for_timeout(4000)
 
     # --- Verification (code or confirmation link) -------------------------
-    if _needs_otp(page):
+    if _verification_needed(page):
         verified, verify_reason = _verify_with_inbox(
             db,
             context,
@@ -2831,6 +3163,24 @@ def _provision_site(
                 or "E-mail verification - finish it once in the live browser.",
             )
             return
+
+    # A page that says "pending / awaiting approval" may still have sent an
+    # activation mail: read the alias inbox briefly, but never wait minutes
+    # for a review that only the site can do.
+    if _flow_state(page) == "PENDING" and not _logged_in(page):
+        _verify_with_inbox(
+            db,
+            context,
+            project,
+            website,
+            row,
+            page,
+            inbox,
+            fallback_inbox,
+            started_at,
+            seconds=45,
+            force=True,
+        )
 
     # --- Result ----------------------------------------------------------
     if _challenge(page) == "CAPTCHA" and not _wait_for_human(
@@ -2879,17 +3229,24 @@ def _provision_site(
             started_at,
         )
         if verified:
-            with suppress(Exception):
-                page.goto(
-                    row.login_url or website.opportunity_url,
-                    wait_until="domcontentloaded",
-                    timeout=NAV_TIMEOUT_MS,
-                )
-                page.wait_for_timeout(1500)
+            _settle(page)
+            if not _logged_in(page) and not _verification_needed(page):
+                # The confirmation page may already be the site itself; go
+                # back to where the account lives only when it is not.
+                with suppress(Exception):
+                    page.goto(
+                        row.login_url or website.opportunity_url,
+                        wait_until="domcontentloaded",
+                        timeout=NAV_TIMEOUT_MS,
+                    )
+                _settle(page)
             with suppress(Exception):
                 _dismiss_overlays(page)
             _dismiss_modal(page)
             _finish_profile(page, row, project)
+            if not _logged_in(page) and _complete_pending_form(page, row, project):
+                _settle(page)
+                _finish_profile(page, row, project)
             success_seen = success_seen or _success(
                 page, row.login_url or website.opportunity_url
             )
@@ -2898,6 +3255,46 @@ def _provision_site(
                 with suppress(Exception):
                     signed_in = _login_existing(page, row, website)
 
+    # The site may have created the account and hidden the prompt entirely.
+    # Read the alias inbox once, briefly, before saying the site did nothing.
+    if (
+        not signed_in
+        and not _verification_needed(page)
+        and success_seen
+        and row.otp_alias
+        and (inbox is not None or fallback_inbox is not None)
+    ):
+        _update_item(
+            project.id,
+            website.id,
+            message="Checking the project Gmail for a verification mail…",
+        )
+        verified, _reason = _verify_with_inbox(
+            db,
+            context,
+            project,
+            website,
+            row,
+            page,
+            inbox,
+            fallback_inbox,
+            started_at,
+            seconds=45,
+            force=True,
+        )
+        if verified:
+            _settle(page)
+            with suppress(Exception):
+                _dismiss_overlays(page)
+            _dismiss_modal(page)
+            _finish_profile(page, row, project)
+            success_seen = _success(page, row.login_url or website.opportunity_url)
+            signed_in = _logged_in(page)
+            if not signed_in:
+                with suppress(Exception):
+                    signed_in = _login_existing(page, row, website)
+
+    state = _flow_state(page)
     if not success_seen and not signed_in:
         path = _screenshot(page, project.id, website.id)
         row.evidence = {**(row.evidence or {}), "screenshot": path}
@@ -2907,11 +3304,15 @@ def _provision_site(
             row,
             STATUS_NEEDS_HUMAN,
             error=(
-                "The form was submitted but no success signal appeared. "
-                "Open the site once and finish the last step (it may ask for a "
-                "confirmation or a profile detail)."
+                "The form was submitted but the site never showed a signed in "
+                f"state (the page is on step: {state.lower()}). Open the site "
+                "once and finish that step - usually a confirmation or a "
+                "profile detail - then press Retry."
             ),
-            message="Submitted - the site did not confirm the account yet.",
+            message=(
+                "The account may exist - "
+                f"the site is still on step: {state.lower()}."
+            ),
         )
         return
 
@@ -2929,8 +3330,9 @@ def _provision_site(
             STATUS_NEEDS_HUMAN,
             error=(
                 "The sign-up went through but the site did not show a signed in "
-                "state. Open the site once - it may still need an e-mail "
-                "confirmation or a first profile step - then press Retry."
+                f"state (step: {state.lower()}). Open the site once - it may "
+                "still need an e-mail confirmation or a first profile step - "
+                "then press Retry."
             ),
             message="Account may exist - confirm it once in the live browser.",
         )
@@ -2957,6 +3359,10 @@ def _confirm_login(page: Any, base_url: str) -> bool:
     """
     if _logged_in(page):
         return True
+    # The page is on a step the operator or the inbox must finish - reloading
+    # the home page would throw that step away.
+    if _verification_needed(page) or _challenge(page) == "CAPTCHA":
+        return False
     parsed = re.match(r"^(https?://[^/]+)", base_url or "")
     origin = parsed.group(1) if parsed else base_url
     if not origin:
@@ -2967,6 +3373,12 @@ def _confirm_login(page: Any, base_url: str) -> bool:
     except Exception:
         return False
     return _logged_in(page)
+
+
+def _recipe_urls(website: Website, key: str) -> list[str]:
+    """The URLs of the stored procedure of a website (``signup_urls`` ...)."""
+    recipe = website.recipe if isinstance(website.recipe, dict) else {}
+    return [str(url) for url in recipe.get(key) or [] if url]
 
 
 def _ranked_targets(row: SiteAccount) -> list[str]:
@@ -2980,12 +3392,24 @@ def _store_target(
 ) -> None:
     """Find and store the page where the backlink can be placed."""
     _update_item(project.id, website.id, message="Looking for the backlink page…")
+    # A known post page (pasted by the operator or found by the recipe probe)
+    # is opened first; the ranked links of the inspection follow it.
+    extra: list[str] = []
+    for url in (
+        website.post_url,
+        *_recipe_urls(website, "post_urls"),
+        row.backlink_url,
+        *_ranked_targets(row),
+    ):
+        cleaned = (url or "").strip()
+        if cleaned and cleaned not in extra:
+            extra.append(cleaned)
     try:
         result = backlink_target.discover(
             context,
             website,
             start_url=row.account_url or website.opportunity_url,
-            extra_urls=_ranked_targets(row),
+            extra_urls=extra,
         )
     except Exception as exc:  # pragma: no cover - browser dependent
         log.warning("backlink discovery failed", extra={"extra_fields": {"error": str(exc)}})

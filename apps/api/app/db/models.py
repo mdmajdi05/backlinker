@@ -330,6 +330,14 @@ class Website(IdMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(300), default="", nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     opportunity_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    #: The page the operator pasted as the sign-up page (empty = discover it).
+    #: It is the first candidate of the inspection, never a guessed route.
+    signup_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: The page where the backlink is posted (empty = discover it).
+    post_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: The steps the site really asks for (sign-up page, verification, post
+    #: page), read once by the recipe probe and shown in the report.
+    recipe: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     category: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     #: Free text niche of the site ("pet care", "saas", ...).  It is the second
     #: axis the central list is filtered by (beside the category).
