@@ -1295,6 +1295,11 @@ export interface SignupDetails {
   email: string;
   password: string | null;
   has_password: boolean;
+  /**
+   * Wait on a CAPTCHA page for you to solve it, then continue the same row.
+   * The app never solves or bypasses the challenge itself.
+   */
+  captcha_wait: boolean;
 }
 
 /** Everything the account panel of a project needs. */

@@ -206,10 +206,13 @@ Most directories need an account before they accept a link. The
    alone are stored on the row, so the report says what the app saw.
 4. Per website the strategy is decided from the **live page**:
    * a *Continue with Google* control -> the project Google session is used (no
-     password is typed, no account chooser is automated; if Google asks for the
-     password the row stops as **Needs you**). If the button only appears
-     inside the sign-up modal, the modal is opened first and Google is clicked
-     there,
+     password is typed). The **popup window** that Google opens is handled
+     too: the account tile of the project address is chosen, the consent card
+     (*Continue* / *Allow*) is pressed, and a One Tap card inside the page is
+     used the same way. If Google asks for the password, a 2-step / phone code
+     or "verify it's you", the row stops as **Needs you** - those are never
+     automated. If the button only appears inside the sign-up modal, the modal
+     is opened first and Google is clicked there,
    * otherwise the sign-up form is filled with **your** username and password
      (generated when the field was left blank). **Both are stored with the
      account and shown on that website's row** in the campaign table and in the
@@ -231,17 +234,28 @@ Most directories need an account before they accept a link. The
    `/wp-login.php?action=register` paths and the site's own wording in other
    languages. If the site does not keep the session after the sign-up, the app
    **logs in with the stored credentials** and only then reports the account
-   active.
+   active. A cookie banner or an onboarding card that appears after Google /
+   sign-up is closed, and a "complete your profile" card is filled with the
+   known business values (name, company, phone, website) before the signed-in
+   check.
 5. If the sign-up asks for a code, the row signs up with its **own address
    alias** of that Gmail, named after the website so the inbox is readable:
    `inbox+example-com@gmail.com`. Two rows that share a domain get a short
    suffix, never the same alias. If a form refuses `+`, a dots-only variant of
    the real inbox is used instead (Gmail ignores dots). The code is read in the
    Gmail tab of the same logged-in browser (the App Password inbox is only the
-   fallback). Only a mail addressed to that alias is accepted, one code is
-   claimed once, and the code is stored encrypted against
-   `(project, website)`. A code can never be filled into another project or
-   another website; an ambiguous mail pauses the row instead of guessing.
+   fallback). The mail is handled in **both** forms: a code (one field or the
+   six separate boxes) is typed and submitted, and a **confirmation link** is
+   opened in the same session, its own *Verify / Confirm / Activate* button is
+   pressed, and the site is reloaded. The code reader takes the number nearest
+   to the words "code / verify / confirm" and accepts alphanumeric codes
+   (`A1B2C3`); an order or tracking number is never mistaken for a code. Only a
+   mail addressed to that alias is accepted, one code is claimed once, and the
+   code is stored encrypted against `(project, website)`. A code can never be
+   filled into another project or another website; an ambiguous mail pauses the
+   row instead of guessing. If the verification prompt only appears after the
+   login redirect, it is recognised there too and finished before the row is
+   marked **Needs you**.
 6. When the account is active the same logged-in browser looks for the exact
    page that carries the link field. The pages the inspection ranked from the
    site's own navigation are tried first (profile editor, submission / listing
@@ -303,7 +317,7 @@ settings.
 
 | Row says | Why | What to do |
 | -------- | --- | ---------- |
-| **Needs you** + CAPTCHA | the site asked for a human | press **Open site** (streamed on the web, native window on the desktop), solve it once, then **Retry** |
+| **Needs you** + CAPTCHA | the site asked for a human | solve it in the browser window that is already open on that page - the row resumes by itself as soon as the check clears (the row says which check: reCAPTCHA, hCaptcha, Turnstile, Cloudflare). If it is still open after 4 minutes, press **Retry** |
 | **Needs you** + "no sign-up form" | the site has no real sign-up form (or a different flow) | check the site once, or create the account by hand |
 | **Needs you** + "required fields could not be filled" | the form asks for a custom field the app has no value for | press **Open site**, type the username, password, e-mail and the named fields shown on the row, submit, then **Retry** |
 | **Backlink needs you** | the account is active, but the post page asked for a CAPTCHA, a login or an unknown required field | press **Open site**, finish that one post, then **Retry** (the app checks for the link first, so a retry never posts twice) |
@@ -314,12 +328,18 @@ The batch never stops on one row: it continues with the other websites and
 reports the exact reason per row. **Stop accounts** ends the batch after the
 current website.
 
-> **CAPTCHA is not bypassed.** The app detects reCAPTCHA, hCaptcha, Cloudflare
-> Turnstile and the common interstitial texts, pauses that row as **Needs you**
-> and leaves the decision to you in a real browser. No tool can honestly
-> guarantee every CAPTCHA on every site - what this design guarantees is that a
-> row never claims success it did not observe, and that your other rows keep
-> working while you solve one.
+> **CAPTCHA is never solved or bypassed by the app.** It detects reCAPTCHA,
+> hCaptcha, Cloudflare Turnstile and the common interstitial texts, tells you
+> exactly which one appeared, and keeps the page open so you solve it once like
+> a normal visitor. The app watches the widget: when its solved token appears,
+> the same row continues from that step without a Retry, so one solve is enough.
+> There is no "universal solver", and none is planned: a solver that beats any
+> CAPTCHA would be defeating a security control and breaking the site's terms.
+> What the app does guarantee is that a row never claims success it did not
+> observe, and that your other rows keep working while you solve one.
+> The wait is a per-project switch in the **Create accounts** dialog
+> (*CAPTCHA: wait for me, then continue*): off means the row stops at once
+> with **Needs you** and a Retry, which is handy when nobody is watching.
 
 ---
 
@@ -486,6 +506,20 @@ backlink **Needs you** ho jata hai - **Open site** se form ek baar poora karo,
 phir **Retry**. Retry pe pehle check hota hai ki link pehle se page par hai ya
 nahi, taaki duplicate post na ho.
 
+**Google ke popup me "Continue as itnegbuy" aata hai - app khud dabata hai?**
+Haan. *Continue with Google* dabane ke baad jo alag popup khulta hai, app usme
+aapke project address wali **"Continue as ..."** tile khud dhoondh kar dabata
+hai (agar tile pehli baar me na lage to 2 second ke gap se dobara koshish karti
+hai), phir *Continue / Allow / Confirm* wala consent button dabati hai, aur
+agar Google ki One Tap card page ke andar iframe me ho to wahan bhi wahi kaam
+hota hai. Tile na mile to popup ke saare text me aapka address dhoondh kar wahi
+row chuni jati hai. **Password, 2-step code, phone code ya "verify it's you"**
+kabhi app nahi bharta - us par row **Needs you** ho jati hai with exact reason.
+Google wapas site par aane ke baad agar cookie banner ya "complete your
+profile" card khulta hai to banner band hota hai aur profile card aapke
+business values (name, company, phone, website) se bhar diya jata hai - login
+identity (email/username) kabhi nahi badalti.
+
 **OTP kisi doosri site me nahi jayega?**
 Har row apne hi alias se signup karti hai, jisme website ka naam hota hai:
 `inbox+example-com@gmail.com` (ek hi domain par do rows ho to chhota suffix).
@@ -497,6 +531,17 @@ aur `(project, website)` ke against encrypted save hota hai. Do different
 codes ek hi alias par aayein to row guess nahi karti - **Needs you** likh kar
 ruk jati hai.
 
+**Verification link aaya to?**
+Mail me link ho to app usi logged-in browser me link kholti hai, site ka apna
+**Verify / Confirm / Activate** button dabati hai, page reload karti hai aur
+uske baad hi account ko active maanti hai. Code ho to ek field me ya chhah
+alag boxes me type karke submit karti hai. Code padhte waqt wo number chuna
+jata hai jo "code / verify / confirm" ke sabse kareeb ho, aur `A1B2C3` jaisa
+alphanumeric code bhi pakda jata hai - order number, tracking number ya saal
+kabhi OTP nahi samjha jata. Galat code site reject kare to doosra reader
+try hota hai. Verification ka prompt login ke baad aaye to wahan bhi pehchana
+jata hai aur wahi step poora kiya jata hai.
+
 **Gmail baar baar khulta hai?**
 Nahi. Poore batch ke liye Gmail ek hi baar khulta hai (usi browser ka ek tab),
 aur sab rows usi se apna code leti hain. Google login connected ho to App
@@ -504,10 +549,17 @@ Password ki zaroorat nahi; warna fallback ke liye App Password chahiye -
 normal Google password nahi (Google Account -> Security -> App passwords).
 
 **Captcha aaya to?**
-CAPTCHA bypass nahi hota. Row **Needs you** ho jati hai, **Open site** se wahi
-site live browser me khulti hai (web par stream, desktop par native window),
-captcha solve karo aur **Retry** dabao. Batch rukta nahi - baaki websites
-apna kaam karti rehti hain.
+CAPTCHA app khud solve ya bypass nahi karta - ye security check hai, isliye
+koi "har captcha ka solver" nahi banaya ja sakta. Jo hota hai: app pehchaan
+leti hai kaunsa check hai (reCAPTCHA / hCaptcha / Cloudflare Turnstile / normal
+Cloudflare page), wahi page browser me khula chhod deti hai aur row par likh
+deti hai. Aap use ek baar normal visitor ki tarah solve karo - app widget ka
+solved token dekhti rehti hai aur check clear hote hi **wahi row wahin se
+aage** chal padti hai, Retry ki zaroorat nahi (4 minute tak wait karti hai,
+phir Retry maang leti hai). Batch rukta nahi - baaki websites apna kaam karti
+rehti hain. Ye wait **Create accounts** dialog ke checkbox se on/off hota hai
+(*CAPTCHA: wait for me, then continue*) - off karo to row turant **Needs you**
+ho kar Retry maangti hai, jab aap paas nahi ho tab useful hai.
 
 **Backlink post karne ki exact page?**
 Account active hote hi wahi logged-in browser submit/add-listing/profile/forum

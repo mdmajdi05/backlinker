@@ -58,7 +58,14 @@ def _website(db, domain: str = "directory.example.org") -> Website:
         ("Use 123456 to confirm your email address.", "123456"),
         ("Security code: 90211", "90211"),
         ("Hello, your order 12345678 shipped", None),
+        # A six digit order number is not a code when no mail talks about one.
+        ("Your order 123456 shipped today", None),
         ("Thanks for signing up in 2026", None),
+        ("Your verification code: A1B2C3", "A1B2C3"),
+        ("Confirm your email with 77K9PQ", "77K9PQ"),
+        # A number inside a URL is a token, never the code to type.
+        ("Open https://example.org/c/123456 - your code is 654321", "654321"),
+        ("OTP 1234 expires in 10 minutes", "1234"),
         ("", None),
     ],
 )
@@ -83,6 +90,28 @@ def test_extract_code(text: str, expected: str | None) -> None:
 )
 def test_extract_link(text: str, expected: str | None) -> None:
     assert gmail_otp.extract_link(text) == expected
+
+
+def test_extract_link_never_returns_an_unsubscribe_link() -> None:
+    text = (
+        "Confirm your account https://example.org/confirm?t=1 "
+        "Unsubscribe https://example.org/unsubscribe?u=2"
+    )
+    assert gmail_otp.extract_link(text) == "https://example.org/confirm?t=1"
+    assert gmail_otp.extract_link(
+        "Only https://example.org/unsubscribe?u=2 here"
+    ) is None
+
+
+def test_extract_link_prefers_the_website_domain() -> None:
+    text = (
+        "Open https://tracker.example.net/confirm/abc or "
+        "https://directory.example.org/verify/abc"
+    )
+    assert (
+        gmail_otp.extract_link(text, "directory.example.org")
+        == "https://directory.example.org/verify/abc"
+    )
 
 
 def test_field_role_recognises_the_common_signup_fields() -> None:
@@ -353,6 +382,7 @@ def test_signup_details_roundtrip_and_clear(db_session) -> None:
         "email": "",
         "password": None,
         "has_password": False,
+        "captcha_wait": True,
     }
 
 
@@ -807,3 +837,104 @@ def test_signup_never_fills_a_password_change_or_a_code() -> None:
         {"name": "company"},
     ):
         assert site_accounts._skip_reason(field) is None, field
+
+
+def _plain_page(text: str) -> object:
+    class Page:
+        def query_selector(self, *_args: object) -> None:
+            return None
+
+        def inner_text(self, *_args: object) -> str:
+            return text
+
+    return Page()
+
+
+def test_verification_prompt_is_recognised() -> None:
+    assert site_accounts._verification_needed(
+        _plain_page("Please verify your email address to continue.")
+    )
+    assert site_accounts._verification_needed(
+        _plain_page("We sent you a confirmation link - check your inbox.")
+    )
+    assert not site_accounts._verification_needed(
+        _plain_page("Welcome back, your account is ready.")
+    )
+
+
+def test_google_pages_are_recognised() -> None:
+    class Popup:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+    assert site_accounts._is_google_page(Popup("https://accounts.google.com/signin"))
+    assert site_accounts._is_google_page(
+        Popup("https://example.org/?gsi=accounts.google.com")
+    )
+    assert not site_accounts._is_google_page(Popup("https://directory.example.org/"))
+
+
+class _CaptchaPage:
+    """A tiny page stand-in: selector found, widget token configurable."""
+
+    def __init__(self, *, solved: bool, marker: str = "recaptcha") -> None:
+        self._solved = solved
+        self._marker = marker
+
+    def query_selector(self, selector: str, *_args: object) -> object | None:
+        return object() if self._marker in selector else None
+
+    def evaluate(self, script: str, *_args: object) -> bool:
+        return self._solved
+
+    def inner_text(self, *_args: object) -> str:
+        return ""
+
+
+def test_a_solved_captcha_is_not_reported_as_a_challenge() -> None:
+    # The widget keeps its iframe after solving: the token decides, not the iframe.
+    assert site_accounts._challenge(_CaptchaPage(solved=True)) is None
+    assert site_accounts._challenge(_CaptchaPage(solved=False)) == "CAPTCHA"
+
+
+def test_the_challenge_kind_is_named() -> None:
+    assert (
+        site_accounts._challenge_kind(_CaptchaPage(solved=False)) == "reCAPTCHA"
+    )
+    assert (
+        site_accounts._challenge_kind(
+            _CaptchaPage(solved=False, marker="turnstile")
+        )
+        == "Cloudflare Turnstile"
+    )
+
+
+def test_captcha_wait_is_on_by_default_and_can_be_turned_off(db_session) -> None:
+    project = _project(db_session, "captcha-switch")
+    assert site_accounts.signup_details(db_session, project.id)["captcha_wait"] is True
+    saved = site_accounts.save_signup_details(
+        db_session, project, captcha_wait=False
+    )
+    assert saved["captcha_wait"] is False
+    assert site_accounts.signup_details(db_session, project.id)["captcha_wait"] is False
+
+
+def test_turning_the_wait_off_stops_the_row_at_once(db_session) -> None:
+    project = _project(db_session, "captcha-nowait")
+    website = _website(db_session)
+    row = site_accounts.ensure_account(db_session, project.id, website.id)
+    started = datetime.now(UTC)
+    done = site_accounts._wait_for_human(
+        db_session,
+        _CaptchaPage(solved=False),
+        project,
+        website,
+        row,
+        wait=False,
+        seconds=0.1,
+    )
+    db_session.refresh(row)
+    assert done is False
+    assert row.status == site_accounts.STATUS_NEEDS_HUMAN
+    assert "Retry" in (row.last_error or "")
+    assert datetime.now(UTC) - started < timedelta(seconds=5)

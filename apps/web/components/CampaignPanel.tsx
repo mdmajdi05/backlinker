@@ -20,6 +20,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   Dialog,
   Field,
   Input,
@@ -139,6 +140,7 @@ export function CampaignPanel({
   const [signupUsername, setSignupUsername] = React.useState("");
   const [signupPassword, setSignupPassword] = React.useState("");
   const [signupEmail, setSignupEmail] = React.useState("");
+  const [signupCaptchaWait, setSignupCaptchaWait] = React.useState(true);
   const fileRef = React.useRef<HTMLInputElement | null>(null);
 
   const addAction = useAction();
@@ -195,6 +197,7 @@ export function CampaignPanel({
     setSignupUsername(accounts.data?.details?.username ?? "");
     setSignupPassword(accounts.data?.details?.password ?? "");
     setSignupEmail(accounts.data?.details?.email ?? "");
+    setSignupCaptchaWait(accounts.data?.details?.captcha_wait ?? true);
     setAccountOpen(true);
   };
 
@@ -220,6 +223,7 @@ export function CampaignPanel({
         username: signupUsername,
         password: signupPassword,
         email: signupEmail,
+        captcha_wait: signupCaptchaWait,
       }),
     );
     if (outcome.ok) {
@@ -1289,6 +1293,24 @@ export function CampaignPanel({
                 autoComplete="off"
               />
             </Field>
+            <label className="flex items-start gap-2 rounded-md border border-line bg-surface p-2 text-[11px] text-content-muted">
+              <Checkbox
+                checked={signupCaptchaWait}
+                onChange={(event) => setSignupCaptchaWait(event.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium text-content">
+                  CAPTCHA: wait for me, then continue (on by default)
+                </span>
+                <span className="block text-content-subtle">
+                  The app never solves or bypasses a CAPTCHA. On, the row shows
+                  which check appeared, keeps the page open and continues by
+                  itself when you solve it (up to 4 minutes). Off, the row stops
+                  at once and asks for a Retry.
+                </span>
+              </span>
+            </label>
           </div>
           <Alert tone="info" title="What happens in one batch">
             Every row opens in the isolated profile of this project. If the site

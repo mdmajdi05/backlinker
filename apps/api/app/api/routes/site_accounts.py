@@ -36,6 +36,9 @@ class ProvisionIn(BaseModel):
     username: str | None = None
     password: str | None = None
     email: str | None = None
+    #: Wait on a CAPTCHA page for the operator to solve it, then continue the
+    #: same row.  The challenge itself is never solved or bypassed by the app.
+    captcha_wait: bool | None = None
 
 
 class RetryIn(BaseModel):
@@ -134,6 +137,7 @@ def provision_accounts(
             username=payload.username,
             password=payload.password,
             email=payload.email,
+            captcha_wait=payload.captcha_wait,
         )
     except RuntimeError as exc:
         raise HTTPException(

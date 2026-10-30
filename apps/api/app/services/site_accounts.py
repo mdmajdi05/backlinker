@@ -11,13 +11,16 @@ The flow of one project:
      operator typed once in the details form (a blank field is generated per
      website).  Both are stored encrypted and shown on the row of the report.
 3. The sign-up uses the Gmail of the project's Google login (or the address
-   typed in the details form).  If the site asks for a code, it is read in the
-   Gmail tab of the same browser; the row receives its **own** address alias
-   (``inbox+token@gmail.com``) and only a mail addressed to that token is
-   accepted.  The App Password inbox is only the fallback.  A code is claimed
-   once and bound to its row.
-4. A CAPTCHA is never bypassed.  The row pauses as **Needs you**, the live
-   browser is one click away, and the batch continues with the next site.
+   typed in the details form).  If the site asks for a code or a confirmation
+   link, it is read in the Gmail tab of the same browser; the row receives its
+   **own** address alias (``inbox+token@gmail.com``) and only a mail addressed
+   to that token is accepted.  The App Password inbox is only the fallback.  A
+   code is claimed once and bound to its row; a code or link is never filled
+   into another row.
+4. A CAPTCHA is never bypassed.  The row pauses as **Needs you** with the
+   exact check, the page stays open for the operator to solve once, and the
+   row resumes by itself when the widget reports a solved token.  The batch
+   continues with the next site when the wait runs out.
 5. Once the account is active the authenticated browser looks for the exact
    page that carries a link / profile field and stores it as the backlink
    target of the row.
@@ -288,6 +291,9 @@ def signup_details(
         "email": str(data.get("email") or ""),
         "password": password if reveal else None,
         "has_password": bool(data.get("password_encrypted")),
+        #: Whether a row may wait on a CAPTCHA page (never solve it) for the
+        #: operator, or stop at once and ask for a Retry.
+        "captcha_wait": bool(data.get("captcha_wait", True)),
     }
 
 
@@ -298,6 +304,7 @@ def save_signup_details(
     username: str | None = None,
     password: str | None = None,
     email: str | None = None,
+    captcha_wait: bool | None = None,
 ) -> dict[str, Any]:
     """Remember the sign-up details of the project (an empty field = generated).
 
@@ -328,6 +335,8 @@ def save_signup_details(
             )
         else:
             data.pop("password_encrypted", None)
+    if captcha_wait is not None:
+        data["captcha_wait"] = bool(captcha_wait)
     row.signup_details = data
     db.commit()
     return signup_details(db, project.id)
@@ -504,6 +513,7 @@ def start_batch(
     username: str | None = None,
     password: str | None = None,
     email: str | None = None,
+    captcha_wait: bool | None = None,
 ) -> dict[str, Any]:
     """Provision the accounts of a project in one background batch.
 
@@ -524,13 +534,19 @@ def start_batch(
         if running and running.get("running"):
             return batch_state(project.id)
 
-    if username is not None or password is not None or email is not None:
+    if (
+        username is not None
+        or password is not None
+        or email is not None
+        or captcha_wait is not None
+    ):
         details = save_signup_details(
             db,
             project,
             username=username,
             password=password,
             email=email,
+            captcha_wait=captcha_wait,
         )
     else:
         details = signup_details(db, project.id)
@@ -656,8 +672,52 @@ def _body_text(page: Any) -> str:
     return ""
 
 
+#: The hidden token a solved widget leaves behind.  A solved CAPTCHA keeps its
+#: iframe on the page, so the widget alone must not mean "still unsolved".
+_CHALLENGE_SOLVED_JS = r"""
+() => {
+  const names = [
+    'g-recaptcha-response',
+    'h-captcha-response',
+    'cf-turnstile-response',
+    'captcha-response',
+  ];
+  for (const name of names) {
+    for (const el of document.querySelectorAll('[name="' + name + '"]')) {
+      if (((el.value || el.textContent || '') + '').trim().length > 20) return true;
+    }
+  }
+  return false;
+}
+"""
+
+
+def _challenge_solved(page: Any) -> bool:
+    """Whether the widget on the page already carries a solved token."""
+    with suppress(Exception):
+        return bool(page.evaluate(_CHALLENGE_SOLVED_JS))
+    return False
+
+
+def _challenge_kind(page: Any) -> str:
+    """The readable name of the human challenge (for the row message)."""
+    checks = (
+        ("iframe[src*='recaptcha'], div.g-recaptcha", "reCAPTCHA"),
+        ("iframe[src*='hcaptcha'], div.h-captcha", "hCaptcha"),
+        ("iframe[src*='turnstile'], .cf-turnstile", "Cloudflare Turnstile"),
+        ("#challenge-form", "Cloudflare check"),
+    )
+    for selector, label in checks:
+        with suppress(Exception):
+            if page.query_selector(selector) is not None:
+                return label
+    return "Human check"
+
+
 def _challenge(page: Any) -> str | None:
     """The human challenge on the page, if any (never bypassed)."""
+    if _challenge_solved(page):
+        return None
     for selector in (
         "iframe[src*='recaptcha']",
         "iframe[src*='hcaptcha']",
@@ -684,6 +744,83 @@ def _challenge(page: Any) -> str | None:
         if marker in text:
             return "CAPTCHA"
     return None
+
+
+#: How long a row waits for the operator to solve a CAPTCHA in the open page.
+CHALLENGE_WAIT_SECONDS = 240
+
+
+def _wait_for_human(
+    db: Session,
+    page: Any,
+    project: Project,
+    website: Website,
+    row: SiteAccount,
+    *,
+    seconds: float = CHALLENGE_WAIT_SECONDS,
+    wait: bool = True,
+) -> bool:
+    """Wait until the operator solves the challenge in the same open page.
+
+    The challenge is never bypassed or solved by the app.  This only keeps the
+    browser on the step and resumes the row by itself when the widget reports
+    a solved token, so the operator solves it once and does not need a Retry.
+    """
+    kind = _challenge_kind(page)
+    if not wait:
+        _set_row(
+            db,
+            row,
+            STATUS_NEEDS_HUMAN,
+            error=(
+                f"A {kind} asked for a human on this site. Solve it in the open "
+                "browser, then press Retry (the automatic wait is turned off for "
+                "this project)."
+            ),
+            message=f"{kind} - solve it in the browser, then press Retry.",
+        )
+        return False
+    if _headless():
+        # Nobody can see or touch the page in a headless run: do not stall the
+        # batch for minutes, just report it and move on.
+        seconds = min(seconds, 30.0)
+    _set_row(
+        db,
+        row,
+        STATUS_NEEDS_HUMAN,
+        error=(
+            f"A {kind} asked for a human on this site. Solve it once in the "
+            "open browser - the row continues by itself as soon as the check "
+            "clears (or press Retry after solving it)."
+        ),
+        message=f"{kind} - solve it once in the open browser; the row continues by itself.",
+    )
+    deadline = time.monotonic() + max(5.0, seconds)
+    tick = 0
+    while time.monotonic() < deadline:
+        if _stopped(project.id):
+            return False
+        with suppress(Exception):
+            if page.is_closed():
+                return False
+        if _challenge(page) is None:
+            _set_row(
+                db,
+                row,
+                STATUS_DETECTING,
+                message="The check is cleared - continuing with the site…",
+            )
+            return True
+        tick += 1
+        if tick % 5 == 0:
+            left = int(deadline - time.monotonic())
+            _update_item(
+                project.id,
+                website.id,
+                message=f"{kind} - waiting for you to solve it ({max(left, 0)}s left)…",
+            )
+        time.sleep(3.0)
+    return False
 
 
 #: Controls that only exist for a signed in visitor.
@@ -889,86 +1026,598 @@ def _google_session_ready(db: Session, project_id: str) -> str | None:
     return (profile.email if profile is not None and profile.email else "") or ""
 
 
+_GOOGLE_HOSTS = ("accounts.google.com", "accounts.youtube.com", "google.com/gsi")
+
+#: What a Google popup / One Tap card is currently asking.
+_GOOGLE_STATE_JS = r"""
+() => {
+  const visible = (el) => {
+    try {
+      const box = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && box.width > 1 && box.height > 1;
+    } catch (e) { return false; }
+  };
+  const body = (document.body ? document.body.innerText : '').toLowerCase();
+  return {
+    password: Array.from(document.querySelectorAll("input[type='password']")).some(visible),
+    challenge: /(verify it.s you|2-step|two-step|enter the code|check your phone|security code|recovery|confirm you.re|try another way|account recovery)/.test(body),
+    chooser: /(choose an account|select an account|sign in with google)/.test(body),
+  };
+}
+"""
+
+#: Click the "Continue as <profile>" tile / account row of the project.
+_ACCOUNT_TILE_JS = r"""
+(email) => {
+  const wanted = (email || '').trim().toLowerCase();
+  const local = wanted.split('@')[0];
+  const candidates = [];
+  for (const node of document.querySelectorAll('*')) {
+    const text = ((node.innerText || '') + '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 160) continue;
+    const low = text.toLowerCase();
+    const matched =
+      (wanted && low.includes(wanted)) ||
+      (local.length >= 4 && low.includes(local)) ||
+      /^continue as\b/.test(low) ||
+      /^(continue|sign in|choose|select|use)\b.{0,40}\b(account|google)\b/.test(low);
+    if (!matched) continue;
+    candidates.push({ node, size: text.length });
+  }
+  candidates.sort((a, b) => a.size - b.size);
+  for (const item of candidates) {
+    const node = item.node;
+    const target = node.closest(
+      'button, a, [role=button], [role=link], [tabindex], [jsname], li'
+    ) || node;
+    // A Google tile is a JavaScript card: a DOM click bubbles to its handler
+    // and does not depend on Playwright's actionability checks.
+    try { target.click(); } catch (e) { node.click(); }
+    return ((target.innerText || node.innerText || '') + '').trim().slice(0, 80);
+  }
+  return '';
+}
+"""
+
+#: The "Continue as ...", "Continue" or "Allow" button of the consent card.
+_GOOGLE_CONSENT_JS = r"""
+() => {
+  const allow = /^(continue(\s+(as|to|with)\b.*)?|allow|confirm|accept(\s+all)?|i agree|agree|got it|next|yes(,?\s*continue)?|ok|approve|authorize|verify)$/i;
+  const deny = /(cancel|back|use another|another account|try another|remove|deny|not now|skip|no thanks|sign out)/i;
+  const candidates = [];
+  for (const node of document.querySelectorAll('*')) {
+    const text = ((node.innerText || node.value || '') + '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 80 || deny.test(text) || !allow.test(text)) continue;
+    candidates.push({ node, size: text.length });
+  }
+  candidates.sort((a, b) => a.size - b.size);
+  for (const item of candidates) {
+    const node = item.node;
+    const target = node.closest(
+      'button, a, [role=button], [role=link], [tabindex], [jsname], input[type=submit]'
+    ) || node;
+    try { target.click(); } catch (e) { node.click(); }
+    return ((target.innerText || node.innerText || '') + '').trim().slice(0, 80);
+  }
+  return '';
+}
+"""
+
+
+def _is_google_page(page: Any) -> bool:
+    with suppress(Exception):
+        url = str(page.url or "").lower()
+    return any(mark in url for mark in _GOOGLE_HOSTS)
+
+
+def _google_roots(target: Any) -> list[Any]:
+    roots: list[Any] = [target]
+    with suppress(Exception):
+        roots.extend(frame for frame in target.frames if frame is not target.main_frame)
+    return roots
+
+
+def _google_consent(target: Any) -> str:
+    """Press the Continue / Allow button of the Google consent card."""
+    for root in _google_roots(target):
+        text = ""
+        with suppress(Exception):
+            text = str(root.evaluate(_GOOGLE_CONSENT_JS) or "")
+        if text:
+            return text
+        # Playwright locators see into shadow DOM, where Google's card lives.
+        with suppress(Exception):
+            button = root.get_by_role(
+                "button",
+                name=re.compile(
+                    r"^(continue(\s+(as|to|with)\b.*)?|allow|confirm|accept|"
+                    r"i agree|agree|got it|next|yes|ok|approve|authorize)$",
+                    re.IGNORECASE,
+                ),
+            ).first
+            if button.count():
+                label = button.inner_text(timeout=2000).strip()
+                button.click(timeout=4000)
+                return label or "continue"
+    return ""
+
+
+def _pick_google_account(target: Any, email: str) -> bool:
+    """Choose the "Continue as ..." tile (popup or One Tap frame)."""
+    for root in _google_roots(target):
+        clicked = ""
+        with suppress(Exception):
+            clicked = str(root.evaluate(_ACCOUNT_TILE_JS, email) or "")
+        if clicked:
+            return True
+        # Fallback for the shadow-DOM card: click the tile that names the
+        # project's address (or the first "Continue as ..." tile).
+        local = (email or "").split("@")[0].strip()
+        patterns = []
+        if email:
+            patterns.append(re.compile(re.escape(email), re.IGNORECASE))
+        if len(local) >= 4:
+            patterns.append(re.compile(re.escape(local), re.IGNORECASE))
+        patterns.append(re.compile(r"continue as\b", re.IGNORECASE))
+        for pattern in patterns:
+            with suppress(Exception):
+                tile = root.get_by_text(pattern).first
+                if tile.count() and tile.is_visible():
+                    tile.click(timeout=4000)
+                    return True
+    return False
+
+
 def _finish_google(
-    page: Any, context: Any, *, email: str, timeout: float = 75.0
+    page: Any, context: Any, *, email: str, timeout: float = 90.0
 ) -> tuple[str, str | None]:
-    """Complete the Google consent/account chooser without typing a password.
+    """Complete the Google popup / consent card without typing a password.
+
+    The popup is a real browser window (or a One Tap iframe): it can show the
+    account chooser, a consent screen with *Continue* / *Allow*, or an extra
+    verification.  Only the harmless steps are automated; any password, 2-step
+    check or phone prompt stops the row as **Needs you**.
 
     Returns ``("ok" | "human" | "failed", message)``.
     """
     deadline = time.monotonic() + timeout
     picked = False
+    saw_google = False
+    clicks = 0
+    tile_clicks = 0
+    last_tile = 0.0
+    gone_since: float | None = None
     while time.monotonic() < deadline:
-        pages = list(context.pages)
-        target = page
-        for candidate in pages:
+        pages = [item for item in context.pages if not item.is_closed()]
+        google = [item for item in pages if _is_google_page(item)]
+        if google:
+            saw_google = True
+            target = google[-1]
+            state: dict[str, Any] = {}
             with suppress(Exception):
-                if "accounts.google.com" in candidate.url:
-                    target = candidate
-                    break
-        try:
-            url = target.url
-        except Exception:
-            return "failed", "The Google window was closed."
-        if "accounts.google.com" not in url:
-            # Back on the website: the login happened.
-            return "ok", None
-        with suppress(Exception):
-            if target.query_selector("input[type='password']:visible") is not None:
+                state = target.evaluate(_GOOGLE_STATE_JS) or {}
+            if state.get("password"):
                 return (
                     "human",
                     "Google asked for the account password. Sign in once in the "
                     "login view, then create the accounts again.",
                 )
-        with suppress(Exception):
-            if target.query_selector("iframe[src*='accounts.google.com/gsi']") is not None:
-                # One Tap: try to click the account tile inside the frame.
-                for frame in target.frames:
-                    with suppress(Exception):
-                        if "accounts.google.com" not in frame.url:
-                            continue
-                        if email:
-                            frame.get_by_text(email, exact=False).first.click(timeout=4000)
-                            picked = True
-                            break
-        if not picked:
-            with suppress(Exception):
-                marked = target.evaluate(
-                    """
-                    (email) => {
-                      const wanted = (email || '').toLowerCase();
-                      const nodes = Array.from(document.querySelectorAll(
-                        '[data-email], div[role=link], li, div[role=button], a'
-                      ));
-                      let fallback = null;
-                      for (const node of nodes) {
-                        const text = (node.innerText || '').toLowerCase();
-                        if (!text || text.length > 300) continue;
-                        const value = (node.getAttribute('data-email') || '').toLowerCase();
-                        if (wanted && (value === wanted || text.includes(wanted))) {
-                          node.setAttribute('data-abk-account', '1');
-                          return 'match';
-                        }
-                        if (!fallback && /@/.test(text)) {
-                          node.setAttribute('data-abk-account', '1');
-                          fallback = 'fallback';
-                        }
-                      }
-                      return fallback || '';
-                    }
-                    """,
-                    email,
+            if state.get("challenge"):
+                return (
+                    "human",
+                    "Google asked for an extra check (2-step verification or a "
+                    "phone code). Finish it once in the live browser, then retry.",
                 )
-            if marked:
-                with suppress(Exception):
-                    target.click("[data-abk-account='1']", timeout=5000)
+            # The "Continue as <name>" tile needs a click in the popup.  If
+            # the chooser is still on screen after a click (Google had not
+            # attached its handler yet) it is clicked again, a few times.
+            chooser = False
+            with suppress(Exception):
+                chooser = bool(
+                    target.evaluate(
+                        "() => /(continue as\\b|choose an account|select an account)/i"
+                        ".test(document.body ? document.body.innerText : '')"
+                    )
+                )
+            if (
+                chooser
+                and tile_clicks < 6
+                and time.monotonic() - last_tile >= 2.0
+                and _pick_google_account(target, email)
+            ):
                 picked = True
+                tile_clicks += 1
+                last_tile = time.monotonic()
+                time.sleep(1.5)
+                continue
+            clicked = _google_consent(target)
+            if clicked:
+                clicks += 1
+                if clicks > 8:
+                    break
+                time.sleep(1.5)
+                continue
+            time.sleep(1.0)
+            continue
+
+        # No Google page is open.  A One Tap card may live in an iframe of
+        # the site itself - click inside that frame, never on site buttons.
+        card = None
+        for candidate in pages:
+            for frame in _google_roots(candidate)[1:]:
+                with suppress(Exception):
+                    if "accounts.google.com" not in str(frame.url or ""):
+                        continue
+                card = frame
+                break
+            if card is not None:
+                break
+        if card is not None:
+            saw_google = True
+            acted = False
+            if not picked and _pick_google_account(card, email):
+                picked = True
+                acted = True
+            if _google_consent(card):
+                clicks += 1
+                acted = True
+            if acted:
+                gone_since = None
+                time.sleep(1.0)
+                continue
+            # A permanent "Sign in with Google" iframe is not a One Tap card:
+            # nothing to press inside it, so fall through to the grace timer.
+
+        if saw_google or picked:
+            # No Google window is open any more.  Give the site a moment to
+            # finish its redirect, then let the caller's signed-in check
+            # decide whether the account really works.
+            if gone_since is None:
+                gone_since = time.monotonic()
+            grace = 8.0 if picked else 25.0
+            if time.monotonic() - gone_since >= grace:
+                return "ok", None
         time.sleep(1.0)
-    return (
-        "human",
-        "The Google sign-in did not come back to the website. Finish it in the "
-        "login view and try this row again.",
-    )
+
+#: Save / continue button of a "complete your profile" card.
+_PROFILE_BUTTON_JS = r"""
+() => {
+  const words = /^(save|save changes|save profile|continue|finish|complete|done|update|next|submit|get started|start|let.s go)$/i;
+  for (const el of document.querySelectorAll('button, [role=button], input[type=submit]')) {
+    const text = ((el.innerText || el.value || '') + '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 40) continue;
+    if (words.test(text)) {
+      el.setAttribute('data-abk-profile', '1');
+      return text;
+    }
+  }
+  return '';
+}
+"""
+
+
+def _finish_profile(page: Any, row: SiteAccount, project: Project) -> bool:
+    """Fill the profile card a site shows right after Google / sign-up.
+
+    Many sites open a "Tell us about you / complete your profile" modal before
+    they show a signed-in control.  Only the business values that are already
+    known are filled (never a password or a marketing opt-in), then the save
+    button of the card is pressed.
+    """
+    data: dict[str, Any] = {}
+    with suppress(Exception):
+        data = page.evaluate(_COLLECT_FIELDS_JS) or {}
+    fields = list(data.get("fields") or [])
+    if not fields:
+        return False
+    business = _profile_values(project)
+    username = (row.username or "").strip()
+    first = re.split(r"[._\-\s]+", username)[0] if username else ""
+    values = {
+        "email": row.email or "",
+        "username": username,
+        "first": first,
+        "last": username[len(first) :].strip("._- ") if first else "",
+        "name": business.get("name") or username,
+        "company": business.get("company") or "",
+        "phone": business.get("phone") or "",
+        "website": business.get("website") or "",
+    }
+    filled = 0
+    for field in fields:
+        if _skip_reason(field):
+            continue
+        role = _field_role(field)
+        value = values.get(role) or ""
+        if not value or role in ("email", "username"):
+            # Never rewrite the login identity in a profile card.
+            continue
+        with suppress(Exception):
+            page.fill(field["selector"], value, timeout=5000)
+            filled += 1
+    if not filled:
+        return False
+    clicked = ""
+    with suppress(Exception):
+        clicked = str(page.evaluate(_PROFILE_BUTTON_JS) or "")
+    if clicked:
+        with suppress(Exception):
+            page.click("[data-abk-profile='1']", timeout=5000)
+        page.wait_for_timeout(2500)
+    return True
+
+
+
+
+#: Close the onboarding / cookie card that appears after a sign-in.
+_MODAL_BUTTON_JS = r"""
+() => {
+  const words = /^(skip|skip for now|maybe later|not now|later|no thanks|got it|continue|done|ok|close|dismiss|start exploring|let.s go|finish later)$/i;
+  const visible = (el) => {
+    try {
+      const box = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return style.display !== 'none' && style.visibility !== 'hidden'
+        && box.width > 1 && box.height > 1;
+    } catch (e) { return false; }
+  };
+  const boxes = document.querySelectorAll(
+    '[role=dialog], [aria-modal=true], dialog, .modal, .Modal, [class*=modal], [class*=Modal], [class*=popup]'
+  );
+  for (const box of boxes) {
+    if (!visible(box)) continue;
+    for (const el of box.querySelectorAll('button, [role=button], a')) {
+      const text = ((el.innerText || el.value || '') + '').replace(/\s+/g, ' ').trim();
+      if (!text || text.length > 40) continue;
+      if (words.test(text)) {
+        el.setAttribute('data-abk-modal', '1');
+        return text;
+      }
+    }
+  }
+  return '';
+}
+"""
+
+
+def _dismiss_modal(page: Any) -> bool:
+    """Close a small onboarding card (Skip / Got it / Maybe later)."""
+    for root in _form_roots(page):
+        text = ""
+        with suppress(Exception):
+            text = str(root.evaluate(_MODAL_BUTTON_JS) or "")
+        if not text:
+            continue
+        with suppress(Exception):
+            root.click("[data-abk-modal='1']", timeout=4000)
+        page.wait_for_timeout(900)
+        return True
+    return False
+
+
+#: Wording of a page that still waits for the e-mail verification.
+_VERIFY_WORDS = (
+    "verify your email",
+    "verify your e-mail",
+    "confirm your email",
+    "confirm your e-mail",
+    "activate your account",
+    "verification required",
+    "email not verified",
+    "e-mail not verified",
+    "please verify",
+    "please confirm",
+    "check your inbox",
+    "check your email",
+    "we sent you a",
+    "resend verification",
+)
+
+#: The "Verify / Confirm / Activate" button of a confirmation page.
+_VERIFY_BUTTON_JS = r"""
+() => {
+  const words = /(verify|confirm|activate|validate|approve|yes,?\s*(verify|confirm)|click here|continue|finish)/i;
+  const deny = /(resend|send again|back|cancel|delete|remove)/i;
+  for (const el of document.querySelectorAll('a, button, [role=button], input[type=submit]')) {
+    const text = ((el.innerText || el.value || '') + '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > 60 || deny.test(text)) continue;
+    if (words.test(text)) {
+      el.setAttribute('data-abk-verify', '1');
+      return text;
+    }
+  }
+  return '';
+}
+"""
+
+
+def _verification_needed(page: Any) -> bool:
+    """Does this page still wait for an e-mail code or confirmation link?"""
+    if _needs_otp(page):
+        return True
+    text = _body_text(page)
+    return any(marker in text for marker in _VERIFY_WORDS)
+
+
+def _click_verify_button(page: Any) -> str:
+    for root in _form_roots(page):
+        text = ""
+        with suppress(Exception):
+            text = str(root.evaluate(_VERIFY_BUTTON_JS) or "")
+        if not text:
+            continue
+        with suppress(Exception):
+            root.click("[data-abk-verify='1']", timeout=5000)
+        return text
+    return ""
+
+
+def _fill_verification_code(page: Any, code: str) -> bool:
+    """Type the code into one field, or into the six boxes of a split field."""
+    if not code:
+        return False
+    for root in _form_roots(page):
+        with suppress(Exception):
+            field = root.query_selector(_OTP_SELECTOR)
+            if field is not None:
+                field.fill(code, timeout=6000)
+                return True
+        with suppress(Exception):
+            boxes = root.query_selector_all(
+                "input[inputmode='numeric'], input[maxlength='1'], "
+                "input[autocomplete='one-time-code']"
+            )
+            if len(boxes) >= 4:
+                for box, digit in zip(boxes, code, strict=False):
+                    box.fill(digit, timeout=3000)
+                return True
+    return False
+
+
+def _activate_confirmation_link(
+    context: Any,
+    page: Any,
+    link: str,
+    row: SiteAccount,
+    website: Website,
+) -> tuple[bool, str | None]:
+    """Open the confirmation link and press the site's own confirm button."""
+    link_page = None
+    try:
+        link_page = context.new_page()
+        link_page.goto(link, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        link_page.wait_for_timeout(2500)
+        for _ in range(3):
+            if not _click_verify_button(link_page):
+                break
+            link_page.wait_for_timeout(2000)
+        text = ""
+        with suppress(Exception):
+            text = str(link_page.inner_text("body")).lower()[:6000]
+        failed = any(
+            marker in text
+            for marker in ("link expired", "link has expired", "invalid link", "already used")
+        )
+        if failed:
+            return False, "The confirmation link was expired or already used."
+        # A link that opens the site is normally enough; the signed-in check
+        # in the caller is the real proof, so no message is invented here.
+        return True, None
+    except Exception as exc:
+        return False, f"The confirmation link could not be opened: {exc}"
+    finally:
+        if link_page is not None:
+            with suppress(Exception):
+                link_page.close()
+        with suppress(Exception):
+            page.goto(
+                row.login_url or website.opportunity_url,
+                wait_until="domcontentloaded",
+                timeout=NAV_TIMEOUT_MS,
+            )
+            page.wait_for_timeout(1500)
+
+
+def _verify_with_inbox(
+    db: Session,
+    context: Any,
+    project: Project,
+    website: Website,
+    row: SiteAccount,
+    page: Any,
+    inbox: Any | None,
+    fallback_inbox: Any | None,
+    started_at: Any,
+) -> tuple[bool, str | None]:
+    """Finish whatever the site asks to verify the account.
+
+    The mail may carry a six digit code, six separate boxes, or a confirmation
+    link with another "Confirm" button; all of them are handled.  The Gmail tab
+    is read first, the App Password inbox is the fallback, and only a mail for
+    this row's alias is accepted.
+    """
+    if not _verification_needed(page):
+        return False, None
+    readers = [reader for reader in (inbox, fallback_inbox) if reader is not None]
+    if not readers or not row.otp_alias:
+        return False, (
+            "The site asks to verify the e-mail, but the project's Gmail is not "
+            "connected and no App Password inbox is configured for this row."
+        )
+    _set_row(db, row, STATUS_OTP_PENDING, message="Waiting for the verification e-mail…")
+    last_reason: str | None = None
+    for position, reader in enumerate(readers):
+        wait = OTP_TIMEOUT_SECONDS if position == 0 else FALLBACK_OTP_SECONDS
+        if isinstance(reader, gmail_otp.BrowserInbox):
+            found, reason = reader.wait_for_code_or_link(
+                alias=row.otp_alias,
+                since=started_at,
+                site_domain=website.domain,
+                timeout=wait,
+            )
+        else:
+            found, reason = reader.wait_for_code(
+                alias=row.otp_alias,
+                since=started_at,
+                site_domain=website.domain,
+                timeout=wait,
+            )
+        last_reason = reason or last_reason
+        if found is None:
+            continue
+        if found.link:
+            _update_item(
+                project.id, website.id, message="Opening the confirmation link…"
+            )
+            ok, message = _activate_confirmation_link(
+                context, page, found.link, row, website
+            )
+            if ok:
+                row.otp_state = OTP_USED
+                row.otp_used_at = utcnow()
+                db.commit()
+                return True, None
+            last_reason = message or last_reason
+            continue
+        # A code: one field or the six boxes; a rejected code is retried with
+        # the next reader instead of being typed into the next row.
+        if not _fill_verification_code(page, found.code):
+            last_reason = (
+                "The verification mail arrived but the page has no code field. "
+                "Enter it in the live browser."
+            )
+            continue
+        _update_item(
+            project.id, website.id, message=f"Code received ({found.matched_by})."
+        )
+        set_otp(row, found.code, found.message_id)
+        db.commit()
+        _click_submit(page)
+        page.wait_for_timeout(4500)
+        text = _body_text(page)
+        if any(
+            marker in text
+            for marker in (
+                "invalid code",
+                "incorrect code",
+                "code is invalid",
+                "code expired",
+                "code has expired",
+                "wrong code",
+                "invalid or expired",
+            )
+        ):
+            last_reason = "The site rejected the code."
+            continue
+        row.otp_state = OTP_USED
+        row.otp_used_at = utcnow()
+        db.commit()
+        return True, None
+    row.otp_state = OTP_EXPIRED
+    db.commit()
+    return False, last_reason or "No verification e-mail arrived in time."
 
 
 #: Mark every element that opens a sign-up form (link, tab, modal button).
@@ -1781,6 +2430,12 @@ def _try_google(
             page = _page_for(context)
             page.wait_for_timeout(1500)
             row.login_url = page.url
+            # A site often opens a cookie banner or a "complete your profile"
+            # card right after Google returns; close/fill it before the check.
+            with suppress(Exception):
+                _dismiss_overlays(page)
+            _dismiss_modal(page)
+            _finish_profile(page, row, project)
             if not _confirm_login(page, website.opportunity_url):
                 path = _screenshot(page, project.id, website.id)
                 row.evidence = {**(row.evidence or {}), "screenshot": path}
@@ -1844,6 +2499,7 @@ def _provision_site(
     details: dict[str, Any] | None = None,
     fallback_inbox: Any | None = None,
 ) -> None:
+    details = details or {}
     page = _page_for(context)
     started_at = utcnow()
     row.attempts += 1
@@ -1862,14 +2518,23 @@ def _provision_site(
         )
         return
 
-    challenge = _challenge(page)
-    if challenge == "CAPTCHA":
+    if _challenge(page) == "CAPTCHA" and not _wait_for_human(
+        db,
+        page,
+        project,
+        website,
+        row,
+        wait=bool(details.get("captcha_wait", True)),
+    ):
         _set_row(
             db,
             row,
             STATUS_NEEDS_HUMAN,
-            error="A CAPTCHA asked for a human. Solve it once in the live browser, then retry this row.",
-            message="CAPTCHA - solve it once in the live browser.",
+            error=(
+                "The site showed a CAPTCHA and it was not solved in the open "
+                "page. Solve it there (or press Open site), then press Retry."
+            ),
+            message="CAPTCHA still open - solve it in the browser, then Retry.",
         )
         return
 
@@ -1905,13 +2570,41 @@ def _provision_site(
         _direct_post(db, context, project, website, row, intel)
         return
 
+    # The code showed only a sign-in page.  A previous run may already have
+    # created the account - use the stored credentials before trying again.
+    if (
+        intel.get("plan") == "LOGIN"
+        and (row.username or row.email)
+        and password_of(row)
+    ):
+        _update_item(
+            project.id, website.id, message="Signing in with the stored account…"
+        )
+        signed_in_now = False
+        with suppress(Exception):
+            signed_in_now = _login_existing(page, row, website)
+        if signed_in_now:
+            row.strategy = STRATEGY_EXISTING
+            row.account_url = page.url
+            row.login_url = page.url
+            _remember_login(db, context, project.id, website.id)
+            _set_row(
+                db,
+                row,
+                STATUS_ACTIVE,
+                message="Already signed in.",
+                strategy=STRATEGY_EXISTING,
+            )
+            _store_target(db, context, project, website, row)
+            _post_backlink(db, context, project, website, row)
+            return
+
     # --- Continue with Google -------------------------------------------
     if _try_google(db, context, project, website, row, page, gmail_address):
         return
 
     # --- Sign-up form ----------------------------------------------------
     row.strategy = STRATEGY_SIGNUP
-    details = details or {}
     chosen_username = str(details.get("username") or "").strip()
     chosen_password = str(details.get("password") or "")
     if chosen_username:
@@ -2034,14 +2727,24 @@ def _provision_site(
     ):
         return
 
-    challenge = _challenge(page)
-    if challenge == "CAPTCHA":
+    if _challenge(page) == "CAPTCHA" and not _wait_for_human(
+        db,
+        page,
+        project,
+        website,
+        row,
+        wait=bool(details.get("captcha_wait", True)),
+    ):
         _set_row(
             db,
             row,
             STATUS_NEEDS_HUMAN,
-            error="A CAPTCHA asked for a human on the sign-up form. Solve it once in the live browser, then retry this row.",
-            message="CAPTCHA - solve it once in the live browser.",
+            error=(
+                "The sign-up form showed a CAPTCHA and it was not solved in the "
+                "open page. Solve it there and press Retry - the values are "
+                "already saved in this row."
+            ),
+            message="CAPTCHA on the form - solve it in the browser, then Retry.",
         )
         return
 
@@ -2066,13 +2769,23 @@ def _provision_site(
     _set_row(db, row, STATUS_CREATING, message="Submitting the sign-up form…")
     page.wait_for_timeout(4500)
 
-    if _challenge(page) == "CAPTCHA":
+    if _challenge(page) == "CAPTCHA" and not _wait_for_human(
+        db,
+        page,
+        project,
+        website,
+        row,
+        wait=bool(details.get("captcha_wait", True)),
+    ):
         _set_row(
             db,
             row,
             STATUS_NEEDS_HUMAN,
-            error="A CAPTCHA appeared after submitting the form. Solve it once in the live browser, then retry this row.",
-            message="CAPTCHA after submit - solve it once.",
+            error=(
+                "A CAPTCHA appeared after the form was submitted and it was not "
+                "solved in the open page. Solve it there and press Retry."
+            ),
+            message="CAPTCHA after submit - solve it in the browser, then Retry.",
         )
         return
 
@@ -2095,146 +2808,48 @@ def _provision_site(
                 break
             page.wait_for_timeout(4000)
 
-    # --- OTP / confirmation link -----------------------------------------
+    # --- Verification (code or confirmation link) -------------------------
     if _needs_otp(page):
-        _set_row(db, row, STATUS_OTP_PENDING, message="Waiting for the e-mail…")
-        readers = [reader for reader in (inbox, fallback_inbox) if reader is not None]
-        if not readers or not row.otp_alias:
+        verified, verify_reason = _verify_with_inbox(
+            db,
+            context,
+            project,
+            website,
+            row,
+            page,
+            inbox,
+            fallback_inbox,
+            started_at,
+        )
+        if not verified:
             _set_row(
                 db,
                 row,
                 STATUS_NEEDS_HUMAN,
-                error=(
-                    "The site asks for an e-mail code, but the project's Gmail is "
-                    "not signed in and no App Password inbox is configured for "
-                    "this row."
-                ),
-                message="E-mail code needed - connect Google or add a Gmail App Password.",
+                error=verify_reason or "The e-mail verification did not finish.",
+                message=verify_reason
+                or "E-mail verification - finish it once in the live browser.",
             )
             return
-        has_field = False
-        with suppress(Exception):
-            has_field = page.query_selector(_OTP_SELECTOR) is not None
-        found: gmail_otp.OtpCode | None = None
-        otp_reason: str | None = None
-        for position, reader in enumerate(readers):
-            # The Gmail tab of the session is the first choice; the App
-            # Password inbox is only a shorter fallback.
-            wait = OTP_TIMEOUT_SECONDS if position == 0 else FALLBACK_OTP_SECONDS
-            if not has_field and isinstance(reader, gmail_otp.BrowserInbox):
-                # The page says "check your email" but shows no field: the mail
-                # may carry either a code or a confirmation link.
-                found, otp_reason = reader.wait_for_code_or_link(
-                    alias=row.otp_alias,
-                    since=started_at,
-                    site_domain=website.domain,
-                    timeout=wait,
-                )
-            else:
-                found, otp_reason = reader.wait_for_code(
-                    alias=row.otp_alias,
-                    since=started_at,
-                    site_domain=website.domain,
-                    timeout=wait,
-                )
-            if found is not None:
-                break
-        if found is None:
-            row.otp_state = OTP_EXPIRED
-            db.commit()
-            _set_row(
-                db,
-                row,
-                STATUS_NEEDS_HUMAN,
-                error=otp_reason or "No code arrived for this address.",
-                message=otp_reason or "No code arrived - enter it by hand.",
-            )
-            return
-        if found.link:
-            _update_item(
-                project.id,
-                website.id,
-                message="Opening the confirmation link from the e-mail…",
-            )
-            link_page = None
-            try:
-                link_page = context.new_page()
-                link_page.goto(
-                    found.link,
-                    wait_until="domcontentloaded",
-                    timeout=NAV_TIMEOUT_MS,
-                )
-                link_page.wait_for_timeout(2500)
-            except Exception as exc:
-                _set_row(
-                    db,
-                    row,
-                    STATUS_NEEDS_HUMAN,
-                    error=f"The confirmation link could not be opened: {exc}",
-                    message="Confirmation link - open the mail once.",
-                )
-                return
-            finally:
-                if link_page is not None:
-                    with suppress(Exception):
-                        link_page.close()
-            # Reload the site in the same session: the account is confirmed
-            # now, and the signed-in check below is the real proof.
-            with suppress(Exception):
-                page.goto(
-                    row.login_url or website.opportunity_url,
-                    wait_until="domcontentloaded",
-                    timeout=NAV_TIMEOUT_MS,
-                )
-                page.wait_for_timeout(1500)
-            row.otp_state = OTP_USED
-            row.otp_used_at = utcnow()
-            db.commit()
-        else:
-            set_otp(row, found.code, found.message_id)
-            db.commit()
-            _update_item(
-                project.id, website.id, message=f"Code received ({found.matched_by})."
-            )
-            filled_code = False
-            with suppress(Exception):
-                selector = page.query_selector(_OTP_SELECTOR)
-                if selector is not None:
-                    selector.fill(found.code, timeout=6000)
-                    filled_code = True
-            if not filled_code:
-                # Some sites show the six boxes of a code separately.
-                with suppress(Exception):
-                    boxes = page.query_selector_all(
-                        "input[inputmode='numeric'], input[maxlength='1']"
-                    )
-                    if len(boxes) >= 4:
-                        for box, digit in zip(boxes, found.code, strict=False):
-                            box.fill(digit, timeout=3000)
-                        filled_code = True
-            if not filled_code:
-                _set_row(
-                    db,
-                    row,
-                    STATUS_NEEDS_HUMAN,
-                    error="The code arrived but the page has no code field. Enter it in the live browser.",
-                    message="Code arrived - the field is not recognised.",
-                )
-                return
-            _click_submit(page)
-            page.wait_for_timeout(4500)
-            row.otp_state = OTP_USED
-            row.otp_used_at = utcnow()
-            db.commit()
 
     # --- Result ----------------------------------------------------------
-    if _challenge(page) == "CAPTCHA":
+    if _challenge(page) == "CAPTCHA" and not _wait_for_human(
+        db,
+        page,
+        project,
+        website,
+        row,
+        wait=bool(details.get("captcha_wait", True)),
+    ):
         _set_row(
             db,
             row,
             STATUS_NEEDS_HUMAN,
-            error="A CAPTCHA appeared after the code. Solve it once in the live browser, then retry this row.",
-            message="CAPTCHA after the code - solve it once.",
+            error=(
+                "A CAPTCHA appeared after the e-mail code and it was not solved "
+                "in the open page. Solve it there and press Retry."
+            ),
+            message="CAPTCHA after the code - solve it in the browser, then Retry.",
         )
         return
 
@@ -2248,6 +2863,40 @@ def _provision_site(
         )
         with suppress(Exception):
             signed_in = _login_existing(page, row, website)
+
+    # The site may have created the account but still waits for the e-mail
+    # verification (the prompt often appears only after the login redirect).
+    if not signed_in and _verification_needed(page):
+        verified, _verify_reason = _verify_with_inbox(
+            db,
+            context,
+            project,
+            website,
+            row,
+            page,
+            inbox,
+            fallback_inbox,
+            started_at,
+        )
+        if verified:
+            with suppress(Exception):
+                page.goto(
+                    row.login_url or website.opportunity_url,
+                    wait_until="domcontentloaded",
+                    timeout=NAV_TIMEOUT_MS,
+                )
+                page.wait_for_timeout(1500)
+            with suppress(Exception):
+                _dismiss_overlays(page)
+            _dismiss_modal(page)
+            _finish_profile(page, row, project)
+            success_seen = success_seen or _success(
+                page, row.login_url or website.opportunity_url
+            )
+            signed_in = _logged_in(page)
+            if not signed_in:
+                with suppress(Exception):
+                    signed_in = _login_existing(page, row, website)
 
     if not success_seen and not signed_in:
         path = _screenshot(page, project.id, website.id)
@@ -2268,6 +2917,7 @@ def _provision_site(
 
     # A real login check: reload the site and look for a signed-in control.
     # Only then is the row called "active" - a welcome page alone is not proof.
+    _finish_profile(page, row, project)
     confirmed = _confirm_login(page, website.opportunity_url)
     if not confirmed:
         path = _screenshot(page, project.id, website.id)

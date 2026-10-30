@@ -32,7 +32,7 @@ from email.message import Message
 from email.utils import parseaddr, parsedate_to_datetime
 from html import unescape
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -54,6 +54,8 @@ DEFAULT_WAIT_SECONDS = 180
 POLL_SECONDS = 3.0
 
 _CODE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
+#: An alphanumeric one-time code such as ``A1B2C3``.
+_CODE_ALNUM = re.compile(r"(?<![A-Za-z0-9])([A-Z0-9]{5,10})(?![A-Za-z0-9])")
 _KEYWORDS = (
     "verification code",
     "confirmation code",
@@ -301,24 +303,46 @@ def _received_at(message: Message) -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def _url_spans(text: str) -> list[tuple[int, int]]:
+    return [(match.start(), match.end()) for match in _LINK.finditer(text)]
+
+
+def _inside(spans: list[tuple[int, int]], position: int) -> bool:
+    return any(start <= position < end for start, end in spans)
+
+
 def extract_code(text: str) -> str | None:
-    """The most plausible one-time code in *text* (or ``None``)."""
+    """The most plausible one-time code in *text* (or ``None``).
+
+    A number only counts when the mail talks about a code near it - a 6-digit
+    order number or a tracking number is not an OTP.  One-time codes are
+    mostly digits, but alphanumeric codes (``A1B2C3``) are recognised too.
+    """
     lowered = (text or "").lower()
     if not lowered:
         return None
+    spans = _url_spans(text)
     best: tuple[int, str] | None = None
+
+    def keyword_score(position: int) -> int:
+        score = 0
+        for keyword in _KEYWORDS:
+            for match in re.finditer(re.escape(keyword), lowered):
+                distance = abs(match.start() - position)
+                if distance <= 160:
+                    score = max(score, 120 - distance)
+        return score
+
     for match in _CODE.finditer(text):
+        if _inside(spans, match.start()):
+            continue
         value = match.group(1)
         number = int(value)
         if number in _NOT_A_CODE:
             continue
-        # A code is usually close to the word that introduces it.
-        window = lowered[max(0, match.start() - 120) : match.start()]
-        score = 0
-        for keyword in _KEYWORDS:
-            position = window.rfind(keyword)
-            if position >= 0:
-                score = max(score, 100 - (len(window) - position))
+        score = keyword_score(match.start())
+        if score <= 0:
+            continue
         # Six digits are the most common OTP length.
         if len(value) == 6:
             score += 20
@@ -326,24 +350,62 @@ def extract_code(text: str) -> str | None:
             score += 8
         elif len(value) == 4:
             score += 4
-        if score <= 0:
-            continue
         if best is None or score > best[0]:
             best = (score, value)
+
+    # Alphanumeric codes: at least one letter, one digit and a nearby keyword.
+    for match in _CODE_ALNUM.finditer(text):
+        if _inside(spans, match.start()):
+            continue
+        value = match.group(1)
+        if value.isdigit():
+            continue
+        score = keyword_score(match.start())
+        if score <= 0:
+            continue
+        score += 15
+        if best is None or score > best[0]:
+            best = (score, value)
+
     return best[1] if best else None
 
 
-def extract_link(text: str) -> str | None:
-    """The most plausible confirmation link of a sign-up mail (or ``None``)."""
+def extract_link(text: str, site_domain: str = "") -> str | None:
+    """The most plausible confirmation link of a sign-up mail (or ``None``).
+
+    A link that carries ``confirm`` / ``verify`` / ``activate`` wins, a link on
+    the website's own domain gets an extra boost, and unsubscribe / privacy /
+    tracking links never do.
+    """
+    host_wanted = (site_domain or "").lower().removeprefix("www.").split("/", 1)[0]
+    best: tuple[int, str] | None = None
     seen: set[str] = set()
     for match in _LINK.finditer(unescape(text or "")):
         url = match.group(0).rstrip(".,);]")
         if url in seen:
             continue
         seen.add(url)
-        if any(word in url.lower() for word in _LINK_WORDS):
-            return url
-    return None
+        lowered = url.lower()
+        score = 0
+        if any(word in lowered for word in _LINK_WORDS):
+            score += 60
+        try:
+            host = urlsplit(url).netloc.lower().removeprefix("www.")
+        except ValueError:
+            host = ""
+        if host_wanted and (host == host_wanted or host.endswith("." + host_wanted)):
+            score += 50
+        if re.search(
+            r"(unsubscribe|preferences|privacy|terms|login|signin|sign-in|"
+            r"help|support|abuse|tracking|pixel|\.png|\.jpe?g|\.gif|\.css|\.js)",
+            lowered,
+        ):
+            score -= 120
+        if score <= 0:
+            continue
+        if best is None or score > best[0]:
+            best = (score, url)
+    return best[1] if best else None
 
 
 def _addresses(values: list[str]) -> set[str]:
@@ -485,10 +547,15 @@ class OtpInbox:
         for message in messages:
             if message.message_id in self._claimed:
                 continue
-            code = extract_code(message.text)
+            code = extract_code(message.text) or extract_code(message.subject)
+            link = ""
             if code is None:
-                code = extract_code(message.subject)
-            if code is None:
+                link = (
+                    extract_link(message.text, site_host)
+                    or extract_link(message.subject, site_host)
+                    or ""
+                )
+            if code is None and not link:
                 continue
             level = 0
             matched = ""
@@ -516,21 +583,36 @@ class OtpInbox:
             return None, None
         if len(candidates) > 1 and candidates[-1][0] == candidates[-2][0] == 3:
             # Two different mails for the same alias: do not guess.
-            codes = {extract_code(item[1].text) for item in candidates}
-            if len(codes) > 1:
-                return None, "Two different codes arrived for this address; enter it by hand."
+            values = {
+                extract_code(item[1].text)
+                or extract_link(item[1].text, site_host)
+                or ""
+                for item in candidates
+            }
+            if len(values) > 1:
+                return None, (
+                    "Two different codes or links arrived for this address; "
+                    "enter it by hand."
+                )
         level, message, matched = max(candidates, key=lambda item: (item[0], item[1].received_at))
         code = extract_code(message.text) or extract_code(message.subject)
-        assert code is not None
+        link = ""
+        if code is None:
+            link = (
+                extract_link(message.text, site_host)
+                or extract_link(message.subject, site_host)
+                or ""
+            )
         self._claimed.add(message.message_id)
         return (
             OtpCode(
-                code=code,
+                code=code or "",
                 message_id=message.message_id,
                 subject=message.subject,
                 sender=message.sender,
                 received_at=message.received_at,
-                matched_by=matched,
+                matched_by=matched if code else "link",
+                link=link or None,
             ),
             None,
         )
@@ -698,7 +780,6 @@ class BrowserInbox:
     def _read(
         self, *, alias: str, since: datetime, site_domain: str, mode: str = "code"
     ) -> OtpCode | None:
-        del site_domain  # the alias search already scopes the mail to the row
         page = self._tab()
         search_url = self._search_url(alias, since)
         self._search(page, alias, since)
@@ -729,8 +810,12 @@ class BrowserInbox:
             with suppress(Exception):
                 page.wait_for_timeout(500)
         text = str(data.get("text") or "")
-        code = extract_code(text) or extract_code(key) if mode != "link" else None
-        link = extract_link(text) if mode != "code" and code is None else None
+        code = (extract_code(text) or extract_code(key)) if mode != "link" else None
+        link = (
+            extract_link(text, site_domain) or extract_link(key, site_domain)
+            if mode != "code" and code is None
+            else None
+        )
         if code is None and link is None:
             with self._lock:
                 self._seen.add(key)

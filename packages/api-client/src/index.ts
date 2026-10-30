@@ -744,6 +744,8 @@ export const api = {
         username?: string;
         password?: string;
         email?: string;
+        /** Wait on a CAPTCHA page for the operator, then continue the row. */
+        captcha_wait?: boolean;
       } = {},
     ) =>
       c.post<{ batch: ProjectAccounts["batch"]; accounts: Record<string, SiteAccount> }>(
